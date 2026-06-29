@@ -1,0 +1,7 @@
+-r requirements.txt
+opencv-python-headless
+scipy
+matplotlib
+tqdm
+plyfile
+imageio
