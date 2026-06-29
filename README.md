@@ -32,5 +32,12 @@ SCANNET_DOWNLOAD_SCRIPT=/root/autodl-tmp/download-scannet.py \
 bash scripts/autodl/run_scannet_hallucination.sh
 ```
 
+If VGGT weight download from Hugging Face is reset, rerun with the mirror
+endpoint:
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com bash scripts/autodl/run_scannet_hallucination.sh
+```
+
 See `scripts/autodl/README_scannet_hallucination.md` for sampling modes and
 common overrides.

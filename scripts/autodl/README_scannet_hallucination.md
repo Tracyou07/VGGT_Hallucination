@@ -41,6 +41,7 @@ bash scripts/autodl/run_scannet_hallucination.sh
 ```bash
 SCENE_LIMIT=2 FRAME_COUNTS="100 300" bash scripts/autodl/run_scannet_hallucination.sh
 SAMPLING=regime_step bash scripts/autodl/run_scannet_hallucination.sh
+HF_ENDPOINT=https://hf-mirror.com bash scripts/autodl/run_scannet_hallucination.sh
 CONDA_ENV_NAME=base bash scripts/autodl/run_scannet_hallucination.sh
 RUN_DOWNLOADS=0 SETUP_ENV=0 bash scripts/autodl/run_scannet_hallucination.sh
 EVAL_NATIVE_POINTS=0 EVAL_COUNTERFACTUALS=0 bash scripts/autodl/run_scannet_hallucination.sh
