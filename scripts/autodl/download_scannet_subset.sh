@@ -5,9 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 SCANNET_ROOT="${SCANNET_ROOT:-/root/autodl-tmp/datasets/scannetv2}"
-RAW_DIR="${RAW_DIR:-$SCANNET_ROOT/raw_sens/scans}"
+RAW_DOWNLOAD_ROOT="${RAW_DOWNLOAD_ROOT:-$SCANNET_ROOT/raw_sens}"
+RAW_DIR="${RAW_DIR:-$RAW_DOWNLOAD_ROOT/scans}"
 PROCESS_DIR="${PROCESS_DIR:-$SCANNET_ROOT/process_scannet}"
-GT_PLY_DIR="${GT_PLY_DIR:-$SCANNET_ROOT/scannet/scans}"
+GT_DOWNLOAD_ROOT="${GT_DOWNLOAD_ROOT:-$SCANNET_ROOT/scannet}"
+GT_PLY_DIR="${GT_PLY_DIR:-$GT_DOWNLOAD_ROOT/scans}"
 SCENE_LIST="${SCENE_LIST:-$REPO_ROOT/configs/scannet_hallucination_10.txt}"
 SCENE_LIMIT="${SCENE_LIMIT:-10}"
 DOWNLOAD_SCRIPT="${SCANNET_DOWNLOAD_SCRIPT:-$SCANNET_ROOT/tools/download-scannet.py}"
@@ -42,16 +44,41 @@ fi
 echo "[scannet] root=$SCANNET_ROOT"
 echo "[scannet] scenes=${#SCENES[@]}"
 
+repair_nested_file() {
+    local base_dir="$1"
+    local scene="$2"
+    local filename="$3"
+    local expected="$base_dir/$scene/$filename"
+    local nested="$base_dir/scans/$scene/$filename"
+
+    if [[ ! -f "$expected" && -f "$nested" ]]; then
+        echo "[scannet] repairing nested download: $nested -> $expected"
+        mkdir -p "$(dirname "$expected")"
+        mv "$nested" "$expected"
+    fi
+}
+
+run_scannet_download() {
+    local output_root="$1"
+    shift
+    # The official ScanNet script asks for ToS confirmation and, for .sens,
+    # asks whether to skip sensors. Blank answers continue and keep .sens.
+    printf '\n\n\n\n' | python "$DOWNLOAD_SCRIPT" -o "$output_root" "$@"
+}
+
 for scene in "${SCENES[@]}"; do
     echo "[scannet] downloading $scene"
+    repair_nested_file "$RAW_DIR" "$scene" "$scene.sens"
+    repair_nested_file "$GT_PLY_DIR" "$scene" "${scene}_vh_clean_2.ply"
+
     if [[ ! -f "$RAW_DIR/$scene/$scene.sens" ]]; then
-        python "$DOWNLOAD_SCRIPT" -o "$RAW_DIR" --id "$scene" --type .sens
+        run_scannet_download "$RAW_DOWNLOAD_ROOT" --id "$scene" --type .sens
     else
         echo "[scannet] skip existing $scene.sens"
     fi
 
     if [[ ! -f "$GT_PLY_DIR/$scene/${scene}_vh_clean_2.ply" ]]; then
-        python "$DOWNLOAD_SCRIPT" -o "$GT_PLY_DIR" --id "$scene" --type _vh_clean_2.ply
+        run_scannet_download "$GT_DOWNLOAD_ROOT" --id "$scene" --type _vh_clean_2.ply
     else
         echo "[scannet] skip existing ${scene}_vh_clean_2.ply"
     fi
