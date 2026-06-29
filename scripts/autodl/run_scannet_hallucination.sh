@@ -65,7 +65,7 @@ except Exception as exc:
 print(f"[env] python={sys.version.split()[0]}")
 print(f"[env] torch={torch.__version__} cuda={torch.version.cuda} cuda_available={torch.cuda.is_available()}")
 print(f"[env] torchvision={torchvision.__version__}")
-    if not torch.cuda.is_available():
+if not torch.cuda.is_available():
     raise SystemExit("[env] ERROR: CUDA is not available in torch. Use the AutoDL CUDA/PyTorch image or set CONDA_ENV_NAME to that env.")
 PY
 
