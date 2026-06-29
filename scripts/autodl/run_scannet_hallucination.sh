@@ -4,10 +4,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-AUTODL_WORKDIR="${AUTODL_WORKDIR:-/root/autodl-tmp/vggt_hallucination}"
-VENV_DIR="${VENV_DIR:-$AUTODL_WORKDIR/venv}"
-SCANNET_ROOT="${SCANNET_ROOT:-/root/autodl-tmp/datasets/scannetv2}"
-CKPT_DIR="${CKPT_DIR:-/root/autodl-tmp/ckpt/VGGT-1B}"
+AUTODL_TMP="${AUTODL_TMP:-/root/autodl-tmp}"
+AUTODL_WORKDIR="${AUTODL_WORKDIR:-$AUTODL_TMP/vggt_hallucination}"
+CONDA_ROOT="${CONDA_ROOT:-/root/miniconda3}"
+CONDA_ENV_NAME="${CONDA_ENV_NAME:-vggt_hallucination}"
+CONDA_CLONE_FROM="${CONDA_CLONE_FROM:-base}"
+CONDA_CREATE_MODE="${CONDA_CREATE_MODE:-clone}"
+SCANNET_ROOT="${SCANNET_ROOT:-$AUTODL_TMP/datasets/scannetv2}"
+CKPT_DIR="${CKPT_DIR:-$AUTODL_TMP/ckpt/VGGT-1B}"
 RESULT_DIR="${RESULT_DIR:-$AUTODL_WORKDIR/results}"
 SCENE_LIST="${SCENE_LIST:-$REPO_ROOT/configs/scannet_hallucination_10.txt}"
 SCENE_LIMIT="${SCENE_LIMIT:-10}"
@@ -15,7 +19,7 @@ FRAME_COUNTS="${FRAME_COUNTS:-100 300 500 1000}"
 SAMPLING="${SAMPLING:-prefix}"
 PREPROCESS_MODE="${PREPROCESS_MODE:-pad}"
 RUN_DOWNLOADS="${RUN_DOWNLOADS:-1}"
-INSTALL_ENV="${INSTALL_ENV:-1}"
+SETUP_ENV="${SETUP_ENV:-${INSTALL_ENV:-1}}"
 EVAL_NATIVE_POINTS="${EVAL_NATIVE_POINTS:-1}"
 EVAL_COUNTERFACTUALS="${EVAL_COUNTERFACTUALS:-1}"
 
@@ -23,20 +27,50 @@ mkdir -p "$AUTODL_WORKDIR" "$RESULT_DIR"
 
 cd "$REPO_ROOT"
 
-if [[ "$INSTALL_ENV" == "1" ]]; then
-    if [[ ! -d "$VENV_DIR" ]]; then
-        python3 -m venv "$VENV_DIR"
+if [[ "$SETUP_ENV" == "1" ]]; then
+    if [[ -n "${VIRTUAL_ENV:-}" ]] && type deactivate >/dev/null 2>&1; then
+        echo "[env] deactivating current virtualenv: $VIRTUAL_ENV"
+        deactivate
     fi
-    # shellcheck disable=SC1091
-    source "$VENV_DIR/bin/activate"
-    python -m pip install --upgrade pip wheel
+
+    if [[ ! -f "$CONDA_ROOT/etc/profile.d/conda.sh" ]]; then
+        echo "[env] ERROR: conda not found at $CONDA_ROOT"
+        echo "[env] set CONDA_ROOT=/path/to/miniconda3 if AutoDL uses another path"
+        exit 1
+    fi
+    # shellcheck source=/dev/null
+    source "$CONDA_ROOT/etc/profile.d/conda.sh"
+
+    if ! conda env list | awk '{print $1}' | grep -qx "$CONDA_ENV_NAME"; then
+        if [[ "$CONDA_CREATE_MODE" == "clone" ]]; then
+            echo "[env] creating conda env $CONDA_ENV_NAME by cloning $CONDA_CLONE_FROM"
+            conda create -y -n "$CONDA_ENV_NAME" --clone "$CONDA_CLONE_FROM"
+        else
+            echo "[env] creating conda env $CONDA_ENV_NAME with python=3.10"
+            conda create -y -n "$CONDA_ENV_NAME" python=3.10
+        fi
+    fi
+
+    conda activate "$CONDA_ENV_NAME"
+    python - <<'PY'
+import sys
+try:
+    import torch
+except Exception as exc:
+    raise SystemExit(f"[env] ERROR: torch is not available in this conda env: {exc}")
+try:
+    import torchvision
+except Exception as exc:
+    raise SystemExit(f"[env] ERROR: torchvision is not available in this conda env: {exc}")
+print(f"[env] python={sys.version.split()[0]}")
+print(f"[env] torch={torch.__version__} cuda={torch.version.cuda} cuda_available={torch.cuda.is_available()}")
+print(f"[env] torchvision={torchvision.__version__}")
+if not torch.cuda.is_available():
+    raise SystemExit("[env] ERROR: CUDA is not available in torch. Use the AutoDL CUDA/PyTorch image or set CONDA_ENV_NAME to that env.")
+PY
+
     python -m pip install -r requirements-autodl.txt
-    python -m pip install -e .
-else
-    if [[ -f "$VENV_DIR/bin/activate" ]]; then
-        # shellcheck disable=SC1091
-        source "$VENV_DIR/bin/activate"
-    fi
+    python -m pip install -e . --no-deps
 fi
 
 if [[ "$RUN_DOWNLOADS" == "1" ]]; then

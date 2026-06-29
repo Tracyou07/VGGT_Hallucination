@@ -6,16 +6,20 @@ observing hallucination across the camera pose, depth, and point-cloud outputs.
 ## AutoDL One-Click Run
 
 ```bash
+cd /root/autodl-tmp
 git clone https://github.com/Tracyou07/VGGT_Hallucination.git
 cd VGGT_Hallucination
 bash scripts/autodl/run_scannet_hallucination.sh
 ```
 
-The script installs dependencies, downloads VGGT-1B weights, downloads and
-extracts a licensed ScanNet subset, and runs the ScanNet hallucination eval.
+The script clones the AutoDL image's existing CUDA/PyTorch conda environment,
+installs only the missing VGGT helper dependencies, downloads VGGT-1B weights,
+downloads/extracts a licensed ScanNet subset, and runs the eval.
 
 Default locations:
 
+- Code: `/root/autodl-tmp/VGGT_Hallucination`
+- Conda env: `/root/miniconda3/envs/vggt_hallucination`
 - Data: `/root/autodl-tmp/datasets/scannetv2`
 - Weights: `/root/autodl-tmp/ckpt/VGGT-1B`
 - Results: `/root/autodl-tmp/vggt_hallucination/results`

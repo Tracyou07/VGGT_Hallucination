@@ -8,13 +8,20 @@ then evaluates depth, camera pose, derived point clouds, and optional native
 ## Quick Start
 
 ```bash
+cd /root/autodl-tmp
 git clone https://github.com/Tracyou07/VGGT_Hallucination.git
 cd VGGT_Hallucination
 bash scripts/autodl/run_scannet_hallucination.sh
 ```
 
+The default setup clones AutoDL's `base` conda environment into
+`vggt_hallucination`, preserving the image's CUDA/PyTorch installation. The
+script does not install torch.
+
 Default output paths:
 
+- Code: `/root/autodl-tmp/VGGT_Hallucination`
+- Conda env: `/root/miniconda3/envs/vggt_hallucination`
 - Data: `/root/autodl-tmp/datasets/scannetv2`
 - Weights: `/root/autodl-tmp/ckpt/VGGT-1B`
 - Results: `/root/autodl-tmp/vggt_hallucination/results`
@@ -34,7 +41,8 @@ bash scripts/autodl/run_scannet_hallucination.sh
 ```bash
 SCENE_LIMIT=2 FRAME_COUNTS="100 300" bash scripts/autodl/run_scannet_hallucination.sh
 SAMPLING=regime_step bash scripts/autodl/run_scannet_hallucination.sh
-RUN_DOWNLOADS=0 INSTALL_ENV=0 bash scripts/autodl/run_scannet_hallucination.sh
+CONDA_ENV_NAME=base bash scripts/autodl/run_scannet_hallucination.sh
+RUN_DOWNLOADS=0 SETUP_ENV=0 bash scripts/autodl/run_scannet_hallucination.sh
 EVAL_NATIVE_POINTS=0 EVAL_COUNTERFACTUALS=0 bash scripts/autodl/run_scannet_hallucination.sh
 ```
 
