@@ -39,5 +39,16 @@ endpoint:
 HF_ENDPOINT=https://hf-mirror.com bash scripts/autodl/run_scannet_hallucination.sh
 ```
 
+If the conda environment, weights, and uploaded ScanNet files already exist,
+reuse them without reinstalling dependencies:
+
+```bash
+INSTALL_ENV=0 RUN_DOWNLOADS=0 SCENE_LIMIT=5 FRAME_COUNTS="100 300" \
+bash scripts/autodl/run_scannet_hallucination.sh
+```
+
+This still activates `/root/miniconda3/envs/vggt_hallucination` and extracts
+uploaded `.sens` files into `process_scannet` before evaluation.
+
 See `scripts/autodl/README_scannet_hallucination.md` for sampling modes and
 common overrides.

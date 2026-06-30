@@ -43,9 +43,14 @@ SCENE_LIMIT=2 FRAME_COUNTS="100 300" bash scripts/autodl/run_scannet_hallucinati
 SAMPLING=regime_step bash scripts/autodl/run_scannet_hallucination.sh
 HF_ENDPOINT=https://hf-mirror.com bash scripts/autodl/run_scannet_hallucination.sh
 CONDA_ENV_NAME=base bash scripts/autodl/run_scannet_hallucination.sh
-RUN_DOWNLOADS=0 SETUP_ENV=0 bash scripts/autodl/run_scannet_hallucination.sh
+INSTALL_ENV=0 RUN_DOWNLOADS=0 bash scripts/autodl/run_scannet_hallucination.sh
 EVAL_NATIVE_POINTS=0 EVAL_COUNTERFACTUALS=0 bash scripts/autodl/run_scannet_hallucination.sh
 ```
+
+Use `INSTALL_ENV=0` after the conda environment has already been created. The
+script still activates that environment and, by default, extracts uploaded
+`.sens` files before evaluation. Set `RUN_EXTRACT=0` only if
+`process_scannet/` is already populated.
 
 Sampling modes:
 

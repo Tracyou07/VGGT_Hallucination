@@ -19,7 +19,9 @@ FRAME_COUNTS="${FRAME_COUNTS:-100 300 500 1000}"
 SAMPLING="${SAMPLING:-prefix}"
 PREPROCESS_MODE="${PREPROCESS_MODE:-pad}"
 RUN_DOWNLOADS="${RUN_DOWNLOADS:-1}"
-SETUP_ENV="${SETUP_ENV:-${INSTALL_ENV:-1}}"
+RUN_EXTRACT="${RUN_EXTRACT:-1}"
+INSTALL_ENV="${INSTALL_ENV:-${SETUP_ENV:-1}}"
+ACTIVATE_ENV="${ACTIVATE_ENV:-1}"
 EVAL_NATIVE_POINTS="${EVAL_NATIVE_POINTS:-1}"
 EVAL_COUNTERFACTUALS="${EVAL_COUNTERFACTUALS:-1}"
 
@@ -27,7 +29,11 @@ mkdir -p "$AUTODL_WORKDIR" "$RESULT_DIR"
 
 cd "$REPO_ROOT"
 
-if [[ "$SETUP_ENV" == "1" ]]; then
+if [[ ! "${OMP_NUM_THREADS:-}" =~ ^[0-9]+$ ]]; then
+    export OMP_NUM_THREADS=1
+fi
+
+if [[ "$ACTIVATE_ENV" == "1" || "$INSTALL_ENV" == "1" ]]; then
     if [[ -n "${VIRTUAL_ENV:-}" ]] && type deactivate >/dev/null 2>&1; then
         echo "[env] deactivating current virtualenv: $VIRTUAL_ENV"
         deactivate
@@ -41,7 +47,7 @@ if [[ "$SETUP_ENV" == "1" ]]; then
     # shellcheck source=/dev/null
     source "$CONDA_ROOT/etc/profile.d/conda.sh"
 
-    if ! conda env list | awk '{print $1}' | grep -qx "$CONDA_ENV_NAME"; then
+    if [[ "$INSTALL_ENV" == "1" ]] && ! conda env list | awk '{print $1}' | grep -qx "$CONDA_ENV_NAME"; then
         if [[ "$CONDA_CREATE_MODE" == "clone" ]]; then
             echo "[env] creating conda env $CONDA_ENV_NAME by cloning $CONDA_CLONE_FROM"
             conda create -y -n "$CONDA_ENV_NAME" --clone "$CONDA_CLONE_FROM"
@@ -69,9 +75,11 @@ if not torch.cuda.is_available():
     raise SystemExit("[env] ERROR: CUDA is not available in torch. Use the AutoDL CUDA/PyTorch image or set CONDA_ENV_NAME to that env.")
 PY
 
-    python -m pip uninstall -y opencv-python opencv-contrib-python opencv-contrib-python-headless || true
-    python -m pip install -r requirements-autodl.txt
-    python -m pip install -e . --no-deps
+    if [[ "$INSTALL_ENV" == "1" ]]; then
+        python -m pip uninstall -y opencv-python opencv-contrib-python opencv-contrib-python-headless || true
+        python -m pip install -r requirements-autodl.txt
+        python -m pip install -e . --no-deps
+    fi
 fi
 
 if [[ "$RUN_DOWNLOADS" == "1" ]]; then
@@ -80,6 +88,13 @@ if [[ "$RUN_DOWNLOADS" == "1" ]]; then
     SCENE_LIST="$SCENE_LIST" \
     SCENE_LIMIT="$SCENE_LIMIT" \
     bash "$SCRIPT_DIR/download_scannet_subset.sh"
+elif [[ "$RUN_EXTRACT" == "1" ]]; then
+    python "$SCRIPT_DIR/extract_scannet_sens.py" \
+        --raw-dir "$SCANNET_ROOT/raw_sens/scans" \
+        --out-dir "$SCANNET_ROOT/process_scannet" \
+        --scene-list "$SCENE_LIST" \
+        --scene-limit "$SCENE_LIMIT" \
+        --export-depth
 fi
 
 read -r -a FRAME_ARGS <<< "$FRAME_COUNTS"
