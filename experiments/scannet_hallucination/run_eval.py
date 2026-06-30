@@ -18,6 +18,7 @@ from vggt.models.vggt import VGGT
 from vggt.utils.geometry import depth_to_world_coords_points
 from vggt.utils.load_fn import load_and_preprocess_images
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
+from experiments.scannet_hallucination.resume import load_completed_metrics, selection_out_dir
 
 try:
     from plyfile import PlyData
@@ -723,6 +724,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=33)
     parser.add_argument("--eval-native-points", action="store_true")
     parser.add_argument("--eval-counterfactuals", action="store_true")
+    parser.add_argument("--resume", action="store_true", default=True)
+    parser.add_argument("--no-resume", dest="resume", action="store_false")
     parser.add_argument("--plot", action="store_true", default=True)
     parser.add_argument("--no-plot", dest="plot", action="store_false")
     return parser.parse_args()
@@ -768,6 +771,21 @@ def main() -> None:
         for requested_count, selected_ids in selections.items():
             if len(selected_ids) < 3:
                 print(f"[scene] skip {scene}/{requested_count}: insufficient frames")
+                continue
+            existing = None
+            if args.resume:
+                metrics_path = selection_out_dir(
+                    args.out_dir, scene, len(selected_ids)
+                ) / "metrics.json"
+                existing = load_completed_metrics(
+                    metrics_path,
+                    requested_count=requested_count,
+                    sampling=args.sampling,
+                )
+            if existing is not None:
+                print(f"[scene] resume skip {scene}/{requested_count}: {metrics_path}")
+                all_rows.append(existing)
+                write_summary(all_rows, args.out_dir)
                 continue
             print(f"[scene] {scene} frames={len(selected_ids)} sampling={args.sampling}")
             try:

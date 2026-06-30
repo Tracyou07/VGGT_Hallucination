@@ -43,12 +43,22 @@ If the conda environment, weights, and uploaded ScanNet files already exist,
 reuse them without reinstalling dependencies:
 
 ```bash
-INSTALL_ENV=0 RUN_DOWNLOADS=0 SCENE_LIMIT=5 FRAME_COUNTS="100 300" \
+INSTALL_ENV=0 RUN_DOWNLOADS=0 SCENE_LIMIT=5 FRAME_COUNTS="100 300 500 1000" \
 bash scripts/autodl/run_scannet_hallucination.sh
 ```
 
 This still activates `/root/miniconda3/envs/vggt_hallucination` and extracts
 uploaded `.sens` files into `process_scannet` before evaluation.
+
+If `process_scannet/` already exists and you only want the long-frame pass:
+
+```bash
+INSTALL_ENV=0 RUN_DOWNLOADS=0 RUN_EXTRACT=0 SCENE_LIMIT=5 FRAME_COUNTS="500 1000" \
+bash scripts/autodl/run_scannet_hallucination.sh
+```
+
+Evaluation resumes by default. Existing `metrics.json` files are skipped, so the
+same command can be rerun after interruption.
 
 See `scripts/autodl/README_scannet_hallucination.md` for sampling modes and
 common overrides.

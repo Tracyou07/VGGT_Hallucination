@@ -22,6 +22,8 @@ RUN_DOWNLOADS="${RUN_DOWNLOADS:-1}"
 RUN_EXTRACT="${RUN_EXTRACT:-1}"
 INSTALL_ENV="${INSTALL_ENV:-${SETUP_ENV:-1}}"
 ACTIVATE_ENV="${ACTIVATE_ENV:-1}"
+CHECK_RUNTIME_DEPS="${CHECK_RUNTIME_DEPS:-1}"
+REPAIR_MISSING_DEPS="${REPAIR_MISSING_DEPS:-1}"
 EVAL_NATIVE_POINTS="${EVAL_NATIVE_POINTS:-1}"
 EVAL_COUNTERFACTUALS="${EVAL_COUNTERFACTUALS:-1}"
 
@@ -32,6 +34,31 @@ cd "$REPO_ROOT"
 if [[ ! "${OMP_NUM_THREADS:-}" =~ ^[0-9]+$ ]]; then
     export OMP_NUM_THREADS=1
 fi
+
+ensure_runtime_deps() {
+    local missing_packages
+    missing_packages="$(python "$SCRIPT_DIR/check_runtime_deps.py" --print-missing-packages)"
+    if [[ -z "$missing_packages" ]]; then
+        python "$SCRIPT_DIR/check_runtime_deps.py"
+        return
+    fi
+
+    echo "[deps] missing runtime packages: $missing_packages"
+    if [[ "$REPAIR_MISSING_DEPS" != "1" ]]; then
+        echo "[deps] ERROR: set REPAIR_MISSING_DEPS=1 or install the packages above"
+        exit 1
+    fi
+
+    if [[ "$missing_packages" == *"opencv-python-headless==4.11.0.86"* ]]; then
+        python -m pip install --force-reinstall --no-deps --no-cache-dir opencv-python-headless==4.11.0.86
+        missing_packages="${missing_packages/opencv-python-headless==4.11.0.86/}"
+    fi
+    # shellcheck disable=SC2086
+    if [[ -n "${missing_packages// }" ]]; then
+        python -m pip install $missing_packages
+    fi
+    python "$SCRIPT_DIR/check_runtime_deps.py"
+}
 
 if [[ "$ACTIVATE_ENV" == "1" || "$INSTALL_ENV" == "1" ]]; then
     if [[ -n "${VIRTUAL_ENV:-}" ]] && type deactivate >/dev/null 2>&1; then
@@ -80,6 +107,10 @@ PY
         python -m pip install -r requirements-autodl.txt
         python -m pip install -e . --no-deps
     fi
+fi
+
+if [[ "$CHECK_RUNTIME_DEPS" == "1" ]]; then
+    ensure_runtime_deps
 fi
 
 if [[ "$RUN_DOWNLOADS" == "1" ]]; then

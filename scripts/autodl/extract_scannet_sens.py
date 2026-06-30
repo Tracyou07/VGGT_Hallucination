@@ -17,6 +17,15 @@ import sys
 from pathlib import Path
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def default_process_dir(raw_dir: Path) -> Path:
+    if raw_dir.name == "scans" and raw_dir.parent.name == "raw_sens":
+        return raw_dir.parent.parent / "process_scannet"
+    return raw_dir.parent / "process_scannet"
+
+
 def read_scenes(scene_list: Path, scene_limit: int) -> list[str]:
     scenes = []
     for line in scene_list.read_text(encoding="utf-8").splitlines():
@@ -109,8 +118,12 @@ def extract_scene(sensor_data_cls, sens_file: Path, out_scene: Path, export_dept
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract ScanNet .sens scenes.")
     parser.add_argument("--raw-dir", type=Path, required=True)
-    parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--scene-list", type=Path, required=True)
+    parser.add_argument("--out-dir", type=Path)
+    parser.add_argument(
+        "--scene-list",
+        type=Path,
+        default=REPO_ROOT / "configs/scannet_hallucination_10.txt",
+    )
     parser.add_argument("--scene-limit", type=int, default=10)
     parser.add_argument("--scannet-repo", type=Path, default=Path("/root/autodl-tmp/ScanNet"))
     parser.add_argument("--patched-dir", type=Path, default=Path("/tmp/scannet_sensreader_py3"))
@@ -120,6 +133,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.out_dir is None:
+        args.out_dir = default_process_dir(args.raw_dir)
     scenes = read_scenes(args.scene_list, args.scene_limit)
     sensreader_dir = ensure_scannet_repo(args.scannet_repo)
     if sensreader_dir.name == "sensreader_py3":
