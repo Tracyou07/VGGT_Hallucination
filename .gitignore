@@ -1,6 +1,7 @@
 .hydra/
 output/
 ckpt/
+datasets/
 meeting/
 examples/pose_hallucination_candidates/
 # Byte-compiled / optimized / DLL files

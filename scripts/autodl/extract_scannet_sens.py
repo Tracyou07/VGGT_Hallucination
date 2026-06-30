@@ -29,6 +29,11 @@ def read_scenes(scene_list: Path, scene_limit: int) -> list[str]:
 
 
 def ensure_scannet_repo(scannet_repo: Path) -> Path:
+    vendored_dir = Path(__file__).resolve().parent / "sensreader_py3"
+    if (vendored_dir / "SensorData.py").exists():
+        print(f"Using vendored SensReader: {vendored_dir}")
+        return vendored_dir
+
     sensreader_dir = scannet_repo / "SensReader" / "python"
     if sensreader_dir.exists():
         return sensreader_dir
@@ -117,7 +122,10 @@ def main() -> None:
     args = parse_args()
     scenes = read_scenes(args.scene_list, args.scene_limit)
     sensreader_dir = ensure_scannet_repo(args.scannet_repo)
-    patched_dir = patch_sensreader(sensreader_dir, args.patched_dir)
+    if sensreader_dir.name == "sensreader_py3":
+        patched_dir = sensreader_dir
+    else:
+        patched_dir = patch_sensreader(sensreader_dir, args.patched_dir)
 
     sys.path.insert(0, str(patched_dir))
     from SensorData import SensorData  # type: ignore
