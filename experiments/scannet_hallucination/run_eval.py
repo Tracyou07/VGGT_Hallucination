@@ -707,7 +707,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gt-ply-dir", type=Path, required=True)
     parser.add_argument("--scene-list", type=Path, required=True)
     parser.add_argument("--scene-limit", type=int, default=10)
-    parser.add_argument("--frame-counts", type=int, nargs="+", default=[100, 300, 500, 1000])
+    parser.add_argument("--frame-counts", type=int, nargs="+", default=[100, 200, 300, 400, 500])
     parser.add_argument("--sampling", choices=["prefix", "uniform", "nested_uniform", "regime_step"], default="prefix")
     parser.add_argument("--weights", choices=["local", "hub", "random"], default="local")
     parser.add_argument("--ckpt-dir", type=Path, default=Path("ckpt/VGGT-1B"))
