@@ -33,7 +33,7 @@ Aggregator 只运行一次，并产生固定的 normalized Camera Token `z[B,S,C
 
 #### 第 1 轮：Camera Iteration Study
 
-冻结全部权重，在每个帧数设置上只运行一次 Aggregator 和 16 轮 Camera Head，然后分别读取第 1、2、4、8、16 轮结果。比较 aligned ATE/ARE/RPE、Sim(3) scale 和 delta norm，回答默认 4 轮是否不足、过度或与主要误差无关。对应 Task 3–5。
+冻结全部权重，在每个帧数设置上只运行一次 Aggregator 和 16 轮 Camera Head，然后分别读取第 1、2、4、8、16 轮结果。比较 aligned ATE/ARE/RPE、Sim(3) scale 和 delta norm，回答默认 4 轮是否不足、过度或与主要误差无关。对应 Task 3–6。
 
 #### 第 2 轮：Geometry-aware Iteration Selection
 
@@ -57,13 +57,15 @@ Aggregator 只运行一次，并产生固定的 normalized Camera Token `z[B,S,C
 
 ## Global Constraints
 
-- 唯一设计依据是 `doc/VGGT_DiT_Research_Guide.md`，实现目标仅针对本仓库中的原始 VGGT。
+- 研究方法依据是 `doc/VGGT_DiT_Research_Guide.md`，实验分类依据是 `doc/2026-07-16_Experiment_Separation_Design.md`。
 - 首轮 MVP 完全 training-free；不得创建 optimizer，不得修改 checkpoint，不得更新任何模型参数。
 - `CameraHead.forward(aggregated_tokens_list)` 与 `VGGT.forward(images, query_points)` 的默认数值结果和现有 prediction keys 必须保持不变。
 - 高维 `pose_tokens_modulated` 只在显式请求时保存；默认 trace 仅保留 Camera Token、9 维 pose 累计量、9 维增量和增量范数。
 - 所有含预测量的指标以 `aligned` 为主结论；`raw` 与 scale 仅诊断尺度或 gauge；纯 GT baseline 只看 `raw`。
-- 单元测试不得依赖 CUDA、下载权重或读取 ScanNet；完整模型实验输出放在 `probe/runs/`，不得提交大型 `.npz` 文件。
+- 单元测试不得依赖 CUDA、下载权重或读取 ScanNet；正式预实验输出只能放在 `results/pre_experiments/camera_iteration/`，不得提交大型 `.npz` 文件。
 - 不增加第三方依赖，不重构无关 Head，不在首轮实现 geometry selection、SE(3) 优化、latent optimization 或 SFT。
+- `experiments/scannet_hallucination/` 与 `results/scannet_hallucination/` 属于持续扩充的现象刻画，不移动、不重命名，也不接收方法预实验输出。
+- 方法预实验必须生成 `run_metadata.json`，其中记录真实调用参数和完整 Git commit；不得把 smoke run 写成完整 10-scene 协议。
 
 ---
 
@@ -80,14 +82,72 @@ Aggregator 只运行一次，并产生固定的 normalized Camera Token `z[B,S,C
 
 | Path | Responsibility |
 |---|---|
+| `pre_experiments/README.md` | 定义方法预实验的目录、运行和输出约束 |
+| `pre_experiments/camera_iteration/contracts.py` | 验证输出路径、生成 run ID 与 metadata |
+| `pre_experiments/camera_iteration/metrics.py` | 纯函数：验证轮次、转换 pose、生成逐轮指标行 |
+| `pre_experiments/camera_iteration/run_study.py` | ScanNet CLI、单次最大轮次推理、结果落盘 |
 | `vggt/heads/camera_head.py` | 定义 Camera trace contract，并允许直接解码 normalized Camera Tokens |
 | `vggt/models/vggt.py` | 透传迭代次数与 trace 开关，保持默认输出兼容 |
-| `probe/camera_iteration_metrics.py` | 纯函数：验证轮次、转换 pose、生成逐轮指标行 |
-| `probe/camera_iteration_study.py` | ScanNet CLI、单次最大轮次推理、结果落盘 |
 | `probe/tests/test_camera_head_trace.py` | CameraHead trace 形状、数值兼容和输入校验 |
 | `probe/tests/test_vggt_camera_options.py` | 顶层参数透传和 prediction contract |
+| `probe/tests/test_pre_experiment_contract.py` | 方法预实验输出隔离和 metadata contract |
 | `probe/tests/test_camera_iteration_metrics.py` | 逐轮指标与轮次索引纯函数测试 |
-| `probe/README_camera_iteration.md` | 运行命令、输出 schema、指标解释 |
+| `pre_experiments/camera_iteration/README.md` | 运行命令、输出 schema、指标解释 |
+
+---
+
+## Preparation: Separate Study Types
+
+这一准备任务只建立现象刻画与方法预实验的可见边界，不移动旧代码和结果。
+
+### Task 0: Add Study Labels and Pre-experiment Namespace
+
+**Files:**
+
+- Create: `experiments/scannet_hallucination/README.md`
+- Create: `results/scannet_hallucination/README.md`
+- Create: `pre_experiments/__init__.py`
+- Create: `pre_experiments/README.md`
+- Create: `pre_experiments/camera_iteration/__init__.py`
+- Create: `pre_experiments/camera_iteration/README.md`
+- Modify: `AGENTS.md`
+- Create: `log/2026-07-16.md`
+
+**Interfaces:**
+
+- Existing ScanNet commands and result paths remain unchanged.
+- New code imports through `pre_experiments.camera_iteration`.
+- Log entries use `[现象刻画]` or `[方法预实验]` prefixes.
+
+- [ ] **Step 1: Add the active phenomenon-characterization labels**
+
+Both existing README files must state `study_type: phenomenon_characterization`, `status: ongoing`, the current limited-sample caveat, and that future large-scale runs continue in the same paths.
+
+- [ ] **Step 2: Create the method pre-experiment namespace**
+
+`pre_experiments/README.md` must define `study_type: method_pre_experiment`, the allowed result root `results/pre_experiments/`, the aligned/raw metric policy, and the rule that GT is evaluation-only for selection/refinement methods. Package `__init__.py` files contain only a one-line module docstring.
+
+- [ ] **Step 3: Update repository instructions and today's log**
+
+Add a `Study Types` section to `AGENTS.md` with both definitions and paths. In `log/2026-07-16.md`, record this work as `[方法预实验]` and explicitly state that no Camera experiment has run yet.
+
+- [ ] **Step 4: Verify the namespace without moving old assets**
+
+```powershell
+Test-Path experiments\scannet_hallucination\run_eval.py
+Test-Path results\scannet_hallucination\summary.json
+Test-Path pre_experiments\camera_iteration\__init__.py
+git diff --check
+```
+
+Expected: all three `Test-Path` calls print `True`; `git diff --check` exits 0.
+
+- [ ] **Step 5: Commit the study boundary**
+
+```powershell
+git add AGENTS.md experiments/scannet_hallucination/README.md results/scannet_hallucination/README.md pre_experiments log/2026-07-16.md doc/VGGT_DiT_Implementation_Plan.md
+git commit -m "Separate method pre-experiments"
+```
 
 ---
 
@@ -375,11 +435,169 @@ git commit -m "Expose camera iteration controls"
 
 本轮只比较现有 Camera Head 的中间输出，不选择 pose、不优化 pose，也不更新 latent。
 
-### Task 3: Add Pure Per-Iteration Metric Helpers
+### Task 3: Enforce the Method Pre-experiment Run Contract
 
 **Files:**
 
-- Create: `probe/camera_iteration_metrics.py`
+- Create: `pre_experiments/camera_iteration/contracts.py`
+- Test: `probe/tests/test_pre_experiment_contract.py`
+
+**Interfaces:**
+
+- `validate_output_root(path: Path, repo_root: Path) -> Path`
+- `make_run_id(git_commit: str, now: datetime) -> str`
+- `build_run_metadata(git_commit: str, scene_list: Path, scene_count: int, frame_counts: list[int], sampling: str) -> dict[str, object]`
+- `read_git_commit(repo_root: Path) -> str`
+
+- [ ] **Step 1: Write failing contract tests**
+
+Create tests that accept `results/pre_experiments/camera_iteration`, reject `results/scannet_hallucination`, verify `20260716T010203Z_2b1e6fc`, and assert metadata uses the actual scene count and frame counts supplied by the caller:
+
+```python
+from datetime import datetime, timezone
+from pathlib import Path
+import tempfile
+import unittest
+
+from pre_experiments.camera_iteration.contracts import (
+    build_run_metadata,
+    make_run_id,
+    validate_output_root,
+)
+
+
+class PreExperimentContractTest(unittest.TestCase):
+    def test_output_root_isolated_from_phenomenon_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            allowed = root / "results" / "pre_experiments" / "camera_iteration"
+            self.assertEqual(validate_output_root(allowed, root), allowed.resolve())
+            with self.assertRaisesRegex(ValueError, "method pre-experiment"):
+                validate_output_root(root / "results" / "scannet_hallucination", root)
+
+    def test_run_id_and_metadata_use_actual_invocation(self):
+        commit = "2b1e6fc3a7e46e8bc4e628c4ce4f8e1a49373032"
+        now = datetime(2026, 7, 16, 1, 2, 3, tzinfo=timezone.utc)
+        self.assertEqual(make_run_id(commit, now), "20260716T010203Z_2b1e6fc")
+        metadata = build_run_metadata(
+            commit,
+            Path("configs/scannet_hallucination_10.txt"),
+            scene_count=1,
+            frame_counts=[25],
+            sampling="nested_uniform",
+        )
+        self.assertEqual(metadata["study_type"], "method_pre_experiment")
+        self.assertEqual(metadata["scene_count"], 1)
+        self.assertEqual(metadata["frame_counts"], [25])
+```
+
+- [ ] **Step 2: Run the contract test and confirm the module is absent**
+
+```powershell
+python -m unittest probe.tests.test_pre_experiment_contract -v
+```
+
+Expected: FAIL with `ModuleNotFoundError`.
+
+- [ ] **Step 3: Implement the minimal contract module**
+
+Use `Path.resolve()` and `Path.is_relative_to()` for routing, UTC for run IDs, and `git rev-parse HEAD` for the full commit. Validate that commit IDs contain exactly 40 hexadecimal characters and that `scene_count == 0` is rejected.
+
+```python
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+import re
+import subprocess
+
+
+STUDY_TYPE = "method_pre_experiment"
+STUDY_NAME = "camera_iteration"
+_COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
+
+
+def validate_output_root(path: Path, repo_root: Path) -> Path:
+    root = repo_root.resolve()
+    resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
+    allowed = (root / "results" / "pre_experiments" / STUDY_NAME).resolve()
+    if not resolved.is_relative_to(allowed):
+        raise ValueError(f"method pre-experiment output must be under {allowed}")
+    return resolved
+
+
+def _validate_commit(git_commit: str) -> None:
+    if _COMMIT_PATTERN.fullmatch(git_commit) is None:
+        raise ValueError("git_commit must be a 40-character lowercase hexadecimal id")
+
+
+def make_run_id(git_commit: str, now: datetime) -> str:
+    _validate_commit(git_commit)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
+    stamp = now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{stamp}_{git_commit[:7]}"
+
+
+def build_run_metadata(
+    git_commit: str,
+    scene_list: Path,
+    scene_count: int,
+    frame_counts: list[int],
+    sampling: str,
+) -> dict[str, object]:
+    _validate_commit(git_commit)
+    if scene_count < 1:
+        raise ValueError("scene_count must be at least 1")
+    if not frame_counts or any(count < 1 for count in frame_counts):
+        raise ValueError("frame_counts must contain positive integers")
+    return {
+        "study_type": STUDY_TYPE,
+        "study_name": STUDY_NAME,
+        "git_commit": git_commit,
+        "scene_list": scene_list.as_posix(),
+        "scene_count": scene_count,
+        "frame_counts": list(frame_counts),
+        "sampling": sampling,
+        "primary_metric_policy": "prediction metrics use aligned values",
+    }
+
+
+def read_git_commit(repo_root: Path) -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    commit = result.stdout.strip()
+    _validate_commit(commit)
+    return commit
+```
+
+- [ ] **Step 4: Run the contract tests**
+
+```powershell
+python -m unittest probe.tests.test_pre_experiment_contract -v
+```
+
+Expected: both tests PASS.
+
+- [ ] **Step 5: Commit the run contract**
+
+```powershell
+git add pre_experiments/camera_iteration/contracts.py probe/tests/test_pre_experiment_contract.py
+git commit -m "Add pre-experiment run contract"
+```
+
+---
+
+### Task 4: Add Pure Per-Iteration Metric Helpers
+
+**Files:**
+
+- Create: `pre_experiments/camera_iteration/metrics.py`
 - Test: `probe/tests/test_camera_iteration_metrics.py`
 - Reuse: `experiments/scannet_hallucination/run_eval.py:178`
 
@@ -451,17 +669,17 @@ Expected: all tests PASS.
 - [ ] **Step 5: Commit the metric unit**
 
 ```powershell
-git add probe/camera_iteration_metrics.py probe/tests/test_camera_iteration_metrics.py
+git add pre_experiments/camera_iteration/metrics.py probe/tests/test_camera_iteration_metrics.py
 git commit -m "Add camera iteration metrics"
 ```
 
 ---
 
-### Task 4: Build the ScanNet Camera Iteration Study Probe
+### Task 5: Build the ScanNet Camera Iteration Study
 
 **Files:**
 
-- Create: `probe/camera_iteration_study.py`
+- Create: `pre_experiments/camera_iteration/run_study.py`
 - Reuse: `experiments/scannet_hallucination/run_eval.py`
 
 **Interfaces:**
@@ -485,12 +703,12 @@ Use `parse_args(argv: list[str] | None = None)` and include:
 --ckpt-dir            default ckpt/VGGT-1B
 --device              cuda|cpu|auto
 --preprocess-mode     pad|crop
---out-dir             default probe/runs/camera_iteration_study
+--out-dir             default results/pre_experiments/camera_iteration
 --seed                default 33
 --save-camera-tokens  disabled by default
 ```
 
-Validate iterations immediately with `validate_iterations(iterations, max(iterations))`.
+Validate iterations immediately with `validate_iterations(iterations, max(iterations))`, then call `validate_output_root(args.out_dir, ROOT)` before loading a model. Generate the run directory with `make_run_id(read_git_commit(ROOT), datetime.now(timezone.utc))`.
 
 - [ ] **Step 2: Implement one-pass inference**
 
@@ -523,7 +741,7 @@ This preserves the exact Aggregator and Camera Head path while avoiding unrelate
 
 - [ ] **Step 3: Write stable output artifacts**
 
-For each `<scene>/frames_<S>/`, write:
+At the run root, write `run_metadata.json` before inference. For example, scene `scene0000_00` with 25 frames writes into `scene0000_00/frames_25/` below that run root:
 
 | File | Required content |
 |---|---|
@@ -532,13 +750,13 @@ For each `<scene>/frames_<S>/`, write:
 | `camera_trace.npz` | `frame_ids`, all `pose_enc_by_iteration[K,S,9]`, `raw_pose_enc_by_iteration[K,S,9]`, `pose_delta_by_iteration[K,S,9]`, `delta_norm[K,S]` |
 | `selected_frame_ids.json` | Exact ordered frame IDs |
 
-When `--save-camera-tokens` is set, append `normalized_camera_tokens[S,C]` and `pose_tokens_modulated[K,S,C]` to the NPZ. At the run root, write `summary.csv` and `summary.json` containing all scenes, frame counts, and requested iterations.
+When `--save-camera-tokens` is set, append `normalized_camera_tokens[S,C]` and `pose_tokens_modulated[K,S,C]` to the NPZ. At the run root, write `summary.csv` and `summary.json` containing all scenes, frame counts, and requested iterations. The metadata values must come from the actual CLI invocation, including a smoke run's reduced scene count.
 
 - [ ] **Step 4: Verify the CLI without model weights**
 
 ```powershell
-python probe/camera_iteration_study.py --help
-python -m py_compile probe/camera_iteration_study.py probe/camera_iteration_metrics.py
+python -m pre_experiments.camera_iteration.run_study --help
+python -m py_compile pre_experiments\camera_iteration\run_study.py pre_experiments\camera_iteration\metrics.py pre_experiments\camera_iteration\contracts.py
 ```
 
 Expected: exit code 0, all documented flags appear, and both files compile.
@@ -548,7 +766,7 @@ Expected: exit code 0, all documented flags appear, and both files compile.
 On the machine containing the local checkpoint and ScanNet subset:
 
 ```powershell
-python probe/camera_iteration_study.py `
+python -m pre_experiments.camera_iteration.run_study `
   --data-dir datasets\scannetv2\process_scannet `
   --scene-list configs\scannet_hallucination_10.txt `
   --scene-limit 1 `
@@ -557,25 +775,25 @@ python probe/camera_iteration_study.py `
   --sampling nested_uniform `
   --weights local `
   --device cuda `
-  --out-dir probe\runs\camera_iteration_study_smoke
+  --out-dir results\pre_experiments\camera_iteration
 ```
 
-Expected: exactly 5 metric rows, `camera_trace.npz` has `K=16`, every metric is finite, and iteration 4 matches the existing default pose metrics within floating-point tolerance for the same selected frames.
+Expected: a new UTC/commit run directory is created, `run_metadata.json` records `scene_count=1`, exactly 5 metric rows are written, `camera_trace.npz` has `K=16`, every metric is finite, and iteration 4 matches the existing default pose metrics within floating-point tolerance for the same selected frames.
 
 - [ ] **Step 6: Commit the probe**
 
 ```powershell
-git add probe/camera_iteration_study.py
+git add pre_experiments/camera_iteration/run_study.py
 git commit -m "Add camera iteration study probe"
 ```
 
 ---
 
-### Task 5: Document and Run the MVP Regression Gate
+### Task 6: Document and Run the MVP Regression Gate
 
 **Files:**
 
-- Create: `probe/README_camera_iteration.md`
+- Modify: `pre_experiments/camera_iteration/README.md`
 - Verify: all modified and newly created files above
 
 - [ ] **Step 1: Document reproducibility and metric semantics**
@@ -588,13 +806,15 @@ The README must state:
 - GT pose is used only for final evaluation in this MVP; future geometry-aware selection may not use GT.
 - Primary conclusions use aligned ATE/ARE/RPE. `pose_sim3_scale` is diagnostic.
 - Camera token dumps are opt-in because their size is `O(KSC)`.
+- Every run writes under `results/pre_experiments/camera_iteration/` and records actual invocation metadata.
+- The existing `results/scannet_hallucination/` tree is ongoing phenomenon characterization and must never receive method outputs.
 
 - [ ] **Step 2: Run the complete fast verification set**
 
 ```powershell
 python -m unittest discover -s probe/tests
 python -c "from vggt.models.vggt import VGGT; from vggt.heads.camera_head import CameraHead; print(VGGT.__name__, CameraHead.__name__)"
-python -m py_compile vggt\heads\camera_head.py vggt\models\vggt.py probe\camera_iteration_metrics.py probe\camera_iteration_study.py
+python -m py_compile vggt\heads\camera_head.py vggt\models\vggt.py pre_experiments\camera_iteration\contracts.py pre_experiments\camera_iteration\metrics.py pre_experiments\camera_iteration\run_study.py
 ```
 
 Expected: all unit tests PASS, import prints `VGGT CameraHead`, and compilation exits 0.
@@ -612,7 +832,7 @@ Expected: no whitespace errors; only the files listed in this plan are changed. 
 - [ ] **Step 4: Commit documentation after verification**
 
 ```powershell
-git add probe/README_camera_iteration.md
+git add pre_experiments/camera_iteration/README.md
 git commit -m "Document camera iteration experiment"
 ```
 
@@ -649,15 +869,15 @@ These stages are deliberately excluded from the first code change. Each begins o
 
 ### Round 2 Gate: Geometry-aware Iteration Selection
 
-Enter when the iteration curve is U-shaped or different scenes prefer different iterations. Create `probe/camera_geometry_score.py`, `probe/camera_iteration_selection.py`, and `probe/tests/test_camera_geometry_score.py`. The score may consume predicted depth, point map, confidence, focal stability, temporal smoothness, and correction norm, but never GT. Keep an explicitly named oracle-by-ATE result only as an upper bound. Proceed when the selected iteration improves median aligned ATE by at least 5% over fixed iteration 4 on at least 7 of 10 scenes.
+Enter when the iteration curve is U-shaped or different scenes prefer different iterations. Create `pre_experiments/camera_iteration/geometry_score.py`, `pre_experiments/camera_iteration/select_iteration.py`, and `probe/tests/test_camera_geometry_score.py`. The score may consume predicted depth, point map, confidence, focal stability, temporal smoothness, and correction norm, but never GT. Keep an explicitly named oracle-by-ATE result only as an upper bound. Proceed when the selected iteration improves median aligned ATE by at least 5% over fixed iteration 4 on at least 7 of 10 scenes.
 
 ### Round 3 Gate: Training-free SE(3) Pose Refinement
 
-Enter when iteration choice alone is insufficient and a GT-free geometry score correlates with aligned pose error. Add `vggt/utils/se3.py`, `probe/geometry_residuals.py`, `probe/pose_residual_refinement.py`, and focused tests. Optimize `[S-1,6]` corrections with frame 0 fixed, left-compose `exp(delta_xi^)` with predicted `w2c`, recompute residuals every step, and retain correction regularization. Reject the method if geometry loss falls while median aligned ATE or aligned point-cloud error consistently worsens.
+Enter when iteration choice alone is insufficient and a GT-free geometry score correlates with aligned pose error. Add `vggt/utils/se3.py`, `pre_experiments/pose_refinement/geometry_residuals.py`, `pre_experiments/pose_refinement/run_refinement.py`, and focused tests. Optimize `[S-1,6]` corrections with frame 0 fixed, left-compose `exp(delta_xi^)` with predicted `w2c`, recompute residuals every step, and retain correction regularization. Reject the method if geometry loss falls while median aligned ATE or aligned point-cloud error consistently worsens.
 
 ### Round 4 Gate: Low-rank Camera Latent Probing
 
-Enter after a stable GT-free geometry objective exists. Use the Task 1 `decode_pose_tokens()` API and optimize only coefficients `a[S,d]` in `z' = z + a B^T`, with fixed orthonormal `B[C,d]`, `d in {16,32,64}`, and three random bases. Add `probe/camera_latent_probe.py` plus tests for frozen parameters and gradient flow. Continue only if latent probing beats pose-only refinement by at least 5% median aligned ATE and succeeds for at least two of three bases.
+Enter after a stable GT-free geometry objective exists. Use the Task 1 `decode_pose_tokens()` API and optimize only coefficients `a[S,d]` in `z' = z + a B^T`, with fixed orthonormal `B[C,d]`, `d in {16,32,64}`, and three random bases. Add `pre_experiments/latent_probing/run_probe.py` plus tests for frozen parameters and gradient flow. Continue only if latent probing beats pose-only refinement by at least 5% median aligned ATE and succeeds for at least two of three bases.
 
 ### Round 5 Gate: Small-scale Tiny Latent Denoiser
 
