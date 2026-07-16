@@ -62,6 +62,16 @@ class PoseMetricsTest(unittest.TestCase):
         self.assertLess(metrics["pose_rpe_trans_mean_aligned"], 1e-10)
         self.assertAlmostEqual(metrics["pose_sim3_scale"], scale, places=10)
 
+    def test_rpe_translation_uses_relative_transform_not_only_step_length(self):
+        gt_c2w = ground_truth_trajectory()
+        pred_c2w = gt_c2w.copy()
+        pred_c2w[0, :3, :3] = rotation_z(math.pi / 2.0)
+        pred_c2w[1, :3, :3] = rotation_z(-math.pi / 2.0)
+
+        metrics = evaluate_pose(np.linalg.inv(pred_c2w), gt_c2w)
+
+        self.assertGreater(metrics["pose_rpe_trans_mean_aligned"], 0.5)
+
 
 class IterationMetricsTest(unittest.TestCase):
     def test_exact_pose_encodings_produce_rows_for_requested_iterations(self):

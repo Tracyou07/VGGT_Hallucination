@@ -84,28 +84,30 @@ def evaluate_pose(pred_w2c: np.ndarray, gt_c2w: np.ndarray) -> dict[str, float]:
     aligned_centers = scale * (predicted_centers @ alignment_rotation.T) + translation
     translation_errors = np.linalg.norm(aligned_centers - ground_truth_centers, axis=1)
 
+    aligned_c2w = predicted_c2w.copy()
+    aligned_c2w[:, :3, :3] = np.einsum(
+        "ij,sjk->sik",
+        alignment_rotation,
+        predicted_c2w[:, :3, :3],
+    )
+    aligned_c2w[:, :3, 3] = aligned_centers
+
     rotation_errors = []
-    for predicted_pose, ground_truth_pose in zip(predicted_c2w, ground_truth_c2w):
-        aligned_rotation = alignment_rotation @ predicted_pose[:3, :3]
+    for aligned_pose, ground_truth_pose in zip(aligned_c2w, ground_truth_c2w):
         rotation_errors.append(
-            rotation_angle_deg(aligned_rotation.T @ ground_truth_pose[:3, :3])
+            rotation_angle_deg(aligned_pose[:3, :3].T @ ground_truth_pose[:3, :3])
         )
 
     relative_rotation_errors = []
     relative_translation_errors = []
     for index in range(1, len(ground_truth_c2w)):
-        predicted_relative = np.linalg.inv(predicted_c2w[index - 1]) @ predicted_c2w[index]
+        predicted_relative = np.linalg.inv(aligned_c2w[index - 1]) @ aligned_c2w[index]
         ground_truth_relative = (
             np.linalg.inv(ground_truth_c2w[index - 1]) @ ground_truth_c2w[index]
         )
-        relative_rotation_errors.append(
-            rotation_angle_deg(
-                predicted_relative[:3, :3].T @ ground_truth_relative[:3, :3]
-            )
-        )
-        predicted_distance = scale * np.linalg.norm(predicted_relative[:3, 3])
-        ground_truth_distance = np.linalg.norm(ground_truth_relative[:3, 3])
-        relative_translation_errors.append(abs(predicted_distance - ground_truth_distance))
+        relative_error = np.linalg.inv(ground_truth_relative) @ predicted_relative
+        relative_rotation_errors.append(rotation_angle_deg(relative_error[:3, :3]))
+        relative_translation_errors.append(np.linalg.norm(relative_error[:3, 3]))
 
     return {
         "pose_ate_rmse_aligned": float(np.sqrt(np.mean(translation_errors**2))),
