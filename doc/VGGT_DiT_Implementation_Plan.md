@@ -130,7 +130,7 @@ Aggregator 只运行一次，并产生固定的 normalized Camera Token `z[B,S,C
 - AutoDL defaults use existing `/root/autodl-tmp/datasets/scannetv2` and `/root/autodl-tmp/ckpt/VGGT-1B`.
 - The log records only work actually completed on this method branch.
 
-- [ ] **Step 1: Merge the clean baseline and resolve the plan deliberately**
+- [x] **Step 1: Merge the clean baseline and resolve the plan deliberately**
 
 Run from this worktree:
 
@@ -142,7 +142,7 @@ git restore --source=b8c971b -- doc/VGGT_DiT_Research_Guide.md
 
 Expected: inherited `experiments/`, phenomenon `results/`, old `configs/`, `scripts/`, `probe/`, and `requirements-autodl.txt` are removed by the main cleanup. If Git reports the expected modify/delete conflict for this plan, keep the branch copy before `git add`.
 
-- [ ] **Step 2: Create the branch-owned namespace and fixed inputs**
+- [x] **Step 2: Create the branch-owned namespace and fixed inputs**
 
 Create package `__init__.py` files with one-line docstrings. Copy the 10 approved scene IDs into `configs/camera_iteration_scannet.txt`. Create `requirements-camera-iteration.txt` with exactly:
 
@@ -158,11 +158,11 @@ imageio
 
 `pre_experiments/README.md` defines `study_type: method_pre_experiment`, the aligned/raw rule, and the rule that GT is evaluation-only. `pre_experiments/camera_iteration/README.md` initially points to the design and this plan; Task 7 adds final commands and schemas.
 
-- [ ] **Step 3: Replace branch-level documentation**
+- [x] **Step 3: Replace branch-level documentation**
 
 Rewrite `README.md` so its first screen names `camera-iteration-preexperiment`, gives the AutoDL clone/switch/run command, lists default external paths, and states that downloads are intentionally absent. Rewrite `AGENTS.md` with the target file map, test commands, aligned/raw metric rule, output isolation, and the prohibition on phenomenon imports. Record the branch realignment in `log/2026-07-16_camera_iteration.md`; explicitly state that no Camera experiment has run yet.
 
-- [ ] **Step 4: Verify the new ownership boundary**
+- [x] **Step 4: Verify the new ownership boundary**
 
 ```powershell
 Test-Path experiments\scannet_hallucination
@@ -175,7 +175,7 @@ git diff --check
 
 Expected: the first two checks print `False`, the next three print `True`, and `git diff --check` exits 0.
 
-- [ ] **Step 5: Commit the branch alignment**
+- [x] **Step 5: Commit the branch alignment**
 
 ```powershell
 git add README.md AGENTS.md requirements-camera-iteration.txt configs pre_experiments tests log doc
@@ -201,7 +201,7 @@ git commit -m "Align camera pre-experiment branch"
 - Produces: default `list[Tensor[B,S,9]]`，或 `(pose_enc_list, CameraTrace)`。
 - Exposes: `decode_pose_tokens(normalized_pose_tokens, num_iterations, return_trace, trace_pose_tokens)`，供后续低秩 latent probe 复用。
 
-- [ ] **Step 1: Write the failing CameraHead tests**
+- [x] **Step 1: Write the failing CameraHead tests**
 
 Create `tests/camera_iteration/test_camera_head_trace.py` with three cases:
 
@@ -270,7 +270,7 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run the new test and confirm the contract is missing**
+- [x] **Step 2: Run the new test and confirm the contract is missing**
 
 Run:
 
@@ -280,7 +280,7 @@ python -m unittest tests.camera_iteration.test_camera_head_trace -v
 
 Expected: FAIL because `CameraHead.forward()` does not accept `return_trace` or `trace_pose_tokens`.
 
-- [ ] **Step 3: Add the typed trace and token decoder**
+- [x] **Step 3: Add the typed trace and token decoder**
 
 Add `TypedDict` and replace the current `forward()` / `trunk_fn()` boundary with this contract:
 
@@ -350,7 +350,7 @@ return (pred_pose_enc_list, trace) if return_trace else pred_pose_enc_list
 
 Do not call `.cpu()`, `.numpy()` or `.detach()` when storing trace fields; the optional trace must remain usable by later differentiable latent probing. Memory control is provided by `return_trace` and `trace_pose_tokens`.
 
-- [ ] **Step 4: Run the focused test**
+- [x] **Step 4: Run the focused test**
 
 Run:
 
@@ -360,7 +360,7 @@ python -m unittest tests.camera_iteration.test_camera_head_trace -v
 
 Expected: 3 tests PASS.
 
-- [ ] **Step 5: Commit the independently tested contract**
+- [x] **Step 5: Commit the independently tested contract**
 
 ```powershell
 git add vggt/heads/camera_head.py tests/camera_iteration/test_camera_head_trace.py
@@ -381,7 +381,7 @@ git commit -m "Expose camera head iteration trace"
 - Consumes: existing `images` and optional `query_points` plus three keyword-only camera options。
 - Produces: existing predictions unchanged by default; adds `predictions["camera_trace"]` only when requested。
 
-- [ ] **Step 1: Write a lightweight forwarding test with fake modules**
+- [x] **Step 1: Write a lightweight forwarding test with fake modules**
 
 The test must not instantiate the 1B model. Build a `VGGT` shell with `nn.Module.__init__()`, a fake aggregator, and a fake camera head. Verify both calls:
 
@@ -405,7 +405,7 @@ self.assertNotIn("camera_trace", default)
 self.assertEqual(default["pose_enc"].shape[-1], 9)
 ```
 
-- [ ] **Step 2: Run the test and confirm top-level options are absent**
+- [x] **Step 2: Run the test and confirm top-level options are absent**
 
 ```powershell
 python -m unittest tests.camera_iteration.test_vggt_camera_options -v
@@ -413,7 +413,7 @@ python -m unittest tests.camera_iteration.test_vggt_camera_options -v
 
 Expected: FAIL with an unexpected keyword argument for `camera_num_iterations`.
 
-- [ ] **Step 3: Extend the forward signature without changing defaults**
+- [x] **Step 3: Extend the forward signature without changing defaults**
 
 Use this signature and call contract:
 
@@ -447,7 +447,7 @@ predictions["pose_enc_list"] = pose_enc_list
 
 Document all three options and the conditional trace key in the existing docstring. Keep the `*` so future camera controls cannot be confused with positional `query_points`.
 
-- [ ] **Step 4: Run both camera API test modules**
+- [x] **Step 4: Run both camera API test modules**
 
 ```powershell
 python -m unittest tests.camera_iteration.test_camera_head_trace tests.camera_iteration.test_vggt_camera_options -v
@@ -455,7 +455,7 @@ python -m unittest tests.camera_iteration.test_camera_head_trace tests.camera_it
 
 Expected: all tests PASS and no checkpoint is loaded.
 
-- [ ] **Step 5: Commit the top-level API change**
+- [x] **Step 5: Commit the top-level API change**
 
 ```powershell
 git add vggt/models/vggt.py tests/camera_iteration/test_vggt_camera_options.py
@@ -483,7 +483,7 @@ git commit -m "Expose camera iteration controls"
 - `read_git_commit(repo_root: Path) -> str`
 - `atomic_write_json(path: Path, payload: object) -> None`
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 Create tests that accept the repository method-result root and an absolute
 external AutoDL result root, reject any other result path inside the repository,
@@ -529,7 +529,7 @@ class PreExperimentContractTest(unittest.TestCase):
         self.assertEqual(metadata["invocation"], invocation)
 ```
 
-- [ ] **Step 2: Run the contract test and confirm the module is absent**
+- [x] **Step 2: Run the contract test and confirm the module is absent**
 
 ```powershell
 python -m unittest tests.camera_iteration.test_contracts -v
@@ -537,7 +537,7 @@ python -m unittest tests.camera_iteration.test_contracts -v
 
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Implement the minimal contract module**
+- [x] **Step 3: Implement the minimal contract module**
 
 Use `Path.resolve()` and `Path.is_relative_to()` for routing, canonical JSON plus
 SHA-256 for deterministic run IDs, and `git rev-parse HEAD` for the full commit.
@@ -618,7 +618,7 @@ def read_git_commit(repo_root: Path) -> str:
     return commit
 ```
 
-- [ ] **Step 4: Run the contract tests**
+- [x] **Step 4: Run the contract tests**
 
 ```powershell
 python -m unittest tests.camera_iteration.test_contracts -v
@@ -626,7 +626,7 @@ python -m unittest tests.camera_iteration.test_contracts -v
 
 Expected: both tests PASS.
 
-- [ ] **Step 5: Commit the run contract**
+- [x] **Step 5: Commit the run contract**
 
 ```powershell
 git add pre_experiments/camera_iteration/contracts.py tests/camera_iteration/test_contracts.py
@@ -649,7 +649,7 @@ git commit -m "Add pre-experiment run contract"
 - `build_iteration_rows(scene: str, frame_count: int, requested_iterations: list[int], pose_enc_list: list[torch.Tensor], delta_norm: torch.Tensor, gt_c2w: np.ndarray, image_hw: tuple[int, int]) -> list[dict[str, float | str]]`
 - Each output row contains scene, frame count, iteration, aligned pose metrics, Sim(3) scale, and delta mean/p95/max。
 
-- [ ] **Step 1: Write metric helper tests using synthetic cameras**
+- [x] **Step 1: Write metric helper tests using synthetic cameras**
 
 Construct three GT `c2w` poses translated along x, convert their inverse matrices with `extri_intri_to_pose_encoding()`, and reuse the same exact pose for iterations 1 and 4. Assert:
 
@@ -662,7 +662,7 @@ self.assertAlmostEqual(rows[1]["delta_norm_max"], 4.0)
 
 Also assert that `[0, 4]`, duplicate iterations, and an iteration larger than `available` raise `ValueError`.
 
-- [ ] **Step 2: Run the test and confirm the helper module is absent**
+- [x] **Step 2: Run the test and confirm the helper module is absent**
 
 ```powershell
 python -m unittest tests.camera_iteration.test_metrics -v
@@ -670,7 +670,7 @@ python -m unittest tests.camera_iteration.test_metrics -v
 
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Implement the pure helper**
+- [x] **Step 3: Implement the pure helper**
 
 Implement the branch-owned pose metric module first. It contains
 `to_homogeneous()`, `invert_poses()`, `rotation_angle_deg()`, `umeyama()`, and
@@ -707,7 +707,7 @@ row.update(evaluate_pose(pred_w2c, gt_c2w))
 `pose_sim3_scale`. Tests use synthetic trajectories related by a known Sim(3)
 and require aligned ATE below `1e-8`; no phenomenon package is imported.
 
-- [ ] **Step 4: Run the helper tests and the existing suite**
+- [x] **Step 4: Run the helper tests and the existing suite**
 
 ```powershell
 python -m unittest tests.camera_iteration.test_metrics -v
@@ -716,7 +716,7 @@ python -m unittest discover -s tests
 
 Expected: all tests PASS.
 
-- [ ] **Step 5: Commit the metric unit**
+- [x] **Step 5: Commit the metric unit**
 
 ```powershell
 git add pre_experiments/camera_iteration/pose_metrics.py pre_experiments/camera_iteration/metrics.py tests/camera_iteration/test_metrics.py
@@ -743,7 +743,7 @@ git commit -m "Add camera iteration metrics"
 - One model call occurs per scene/frame selection with `camera_num_iterations=max(iterations)`.
 - Dense and track heads are disabled for this pose-only study after checkpoint loading.
 
-- [ ] **Step 1: Write failing data and CLI contract tests**
+- [x] **Step 1: Write failing data and CLI contract tests**
 
 `test_scannet.py` creates temporary `color/` and `pose/` directories, verifies
 numeric frame sorting, ignores malformed or non-finite 4x4 poses, and checks
@@ -760,7 +760,7 @@ python -m unittest tests.camera_iteration.test_scannet tests.camera_iteration.te
 
 Expected: FAIL with `ModuleNotFoundError` for `scannet` or `run_study`.
 
-- [ ] **Step 2: Implement data helpers, local model loading, and the parser**
+- [x] **Step 2: Implement data helpers, local model loading, and the parser**
 
 Use `parse_args(argv: list[str] | None = None)` and include:
 
@@ -785,7 +785,7 @@ loading a model. Build the deterministic run ID from the full Git commit,
 resolved scene IDs, frame counts, iterations, sampling mode, and preprocessing
 mode; the same invocation must resolve to the same run directory.
 
-- [ ] **Step 3: Implement one-pass inference**
+- [x] **Step 3: Implement one-pass inference**
 
 Use only `model_io.py`, `scannet.py`, and
 `vggt.utils.load_fn.load_and_preprocess_images()`. No import may start with
@@ -816,7 +816,7 @@ model = model.to(device).eval()
 
 This preserves the exact Aggregator and Camera Head path while avoiding unrelated dense decoding cost.
 
-- [ ] **Step 4: Write stable, resumable output artifacts**
+- [x] **Step 4: Write stable, resumable output artifacts**
 
 At the run root, write `run_metadata.json` before inference. For example, scene `scene0000_00` with 25 frames writes into `scene0000_00/frames_25/` below that run root:
 
@@ -835,7 +835,7 @@ file and `Path.replace()`. Write `complete.json` last. A rerun skips a selection
 only when `complete.json`, metrics JSON, trace NPZ, and selected frame IDs all
 exist and metadata matches the invocation.
 
-- [ ] **Step 5: Run focused tests and verify the CLI without model weights**
+- [x] **Step 5: Run focused tests and verify the CLI without model weights**
 
 ```powershell
 python -m pre_experiments.camera_iteration.run_study --help
@@ -846,6 +846,9 @@ python -m py_compile pre_experiments\camera_iteration\run_study.py pre_experimen
 Expected: exit code 0, all documented flags appear, and both files compile.
 
 - [ ] **Step 6: Run a one-scene checkpoint smoke experiment**
+
+Pending: this gate requires the AutoDL VGGT-1B checkpoint, ScanNet data, and
+CUDA; it was not represented as complete by local CPU verification.
 
 On the machine containing the local checkpoint and ScanNet subset:
 
@@ -866,7 +869,7 @@ Expected: the deterministic commit/invocation run directory is created,
 written, `camera_trace.npz` has `K=16`, every metric is finite, and a second
 identical invocation reports the selection as complete without model inference.
 
-- [ ] **Step 7: Commit the study CLI**
+- [x] **Step 7: Commit the study CLI**
 
 ```powershell
 git add pre_experiments/camera_iteration/run_study.py pre_experiments/camera_iteration/scannet.py pre_experiments/camera_iteration/model_io.py tests/camera_iteration/test_scannet.py tests/camera_iteration/test_run_study.py
@@ -893,7 +896,7 @@ git commit -m "Add camera iteration study probe"
 - `detect_scannet_layout(scannet_root: Path) -> Literal["processed", "raw"]`
 - Bash defaults exactly match the design document and all are overridable by environment variables.
 
-- [ ] **Step 1: Write failing preflight tests**
+- [x] **Step 1: Write failing preflight tests**
 
 Create temporary roots and assert that `find_checkpoint()` accepts
 `model.safetensors` and `model.pt`; `detect_scannet_layout()` prefers
@@ -909,7 +912,7 @@ python -m unittest tests.camera_iteration.test_autodl_preflight -v
 
 Expected: FAIL because the branch-owned preflight module is absent.
 
-- [ ] **Step 2: Implement preflight and optional extraction**
+- [x] **Step 2: Implement preflight and optional extraction**
 
 `preflight.py` checks modules `PIL`, `einops`, `safetensors`, `cv2`, and
 `imageio`; package names come from `requirements-camera-iteration.txt`.
@@ -921,7 +924,7 @@ script accepts `--raw-dir`, `--out-dir`, `--scene-list`, and `--scene-limit`,
 and vendors only the Python 3 ScanNet `SensorData` reader required to export
 color frames and camera poses.
 
-- [ ] **Step 3: Implement the one-command runner**
+- [x] **Step 3: Implement the one-command runner**
 
 The script starts with this fixed configuration:
 
@@ -962,7 +965,7 @@ python -m pre_experiments.camera_iteration.run_study \
   --out-dir "$RESULT_DIR"
 ```
 
-- [ ] **Step 4: Verify preflight and shell syntax**
+- [x] **Step 4: Verify preflight and shell syntax**
 
 ```bash
 python -m unittest tests.camera_iteration.test_autodl_preflight -v
@@ -976,7 +979,7 @@ Expected: unit tests and `bash -n` pass. On AutoDL the preflight prints the
 resolved checkpoint and either `processed` or `raw`; locally it may fail only
 with an actionable missing-path message.
 
-- [ ] **Step 5: Commit the AutoDL path**
+- [x] **Step 5: Commit the AutoDL path**
 
 ```powershell
 git add scripts/autodl requirements-camera-iteration.txt tests/camera_iteration/test_autodl_preflight.py
@@ -992,7 +995,7 @@ git commit -m "Add camera iteration AutoDL runner"
 - Modify: `pre_experiments/camera_iteration/README.md`
 - Verify: all modified and newly created files above
 
-- [ ] **Step 1: Document reproducibility and metric semantics**
+- [x] **Step 1: Document reproducibility and metric semantics**
 
 The README must state:
 
@@ -1005,7 +1008,7 @@ The README must state:
 - Repository-local runs write under `results/pre_experiments/camera_iteration/`; AutoDL defaults to `/root/autodl-tmp/camera_iteration/results`.
 - The branch contains no phenomenon evaluator or result tree, and no method module imports one.
 
-- [ ] **Step 2: Run the complete fast verification set**
+- [x] **Step 2: Run the complete fast verification set**
 
 ```powershell
 python -m unittest discover -s tests
@@ -1016,7 +1019,7 @@ bash -n scripts/autodl/run_camera_iteration.sh
 
 Expected: all unit tests PASS, import prints `VGGT CameraHead`, and compilation exits 0.
 
-- [ ] **Step 3: Inspect the final diff for compatibility**
+- [x] **Step 3: Inspect the final diff for compatibility**
 
 ```powershell
 git diff --check
@@ -1028,7 +1031,7 @@ Expected: no whitespace errors; only the files listed in this plan are changed;
 `git grep experiments.scannet_hallucination` matches documentation prohibitions
 only and no Python import.
 
-- [ ] **Step 4: Commit documentation after verification**
+- [x] **Step 4: Commit documentation after verification**
 
 ```powershell
 git add README.md AGENTS.md pre_experiments/camera_iteration/README.md log/2026-07-16_camera_iteration.md

@@ -50,4 +50,7 @@ model construction, supports processed frames or raw `.sens`, and must never
 add download commands. Record actual commands, resolved paths, Git commit, and
 result location in run metadata and `log/`. Use short imperative commit titles
 such as `Expose camera iteration controls`; keep each commit independently
-testable. Never commit datasets, checkpoints, tokens, or generated traces.
+testable. Pull requests must describe protocol changes, list verification
+commands, and identify any output-schema or default-API change. Link the issue
+when one exists and include CUDA smoke details only when they were actually
+run. Never commit datasets, checkpoints, tokens, or generated traces.

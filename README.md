@@ -1,8 +1,9 @@
 # VGGT Camera Iteration Pre-experiment
 
-This branch studies the intermediate refinement iterations produced by VGGT's
-Camera Head. It is self-contained and does not depend on the phenomenon-
-characterization evaluator or results.
+The `camera-iteration-preexperiment` branch exposes and evaluates intermediate
+VGGT Camera Head refinements without training or parameter updates. Its model
+hooks, ScanNet reader, metrics, tests, and AutoDL entrypoint are self-contained;
+no phenomenon-characterization code or result tree is imported.
 
 ## AutoDL Quick Start
 
@@ -27,6 +28,13 @@ The runner never downloads weights or ScanNet. It uses an existing
 are present. Every path and experiment size can be overridden with environment
 variables documented in `pre_experiments/camera_iteration/README.md`.
 
+A smaller smoke configuration is:
+
+```bash
+SCENE_LIMIT=1 FRAME_COUNTS="25" ITERATIONS="1 2 4 8 16" \
+  bash scripts/autodl/run_camera_iteration.sh
+```
+
 ## Development
 
 ```bash
@@ -40,4 +48,5 @@ Core model changes live in `vggt/`. The method package lives in
 `pre_experiments/camera_iteration/`, CPU tests in `tests/camera_iteration/`,
 and the executable plan in `doc/VGGT_DiT_Implementation_Plan.md`.
 
-No camera-iteration experiment has been run on this branch yet.
+The local CPU regression suite passes. No checkpoint-backed ScanNet experiment
+has been run on this branch yet; run outputs must not be committed.
