@@ -1,64 +1,30 @@
-# VGGT Hallucination
+# VGGT
 
-This repository contains a minimal VGGT codebase plus AutoDL scripts for
-observing hallucination across the camera pose, depth, and point-cloud outputs.
+This branch contains a minimal VGGT inference baseline. Research experiments,
+generated results, and dataset-specific automation are developed on dedicated
+Git worktree branches so the baseline remains stable.
 
-## AutoDL One-Click Run
+## Setup
 
-```bash
-cd /root/autodl-tmp
-git clone https://github.com/Tracyou07/VGGT_Hallucination.git
-cd VGGT_Hallucination
-bash scripts/autodl/run_scannet_hallucination.sh
-```
-
-The script clones the AutoDL image's existing CUDA/PyTorch conda environment,
-installs only the missing VGGT helper dependencies, downloads VGGT-1B weights,
-downloads/extracts a licensed ScanNet subset, and runs the eval.
-
-Default locations:
-
-- Code: `/root/autodl-tmp/VGGT_Hallucination`
-- Conda env: `/root/miniconda3/envs/vggt_hallucination`
-- Data: `/root/autodl-tmp/datasets/scannetv2`
-- Weights: `/root/autodl-tmp/ckpt/VGGT-1B`
-- Results: `/root/autodl-tmp/vggt_hallucination/results`
-
-ScanNet requires official data access. If automatic download fails, place the
-official `download-scannet.py` on AutoDL and run:
+VGGT requires Python 3.10 or newer.
 
 ```bash
-SCANNET_DOWNLOAD_SCRIPT=/root/autodl-tmp/download-scannet.py \
-bash scripts/autodl/run_scannet_hallucination.sh
+pip install -r requirements.txt
+pip install -e .
 ```
 
-If VGGT weight download from Hugging Face is reset, rerun with the mirror
-endpoint:
+Verify the package import after installation:
 
 ```bash
-HF_ENDPOINT=https://hf-mirror.com bash scripts/autodl/run_scannet_hallucination.sh
+python -c "from vggt.models.vggt import VGGT; print(VGGT.__name__)"
 ```
 
-If the conda environment, weights, and uploaded ScanNet files already exist,
-reuse them without reinstalling dependencies:
+## Source Layout
 
-```bash
-INSTALL_ENV=0 RUN_DOWNLOADS=0 SCENE_LIMIT=5 FRAME_COUNTS="100 300 500 1000" \
-bash scripts/autodl/run_scannet_hallucination.sh
-```
+- `vggt/models/` contains the top-level model and token aggregator.
+- `vggt/heads/` contains camera, depth, point, and tracking heads.
+- `vggt/layers/` contains Transformer and patch-embedding components.
+- `vggt/utils/` contains image loading, geometry, pose, and visualization helpers.
 
-This still activates `/root/miniconda3/envs/vggt_hallucination` and extracts
-uploaded `.sens` files into `process_scannet` before evaluation.
-
-If `process_scannet/` already exists and you only want the long-frame pass:
-
-```bash
-INSTALL_ENV=0 RUN_DOWNLOADS=0 RUN_EXTRACT=0 SCENE_LIMIT=5 FRAME_COUNTS="500 1000" \
-bash scripts/autodl/run_scannet_hallucination.sh
-```
-
-Evaluation resumes by default. Existing `metrics.json` files are skipped, so the
-same command can be rerun after interruption.
-
-See `scripts/autodl/README_scannet_hallucination.md` for sampling modes and
-common overrides.
+The research worktrees are local development environments and are intentionally
+excluded from this baseline branch.
