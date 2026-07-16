@@ -5,7 +5,8 @@
 - 创建 `camera-iteration-preexperiment` worktree，与现象观察实验分离。
 - 将干净 VGGT 基线合入方法分支，移除现象评估代码、结果和下载脚本。
 - 固定 10 个 ScanNet 场景、方法预实验目录、输出隔离规则及无下载 AutoDL 契约。
-- 重写具体实施计划；保留研究指导文档，明确 prediction 看 aligned、纯 GT 看 raw。
+- 总研究指导和总实施计划统一迁回 `main` 维护，本工作树只保留分支复现设计；
+  prediction 看 aligned、纯 GT 看 raw 的规则继续写入分支约束。
 
 ## 第 0 轮：Camera Head 可观测接口
 

@@ -97,5 +97,7 @@ python -m pre_experiments.camera_iteration.run_study --help
 bash -n scripts/autodl/run_camera_iteration.sh
 ```
 
-The implementation follows the worktree design, research guide, and executable
-plan in `doc/`. No checkpoint-backed experiment has run yet.
+The branch-local contract is recorded in
+`doc/2026-07-16_Camera_Iteration_Worktree_Design.md`. The repository-wide
+research guide and implementation plan are maintained only on `main`, not
+duplicated in this worktree. No checkpoint-backed experiment has run yet.

@@ -8,7 +8,8 @@ to `vggt/heads/camera_head.py` and `vggt/models/vggt.py`.
 ScanNet input handling, local checkpoint loading, pose metrics, and the CLI.
 `tests/camera_iteration/` contains CPU-only unit tests. Default scenes live in
 `configs/camera_iteration_scannet.txt`; AutoDL tooling lives in
-`scripts/autodl/`. Research rationale and the executable plan live in `doc/`.
+`scripts/autodl/`. This branch keeps only its worktree reproduction design in
+`doc/`; repository-wide research and implementation guides live on `main`.
 
 This branch must not contain or import `experiments/scannet_hallucination` or
 write to its result namespace. Generated outputs belong under

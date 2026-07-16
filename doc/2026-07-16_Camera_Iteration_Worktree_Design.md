@@ -45,11 +45,14 @@ tests/camera_iteration/                CPU-only unit and contract tests
 configs/camera_iteration_scannet.txt   Default scene list
 scripts/autodl/run_camera_iteration.sh One-command AutoDL entrypoint
 scripts/autodl/camera_iteration/       Preflight and optional extraction tools
-doc/VGGT_DiT_Research_Guide.md         Research rationale
-doc/VGGT_DiT_Implementation_Plan.md    Executable implementation sequence
+doc/2026-07-16_Camera_Iteration_Worktree_Design.md  Branch reproduction contract
 results/pre_experiments/camera_iteration/  Runtime output, ignored by Git
 requirements-camera-iteration.txt      Study-only dependencies
 ```
+
+`VGGT_DiT_Research_Guide.md` and `VGGT_DiT_Implementation_Plan.md` are
+repository-wide guidance maintained only on `main`. They are intentionally not
+duplicated in this method worktree.
 
 The inherited `experiments/scannet_hallucination/`,
 `results/scannet_hallucination/`, old AutoDL scripts, and hallucination scene
@@ -116,7 +119,7 @@ and records the command and output location in the branch log.
 ## Migration Sequence
 
 1. Bring the clean `main` baseline into this branch.
-2. Restore only the research guide and rewrite the implementation plan.
+2. Keep repository-wide research and implementation guidance only on `main`.
 3. Replace branch-level README and contributor guidance.
 4. Create the dedicated package, tests, configuration, and AutoDL runner.
 5. Implement camera tracing and the study pipeline test-first.

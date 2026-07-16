@@ -46,7 +46,9 @@ python -m unittest discover -s tests
 
 Core model changes live in `vggt/`. The method package lives in
 `pre_experiments/camera_iteration/`, CPU tests in `tests/camera_iteration/`,
-and the executable plan in `doc/VGGT_DiT_Implementation_Plan.md`.
+and the branch-specific reproduction design in
+`doc/2026-07-16_Camera_Iteration_Worktree_Design.md`. The repository-wide
+research guide and implementation plan are maintained only on `main`.
 
 The local CPU regression suite passes. No checkpoint-backed ScanNet experiment
 has been run on this branch yet; run outputs must not be committed.
