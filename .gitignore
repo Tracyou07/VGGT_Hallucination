@@ -146,6 +146,7 @@ dmypy.json
 **/tmp/
 **/outputs/skyseg.onnx
 skyseg.onnx
+.worktrees/
 
 # pixi environments
 .pixi
