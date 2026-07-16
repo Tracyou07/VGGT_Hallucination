@@ -1,64 +1,43 @@
-# VGGT Hallucination
+# VGGT Camera Iteration Pre-experiment
 
-This repository contains a minimal VGGT codebase plus AutoDL scripts for
-observing hallucination across the camera pose, depth, and point-cloud outputs.
+This branch studies the intermediate refinement iterations produced by VGGT's
+Camera Head. It is self-contained and does not depend on the phenomenon-
+characterization evaluator or results.
 
-## AutoDL One-Click Run
+## AutoDL Quick Start
+
+Weights and ScanNet data are expected to exist before the run:
 
 ```bash
-cd /root/autodl-tmp
 git clone https://github.com/Tracyou07/VGGT_Hallucination.git
 cd VGGT_Hallucination
-bash scripts/autodl/run_scannet_hallucination.sh
+git switch camera-iteration-preexperiment
+bash scripts/autodl/run_camera_iteration.sh
 ```
 
-The script clones the AutoDL image's existing CUDA/PyTorch conda environment,
-installs only the missing VGGT helper dependencies, downloads VGGT-1B weights,
-downloads/extracts a licensed ScanNet subset, and runs the eval.
+Default external paths are:
 
-Default locations:
+- ScanNet: `/root/autodl-tmp/datasets/scannetv2`
+- VGGT-1B: `/root/autodl-tmp/ckpt/VGGT-1B`
+- Results: `/root/autodl-tmp/camera_iteration/results`
+- Conda environment: `vggt_camera_iteration`
 
-- Code: `/root/autodl-tmp/VGGT_Hallucination`
-- Conda env: `/root/miniconda3/envs/vggt_hallucination`
-- Data: `/root/autodl-tmp/datasets/scannetv2`
-- Weights: `/root/autodl-tmp/ckpt/VGGT-1B`
-- Results: `/root/autodl-tmp/vggt_hallucination/results`
+The runner never downloads weights or ScanNet. It uses an existing
+`process_scannet/` tree, or extracts requested scenes when only `.sens` files
+are present. Every path and experiment size can be overridden with environment
+variables documented in `pre_experiments/camera_iteration/README.md`.
 
-ScanNet requires official data access. If automatic download fails, place the
-official `download-scannet.py` on AutoDL and run:
+## Development
 
 ```bash
-SCANNET_DOWNLOAD_SCRIPT=/root/autodl-tmp/download-scannet.py \
-bash scripts/autodl/run_scannet_hallucination.sh
+pip install -r requirements.txt
+pip install -r requirements-camera-iteration.txt
+pip install -e .
+python -m unittest discover -s tests
 ```
 
-If VGGT weight download from Hugging Face is reset, rerun with the mirror
-endpoint:
+Core model changes live in `vggt/`. The method package lives in
+`pre_experiments/camera_iteration/`, CPU tests in `tests/camera_iteration/`,
+and the executable plan in `doc/VGGT_DiT_Implementation_Plan.md`.
 
-```bash
-HF_ENDPOINT=https://hf-mirror.com bash scripts/autodl/run_scannet_hallucination.sh
-```
-
-If the conda environment, weights, and uploaded ScanNet files already exist,
-reuse them without reinstalling dependencies:
-
-```bash
-INSTALL_ENV=0 RUN_DOWNLOADS=0 SCENE_LIMIT=5 FRAME_COUNTS="100 300 500 1000" \
-bash scripts/autodl/run_scannet_hallucination.sh
-```
-
-This still activates `/root/miniconda3/envs/vggt_hallucination` and extracts
-uploaded `.sens` files into `process_scannet` before evaluation.
-
-If `process_scannet/` already exists and you only want the long-frame pass:
-
-```bash
-INSTALL_ENV=0 RUN_DOWNLOADS=0 RUN_EXTRACT=0 SCENE_LIMIT=5 FRAME_COUNTS="500 1000" \
-bash scripts/autodl/run_scannet_hallucination.sh
-```
-
-Evaluation resumes by default. Existing `metrics.json` files are skipped, so the
-same command can be rerun after interruption.
-
-See `scripts/autodl/README_scannet_hallucination.md` for sampling modes and
-common overrides.
+No camera-iteration experiment has been run on this branch yet.

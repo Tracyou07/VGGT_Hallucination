@@ -1,0 +1,1 @@
+"""Camera iteration tests."""
