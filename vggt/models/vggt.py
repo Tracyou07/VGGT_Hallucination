@@ -26,7 +26,15 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         self.depth_head = DPTHead(dim_in=2 * embed_dim, output_dim=2, activation="exp", conf_activation="expp1") if enable_depth else None
         self.track_head = TrackHead(dim_in=2 * embed_dim, patch_size=patch_size) if enable_track else None
 
-    def forward(self, images: torch.Tensor, query_points: torch.Tensor = None):
+    def forward(
+        self,
+        images: torch.Tensor,
+        query_points: torch.Tensor = None,
+        *,
+        camera_num_iterations: int = 4,
+        return_camera_trace: bool = False,
+        camera_trace_pose_tokens: bool = False,
+    ):
         """
         Forward pass of the VGGT model.
 
@@ -36,6 +44,13 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
             query_points (torch.Tensor, optional): Query points for tracking, in pixel coordinates.
                 Shape: [N, 2] or [B, N, 2], where N is the number of query points.
                 Default: None
+            camera_num_iterations (int, optional): Number of Camera Head refinement
+                iterations. Defaults to 4.
+            return_camera_trace (bool, optional): Include raw per-iteration camera
+                state in the predictions. Defaults to False.
+            camera_trace_pose_tokens (bool, optional): Include high-dimensional
+                modulated pose tokens in the camera trace. Requires
+                return_camera_trace=True.
 
         Returns:
             dict: A dictionary containing the following predictions:
@@ -45,6 +60,8 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
                 - world_points (torch.Tensor): 3D world coordinates for each pixel with shape [B, S, H, W, 3]
                 - world_points_conf (torch.Tensor): Confidence scores for world points with shape [B, S, H, W]
                 - images (torch.Tensor): Original input images, preserved for visualization
+                - camera_trace (dict, optional): Raw Camera Head iteration trace,
+                  present only when return_camera_trace=True
 
                 If query_points is provided, also includes:
                 - track (torch.Tensor): Point tracks with shape [B, S, N, 2] (from the last iteration), in pixel coordinates
@@ -64,7 +81,17 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
 
         with torch.cuda.amp.autocast(enabled=False):
             if self.camera_head is not None:
-                pose_enc_list = self.camera_head(aggregated_tokens_list)
+                camera_output = self.camera_head(
+                    aggregated_tokens_list,
+                    num_iterations=camera_num_iterations,
+                    return_trace=return_camera_trace,
+                    trace_pose_tokens=camera_trace_pose_tokens,
+                )
+                if return_camera_trace:
+                    pose_enc_list, camera_trace = camera_output
+                    predictions["camera_trace"] = camera_trace
+                else:
+                    pose_enc_list = camera_output
                 predictions["pose_enc"] = pose_enc_list[-1]  # pose encoding of the last iteration
                 predictions["pose_enc_list"] = pose_enc_list
                 
