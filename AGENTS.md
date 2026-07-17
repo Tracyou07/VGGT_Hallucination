@@ -44,14 +44,16 @@ conclusion, including pose ATE/ARE/RPE and predicted depth or point metrics.
 Raw values and recovered scale are diagnostics only. Pure GT baselines use raw
 data only; mixed prediction/GT metrics still follow the prediction rule.
 
-## AutoDL and Commit Guidelines
+## Worktree, AutoDL, and Commit Guidelines
 
-The AutoDL runner assumes existing weights and data, validates inputs before
-model construction, supports processed frames or raw `.sens`, and must never
-add download commands. Record actual commands, resolved paths, Git commit, and
-result location in run metadata and `log/`. Use short imperative commit titles
-such as `Expose camera iteration controls`; keep each commit independently
-testable. Pull requests must describe protocol changes, list verification
-commands, and identify any output-schema or default-API change. Link the issue
-when one exists and include CUDA smoke details only when they were actually
-run. Never commit datasets, checkpoints, tokens, or generated traces.
+This worktree must remain attached to `camera-iteration-preexperiment`; a
+worktree does not replace its branch. Do not continue research on detached
+HEAD. AutoDL reproduces a pushed branch or recorded commit, never local
+worktree metadata. Repository-wide guides remain only on `main`.
+
+The runner assumes existing weights and data, validates inputs before model
+construction, supports processed frames or raw `.sens`, and contains no
+download commands. Record commands, resolved paths, commit, and result location
+in metadata and `log/`. Keep commits independently testable. Pull requests must
+list protocol changes and verification. Never commit datasets, checkpoints,
+tokens, or generated traces.
