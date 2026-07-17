@@ -45,6 +45,14 @@ paths.
 
 ## Worktree Policy
 
-Use `phenomenon-characterization` for observation studies and
-`camera-iteration-preexperiment` for method pre-experiments. Commit research
-artifacts on the corresponding branch rather than adding them back to `main`.
+A worktree is an additional local checkout, not a replacement for a branch.
+Keep every active experiment worktree attached to its own named branch; do not
+use detached HEAD for continuing research. Use `phenomenon-characterization`
+for observation studies and `camera-iteration-preexperiment` for method
+pre-experiments. Commit research artifacts on the corresponding branch rather
+than adding them to `main`.
+
+Remote machines cannot fetch local worktree metadata. Reproduce on AutoDL from
+a pushed branch or recorded commit. Keep `VGGT_DiT_Research_Guide.md` and
+`VGGT_DiT_Implementation_Plan.md` only on `main`; worktrees may keep only
+clearly named, branch-specific designs and logs.
