@@ -107,7 +107,7 @@ results/pre_experiments/camera_iteration/20260716T010203Z_2b1e6fc/
 - `pre_experiments/README.md` 定义正式预实验的运行和结果约束。
 - `AGENTS.md` 记录两类研究的定义和输出路径。
 - `log/YYYY-MM-DD.md` 中相关条目分别使用 `[现象刻画]` 与 `[方法预实验]` 前缀。
-- `doc/VGGT_DiT_Implementation_Plan.md` 中新增运行代码的路径改为 `pre_experiments/camera_iteration/`，结果路径改为 `results/pre_experiments/camera_iteration/`。
+- 总研究指导与总实施计划只在 `main` 维护；本分支仅保留现象刻画专属设计与日志。
 
 ## 兼容性与失败保护
 

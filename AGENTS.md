@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`vggt/` 是核心包：`models/` 放 VGGT 与 Aggregator，`heads/` 放 Camera、Depth、Point 和 Track Heads，`layers/` 放 Transformer 组件，`utils/` 放 pose、图像和几何工具。`experiments/scannet_hallucination/` 是 ScanNet 评估入口，`probe/tests/` 保存快速单元测试，`probe/runs/` 保存可再生成的研究输出。`configs/` 放场景列表，`scripts/autodl/` 放远端环境脚本，`results/` 保存已提交的基线结果。研究设计与实施计划放在 `doc/`，每日工作记录放在 `log/YYYY-MM-DD.md`。
+`vggt/` 是核心包：`models/` 放 VGGT 与 Aggregator，`heads/` 放 Camera、Depth、Point 和 Track Heads，`layers/` 放 Transformer 组件，`utils/` 放 pose、图像和几何工具。`experiments/scannet_hallucination/` 是 ScanNet 评估入口，`probe/tests/` 保存快速单元测试，`probe/runs/` 保存可再生成的研究输出。`configs/` 放场景列表，`scripts/autodl/` 放远端环境脚本，`results/` 保存已提交的基线结果。分支特有设计放在 `doc/`，每日记录放在 `log/YYYY-MM-DD.md`；总研究指导与总实施计划只由 `main` 维护。
 
 ## Build, Test, and Development Commands
 
@@ -11,7 +11,7 @@
 - `python -c "from vggt.models.vggt import VGGT; print(VGGT.__name__)"`：检查核心包导入。
 - `python -m unittest discover -s probe/tests`：运行全部快速测试。
 - `python -m experiments.scannet_hallucination.run_eval --help`：查看 ScanNet 评估参数；正式运行需要本地数据、权重和输出目录。
-- `Get-Content doc/VGGT_DiT_Implementation_Plan.md`：查看当前分轮实施计划。
+- `git status --short --branch`：确认当前 worktree 与分支及未提交改动。
 
 ## Coding Style & Naming Conventions
 
@@ -27,7 +27,11 @@
 
 ## Research Documentation
 
-`doc/VGGT_DiT_Research_Guide.md` 定义研究边界，`doc/VGGT_DiT_Implementation_Plan.md` 定义可执行任务与阶段门。修改研究方向时同步更新相关文档；`log/` 只记录实际完成事项，并明确区分计划、实验结果和未实施工作。
+`VGGT_DiT_Research_Guide.md` 与 `VGGT_DiT_Implementation_Plan.md` 只存在于 `main`。本分支只维护明确命名的现象刻画设计与实际日志；`log/` 必须区分计划、实验结果和未实施工作。
+
+## Worktree Policy
+
+本目录必须绑定 `phenomenon-characterization` 分支；worktree 只是额外工作目录，不能替代分支。不要在 detached HEAD 上持续开发。AutoDL 必须通过已推送分支或明确 commit 复现，不能依赖本机 worktree 元数据。
 
 ## Commit & Pull Request Guidelines
 
