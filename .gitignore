@@ -154,6 +154,12 @@ skyseg.onnx
 !/results/camera_iteration/**/*.json
 !/results/camera_iteration/**/*.csv
 !/results/camera_iteration/**/*.npz
+!/results/camera_context/
+/results/camera_context/**
+!/results/camera_context/**/
+!/results/camera_context/**/*.json
+!/results/camera_context/**/*.csv
+!/results/camera_context/**/*.npz
 
 # pixi environments
 .pixi

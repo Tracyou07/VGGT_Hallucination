@@ -15,6 +15,7 @@ from typing import Callable
 import numpy as np
 import torch
 
+from pre_experiments.camera_context.artifacts import build_context_diagnostics
 from pre_experiments.camera_iteration.contracts import (
     atomic_write_json,
     build_run_metadata,
@@ -23,12 +24,14 @@ from pre_experiments.camera_iteration.contracts import (
 )
 from pre_experiments.camera_iteration.metrics import MetricRow, build_iteration_rows, validate_iterations
 from pre_experiments.camera_iteration.model_io import load_local_model, resolve_device
+from pre_experiments.camera_iteration.pose_metrics import to_homogeneous
 from pre_experiments.camera_iteration.scannet import (
     load_scene_frames,
     make_frame_selections,
     read_scene_list,
 )
 from vggt.utils.load_fn import load_and_preprocess_images
+from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -72,6 +75,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=33)
     parser.add_argument("--save-camera-tokens", action="store_true")
+    parser.add_argument("--save-context-diagnostics", action="store_true")
     args = parser.parse_args(argv)
 
     if args.scene_limit < 0:
@@ -94,19 +98,23 @@ def selection_is_complete(
     run_id: str,
     selected_ids: list[int],
     iterations: list[int],
+    require_context_diagnostics: bool = False,
 ) -> bool:
     """Return true only for a complete selection matching the current invocation."""
-    required = (
+    completion_path = output_dir / "complete.json"
+    required = [
         output_dir / "iteration_metrics.json",
         output_dir / "iteration_metrics.csv",
         output_dir / "camera_trace.npz",
         output_dir / "selected_frame_ids.json",
-        output_dir / "complete.json",
-    )
+        completion_path,
+    ]
+    if require_context_diagnostics:
+        required.append(output_dir / "context_diagnostics.npz")
     if not all(path.is_file() for path in required):
         return False
     try:
-        completion = json.loads(required[-1].read_text(encoding="utf-8"))
+        completion = json.loads(completion_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
     return (
@@ -154,6 +162,7 @@ def run_selection(
     output_dir: Path,
     run_id: str,
     save_camera_tokens: bool,
+    save_context_diagnostics: bool = False,
     image_loader: Callable[[list[str], str], torch.Tensor] = load_and_preprocess_images,
 ) -> list[MetricRow]:
     """Run one maximum-iteration forward pass and persist selected iteration rows."""
@@ -218,10 +227,36 @@ def run_selection(
             trace["pose_tokens_modulated_list"]
         )
 
+    if save_context_diagnostics:
+        final_extrinsic, _ = pose_encoding_to_extri_intri(
+            predictions["pose_enc_list"][-1],
+            image_hw,
+            build_intrinsics=False,
+        )
+        diagnostics = build_context_diagnostics(
+            frame_ids=np.asarray(selected_ids, dtype=np.int64),
+            normalized_camera_tokens=trace["normalized_camera_tokens"][0]
+            .detach()
+            .float()
+            .cpu()
+            .numpy(),
+            pred_w2c=to_homogeneous(
+                final_extrinsic[0].detach().float().cpu().numpy()
+            ),
+            gt_c2w_raw=ground_truth_c2w,
+            delta_norm=trace["delta_norm"][-1, 0]
+            .detach()
+            .float()
+            .cpu()
+            .numpy(),
+        )
+
     output_dir.mkdir(parents=True, exist_ok=True)
     atomic_write_json(output_dir / "iteration_metrics.json", rows)
     _atomic_write_csv(output_dir / "iteration_metrics.csv", rows)
     _atomic_save_npz(output_dir / "camera_trace.npz", arrays)
+    if save_context_diagnostics:
+        _atomic_save_npz(output_dir / "context_diagnostics.npz", diagnostics)
     atomic_write_json(output_dir / "selected_frame_ids.json", selected_ids)
     atomic_write_json(
         output_dir / "complete.json",
@@ -271,6 +306,7 @@ def _effective_invocation(
         "preprocess_mode": args.preprocess_mode,
         "seed": args.seed,
         "save_camera_tokens": args.save_camera_tokens,
+        "save_context_diagnostics": args.save_context_diagnostics,
     }
 
 
@@ -317,7 +353,13 @@ def main(argv: list[str] | None = None) -> None:
         selections = make_frame_selections(valid_ids, args.frame_counts, args.sampling)
         for requested_count, selected_ids in selections.items():
             selection_dir = run_dir / scene / f"frames_{requested_count}"
-            if selection_is_complete(selection_dir, run_id, selected_ids, args.iterations):
+            if selection_is_complete(
+                selection_dir,
+                run_id,
+                selected_ids,
+                args.iterations,
+                require_context_diagnostics=args.save_context_diagnostics,
+            ):
                 print(f"[resume] {scene} frames={requested_count}")
                 all_rows.extend(_read_metric_rows(selection_dir / "iteration_metrics.json"))
                 continue
@@ -341,6 +383,7 @@ def main(argv: list[str] | None = None) -> None:
                 output_dir=selection_dir,
                 run_id=run_id,
                 save_camera_tokens=args.save_camera_tokens,
+                save_context_diagnostics=args.save_context_diagnostics,
             )
             all_rows.extend(rows)
             _write_summary(run_dir, all_rows)

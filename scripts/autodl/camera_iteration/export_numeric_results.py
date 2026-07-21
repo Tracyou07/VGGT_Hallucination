@@ -17,6 +17,11 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DESTINATION_ROOT = REPO_ROOT / "results" / "camera_iteration"
 DEFAULT_MAX_FILE_BYTES = 50 * 1024 * 1024
 ROOT_FILES = ("run_metadata.json", "summary.json", "summary.csv")
+CONTEXT_ROOT_FILES = (
+    "context_per_frame.csv",
+    "context_summary.csv",
+    "context_summary.json",
+)
 SELECTION_FILES = (
     "iteration_metrics.json",
     "iteration_metrics.csv",
@@ -34,6 +39,19 @@ TRACE_MEMBERS = {
 CAMERA_TOKEN_MEMBERS = {
     "normalized_camera_tokens.npy",
     "pose_tokens_modulated.npy",
+}
+CONTEXT_MEMBERS = {
+    "frame_ids.npy",
+    "normalized_camera_tokens.npy",
+    "pred_c2w_raw.npy",
+    "pred_c2w_aligned.npy",
+    "gt_c2w_raw.npy",
+    "translation_error_aligned.npy",
+    "rotation_error_deg_aligned.npy",
+    "delta_norm.npy",
+    "sim3_scale.npy",
+    "sim3_rotation.npy",
+    "sim3_translation.npy",
 }
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -78,6 +96,19 @@ def _validate_trace(path: Path) -> None:
         raise ValueError(f"invalid camera trace NPZ: {path}") from error
 
 
+def _validate_context_diagnostics(path: Path) -> None:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = set(archive.namelist())
+            if members != CONTEXT_MEMBERS:
+                raise ValueError(
+                    "context_diagnostics.npz has unexpected arrays; "
+                    f"found {sorted(members)}"
+                )
+    except zipfile.BadZipFile as error:
+        raise ValueError(f"invalid context diagnostics NPZ: {path}") from error
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -115,6 +146,11 @@ def export_numeric_results(
     run_id = metadata.get("run_id")
     if not isinstance(run_id, str) or not RUN_ID_PATTERN.fullmatch(run_id):
         raise ValueError("run_metadata.json has an invalid run_id")
+    invocation = metadata.get("invocation")
+    context_enabled = (
+        isinstance(invocation, dict)
+        and invocation.get("save_context_diagnostics") is True
+    )
 
     destination = destination_root / run_id
     if destination.exists():
@@ -125,6 +161,11 @@ def export_numeric_results(
         path = source / filename
         _validate_file(path, max_file_bytes)
         candidates.append((path, Path(filename)))
+    if context_enabled:
+        for filename in CONTEXT_ROOT_FILES:
+            path = source / filename
+            _validate_file(path, max_file_bytes)
+            candidates.append((path, Path(filename)))
 
     selections = _selection_dirs(source)
     if not selections:
@@ -142,6 +183,13 @@ def export_numeric_results(
             if filename == "camera_trace.npz":
                 _validate_trace(path)
             candidates.append((path, relative_dir / filename))
+        if context_enabled:
+            context_path = selection / "context_diagnostics.npz"
+            _validate_file(context_path, max_file_bytes)
+            _validate_context_diagnostics(context_path)
+            candidates.append(
+                (context_path, relative_dir / "context_diagnostics.npz")
+            )
 
     destination_root.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=f".{run_id}.", dir=destination_root))

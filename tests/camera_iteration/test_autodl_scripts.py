@@ -39,6 +39,19 @@ class AutoDLScriptsTest(unittest.TestCase):
         for forbidden in ("conda create", "pip install", "snapshot_download", "extract_scannet", "RUN_EXTRACT", "wget", "curl"):
             self.assertNotIn(forbidden, content)
 
+    def test_context_runner_fixes_round_1_5_protocol(self):
+        content = self.read("run_camera_context.sh")
+        for value in (
+            "camera_context_scannet.txt",
+            'FRAME_COUNTS="${FRAME_COUNTS:-25 50 100 200 500}"',
+            'ITERATIONS="4"',
+            'SAVE_CONTEXT_DIAGNOSTICS="1"',
+            "run_camera_iteration.sh",
+            "pre_experiments.camera_context.analyze",
+        ):
+            self.assertIn(value, content)
+        self.assertNotIn("SAVE_CAMERA_TOKENS=1", content)
+
     def test_shell_syntax(self):
         for path in AUTODL.glob("*.sh"):
             subprocess.run(

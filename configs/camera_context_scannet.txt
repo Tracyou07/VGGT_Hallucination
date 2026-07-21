@@ -1,0 +1,5 @@
+# Round 1.5: two long-context failures and two stable controls.
+scene0000_00
+scene0691_00
+scene0013_02
+scene0029_01

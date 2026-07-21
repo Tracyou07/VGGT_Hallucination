@@ -50,7 +50,8 @@ RESULT_DIR=/root/autodl-tmp/camera_iteration/smoke \
 ```
 
 Other overrides are `AUTODL_TMP`, `CONDA_ROOT`, `CONDA_ENV_NAME`, `CKPT_DIR`,
-`SCANNET_ROOT`, `SCENE_LIST`, `SEED`, and `SAVE_CAMERA_TOKENS=1`.
+`SCANNET_ROOT`, `SCENE_LIST`, `SEED`, `SAVE_CAMERA_TOKENS=1`, and
+`SAVE_CONTEXT_DIAGNOSTICS=1`.
 
 ## Manual Run
 
@@ -82,6 +83,10 @@ Each `<scene>/frames_<requested>/` directory contains:
 
 `--save-camera-tokens` additionally stores normalized and per-iteration
 modulated Camera Tokens. It is opt-in because storage grows as `O(KSC)`.
+`--save-context-diagnostics` instead writes a compact
+`context_diagnostics.npz` with only the final normalized Camera Token, raw and
+aligned predictions, raw GT, and per-frame aligned errors. It does not retain
+per-iteration modulated tokens.
 Incomplete selections are rerun; a selection is skipped only when all required
 artifacts exist and its run ID, frame IDs, and iterations match.
 
@@ -100,6 +105,9 @@ pose-only `camera_trace.npz` files. NPZ traces containing
 `normalized_camera_tokens` or `pose_tokens_modulated`, and any allowed file
 larger than 50 MiB, are rejected. Review `publish_manifest.json` and `du -sh`
 before explicitly running `git add`, `git commit`, and `git push`.
+For a declared Round 1.5 run, the same exporter additionally validates and
+copies `context_diagnostics.npz`, `context_per_frame.csv`, and
+`context_summary.{csv,json}`.
 
 ## Metric Semantics
 

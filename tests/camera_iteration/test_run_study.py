@@ -68,6 +68,12 @@ class StudyCLITest(unittest.TestCase):
         self.assertEqual(args.sampling, "nested_uniform")
         self.assertEqual(args.scene_limit, 10)
         self.assertFalse(args.save_camera_tokens)
+        self.assertFalse(args.save_context_diagnostics)
+
+    def test_parser_enables_context_diagnostics_explicitly(self):
+        args = parse_args(["--iterations", "4", "--save-context-diagnostics"])
+        self.assertEqual(args.iterations, [4])
+        self.assertTrue(args.save_context_diagnostics)
 
     def test_checkpoint_is_validated_before_model_construction(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -103,6 +109,7 @@ class StudyCLITest(unittest.TestCase):
                 output_dir=output_dir,
                 run_id="abcdef0_123456789abc",
                 save_camera_tokens=False,
+                save_context_diagnostics=True,
                 image_loader=lambda paths, mode: torch.zeros(len(paths), 3, 100, 100),
             )
 
@@ -112,6 +119,7 @@ class StudyCLITest(unittest.TestCase):
                 "iteration_metrics.json",
                 "iteration_metrics.csv",
                 "camera_trace.npz",
+                "context_diagnostics.npz",
                 "selected_frame_ids.json",
                 "complete.json",
             ):
@@ -124,8 +132,15 @@ class StudyCLITest(unittest.TestCase):
                     run_id="abcdef0_123456789abc",
                     selected_ids=selected_ids,
                     iterations=[1, 4],
+                    require_context_diagnostics=True,
                 )
             )
+            with np.load(output_dir / "context_diagnostics.npz") as diagnostics:
+                np.testing.assert_array_equal(diagnostics["frame_ids"], selected_ids)
+                np.testing.assert_allclose(diagnostics["gt_c2w_raw"], gt_c2w)
+                np.testing.assert_allclose(
+                    diagnostics["translation_error_aligned"], 0.0, atol=1e-5
+                )
             self.assertFalse(
                 selection_is_complete(
                     output_dir,

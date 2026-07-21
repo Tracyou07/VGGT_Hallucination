@@ -17,6 +17,7 @@ SAMPLING="${SAMPLING:-nested_uniform}"
 PREPROCESS_MODE="${PREPROCESS_MODE:-pad}"
 SEED="${SEED:-33}"
 SAVE_CAMERA_TOKENS="${SAVE_CAMERA_TOKENS:-0}"
+SAVE_CONTEXT_DIAGNOSTICS="${SAVE_CONTEXT_DIAGNOSTICS:-0}"
 CONDA_SH="$CONDA_ROOT/etc/profile.d/conda.sh"
 
 [[ -f "$CONDA_SH" ]] || { printf 'Run scripts/autodl/setup_vggt_env.sh first.\n' >&2; exit 1; }
@@ -46,5 +47,6 @@ args=(python -m pre_experiments.camera_iteration.run_study
   --ckpt-dir "$CKPT_DIR" --device cuda --preprocess-mode "$PREPROCESS_MODE"
   --out-dir "$RESULT_DIR" --seed "$SEED")
 [[ "$SAVE_CAMERA_TOKENS" == "1" ]] && args+=(--save-camera-tokens)
+[[ "$SAVE_CONTEXT_DIAGNOSTICS" == "1" ]] && args+=(--save-context-diagnostics)
 cd "$REPO_ROOT"
 "${args[@]}"

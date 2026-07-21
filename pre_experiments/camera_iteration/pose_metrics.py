@@ -70,8 +70,11 @@ def umeyama(src: np.ndarray, dst: np.ndarray) -> tuple[float, np.ndarray, np.nda
     return scale, rotation, translation
 
 
-def evaluate_pose(pred_w2c: np.ndarray, gt_c2w: np.ndarray) -> dict[str, float]:
-    """Evaluate predicted poses after Sim(3) alignment to raw GT camera poses."""
+def align_pose_sequence(
+    pred_w2c: np.ndarray,
+    gt_c2w: np.ndarray,
+) -> dict[str, np.ndarray | float]:
+    """Align predictions to raw GT and return per-frame diagnostic arrays."""
     predicted_w2c = _validate_pose_stack("pred_w2c", pred_w2c)
     ground_truth_c2w = _validate_pose_stack("gt_c2w", gt_c2w)
     if len(predicted_w2c) != len(ground_truth_c2w):
@@ -98,6 +101,28 @@ def evaluate_pose(pred_w2c: np.ndarray, gt_c2w: np.ndarray) -> dict[str, float]:
             rotation_angle_deg(aligned_pose[:3, :3].T @ ground_truth_pose[:3, :3])
         )
 
+    return {
+        "aligned_c2w": aligned_c2w,
+        "translation_error_aligned": translation_errors,
+        "rotation_error_deg_aligned": np.asarray(rotation_errors, dtype=np.float64),
+        "sim3_scale": scale,
+        "sim3_rotation": alignment_rotation,
+        "sim3_translation": translation,
+    }
+
+
+def evaluate_pose(pred_w2c: np.ndarray, gt_c2w: np.ndarray) -> dict[str, float]:
+    """Evaluate predicted poses after Sim(3) alignment to raw GT camera poses."""
+    predicted_w2c = _validate_pose_stack("pred_w2c", pred_w2c)
+    ground_truth_c2w = _validate_pose_stack("gt_c2w", gt_c2w)
+    if len(predicted_w2c) != len(ground_truth_c2w):
+        raise ValueError("pred_w2c and gt_c2w must contain the same number of poses")
+
+    alignment = align_pose_sequence(predicted_w2c, ground_truth_c2w)
+    aligned_c2w = np.asarray(alignment["aligned_c2w"])
+    translation_errors = np.asarray(alignment["translation_error_aligned"])
+    rotation_errors = np.asarray(alignment["rotation_error_deg_aligned"])
+
     relative_rotation_errors = []
     relative_translation_errors = []
     for index in range(1, len(ground_truth_c2w)):
@@ -117,5 +142,5 @@ def evaluate_pose(pred_w2c: np.ndarray, gt_c2w: np.ndarray) -> dict[str, float]:
         "pose_are_max_deg_aligned": float(np.max(rotation_errors)),
         "pose_rpe_rot_mean_deg": float(np.mean(relative_rotation_errors)),
         "pose_rpe_trans_mean_aligned": float(np.mean(relative_translation_errors)),
-        "pose_sim3_scale": scale,
+        "pose_sim3_scale": float(alignment["sim3_scale"]),
     }

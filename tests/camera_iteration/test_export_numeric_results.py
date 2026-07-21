@@ -24,6 +24,24 @@ TRACE_MEMBERS = (
     "pose_delta_by_iteration.npy",
     "delta_norm.npy",
 )
+CONTEXT_ROOT_FILES = (
+    "context_per_frame.csv",
+    "context_summary.csv",
+    "context_summary.json",
+)
+CONTEXT_MEMBERS = (
+    "frame_ids.npy",
+    "normalized_camera_tokens.npy",
+    "pred_c2w_raw.npy",
+    "pred_c2w_aligned.npy",
+    "gt_c2w_raw.npy",
+    "translation_error_aligned.npy",
+    "rotation_error_deg_aligned.npy",
+    "delta_norm.npy",
+    "sim3_scale.npy",
+    "sim3_rotation.npy",
+    "sim3_translation.npy",
+)
 
 
 def load_exporter():
@@ -60,6 +78,18 @@ def make_source(root: Path, run_id: str = "commit_1234") -> Path:
     (source / "point_cloud.ply").write_bytes(b"large point cloud")
     (selection / "preview.jpg").write_bytes(b"image")
     return source
+
+
+def add_context_artifacts(source: Path) -> None:
+    metadata_path = source / "run_metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["invocation"] = {"save_context_diagnostics": True}
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    for name in CONTEXT_ROOT_FILES:
+        content = "[]" if name.endswith(".json") else "scene,short_frames,long_frames\n"
+        (source / name).write_text(content, encoding="utf-8")
+    selection = source / "scene0000_00" / "frames_25"
+    write_trace(selection / "context_diagnostics.npz", CONTEXT_MEMBERS)
 
 
 class NumericResultExporterTest(unittest.TestCase):
@@ -99,6 +129,28 @@ class NumericResultExporterTest(unittest.TestCase):
                 content = (destination / entry["path"]).read_bytes()
                 self.assertEqual(entry["bytes"], len(content))
                 self.assertEqual(entry["sha256"], hashlib.sha256(content).hexdigest())
+
+    def test_exports_declared_context_diagnostics(self):
+        exporter = load_exporter()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = make_source(root)
+            add_context_artifacts(source)
+
+            destination = exporter.export_numeric_results(
+                source, root / "published", max_file_bytes=1024 * 1024
+            )
+
+            for name in CONTEXT_ROOT_FILES:
+                self.assertTrue((destination / name).is_file())
+            self.assertTrue(
+                (
+                    destination
+                    / "scene0000_00"
+                    / "frames_25"
+                    / "context_diagnostics.npz"
+                ).is_file()
+            )
 
     def test_rejects_existing_destination(self):
         exporter = load_exporter()
