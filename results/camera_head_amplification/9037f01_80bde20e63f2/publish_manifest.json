@@ -1,0 +1,54 @@
+{
+  "file_count": 9,
+  "files": [
+    {
+      "bytes": 1377,
+      "path": "run_metadata.json",
+      "sha256": "c27f748a5ca72cf7305bb5d8b5b09e27a9dfad08186231635143cd75642252cd"
+    },
+    {
+      "bytes": 111,
+      "path": "complete.json",
+      "sha256": "f0ba28f45be79c62f87f37cf37ade0ccdde17cfeb49d47a0e77cd0d939c3ea55"
+    },
+    {
+      "bytes": 281,
+      "path": "baseline_checks.json",
+      "sha256": "9f89d49f852d297c9738c191f3f633fd558aca6b6a720894b82d8df20a31461c"
+    },
+    {
+      "bytes": 26928,
+      "path": "amplification_summary.json",
+      "sha256": "80f60484b7988531a648ad970d1ff25d51d6a0052ce986bb766e739db4d2bc4a"
+    },
+    {
+      "bytes": 10569,
+      "path": "amplification_summary.csv",
+      "sha256": "981d310f59d7aacce44b6fd15ae0d5e5b35719b8c12ec465651deaeb85e058a0"
+    },
+    {
+      "bytes": 1234993,
+      "path": "amplification_per_frame.csv",
+      "sha256": "fb14ce0968a97dc9454f814b381a46070c6f5fb7352a8c8b60bf6f8e71fe0294"
+    },
+    {
+      "bytes": 1961,
+      "path": "pose_metrics.json",
+      "sha256": "3394456e2dc6cd0a1771892eb65d9ecbbe39888ec1ccc0553a9686254009ecfb"
+    },
+    {
+      "bytes": 939,
+      "path": "pose_metrics.csv",
+      "sha256": "ba4ef78df46aec21475017ad44db8a9f167537419b9905c21f0b58b5e304fbfb"
+    },
+    {
+      "bytes": 76861,
+      "path": "pose_per_frame.csv",
+      "sha256": "a50f25f27304a2113a7b97751b6d8ba6d15422dbc52511041ff37e0a62b92fdf"
+    }
+  ],
+  "run_id": "9037f01_80bde20e63f2",
+  "schema_version": 1,
+  "source_git_commit": "9037f013c268d71b693aba3effb1c1596c4c371a",
+  "total_bytes": 1354020
+}

@@ -1,0 +1,48 @@
+{
+  "argv": [
+    "/root/autodl-tmp/VGGT_Hallucination/pre_experiments/camera_head_amplification/run_replay.py",
+    "--source-run-dir",
+    "/root/autodl-tmp/VGGT_Hallucination/results/camera_context/911b598_f4577f584448",
+    "--ckpt-dir",
+    "/root/autodl-tmp/ckpt/VGGT-1B",
+    "--out-dir",
+    "/root/autodl-tmp/camera_head_amplification/results",
+    "--device",
+    "cuda",
+    "--short-frames",
+    "200",
+    "--long-frames",
+    "500",
+    "--iterations",
+    "4",
+    "--scene-limit",
+    "1",
+    "--baseline-atol",
+    "1e-5",
+    "--baseline-rtol",
+    "1e-5"
+  ],
+  "git_commit": "9037f013c268d71b693aba3effb1c1596c4c371a",
+  "invocation": {
+    "baseline_atol": 1e-05,
+    "baseline_rtol": 1e-05,
+    "checkpoint_dir": "/root/autodl-tmp/ckpt/VGGT-1B",
+    "device": "cuda",
+    "iterations": 4,
+    "long_frames": 500,
+    "scenes": [
+      "scene0000_00"
+    ],
+    "short_frames": 200,
+    "source_run_dir": "/root/autodl-tmp/VGGT_Hallucination/results/camera_context/911b598_f4577f584448",
+    "source_run_id": "911b598_f4577f584448"
+  },
+  "numpy": "2.2.6",
+  "primary_metric_policy": "prediction metrics use aligned values; GT remains raw",
+  "python": "3.12.3",
+  "run_id": "9037f01_80bde20e63f2",
+  "source_run_id": "911b598_f4577f584448",
+  "study_name": "camera_head_amplification",
+  "study_type": "method_pre_experiment",
+  "torch": "2.3.1+cu121"
+}

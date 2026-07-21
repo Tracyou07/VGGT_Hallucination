@@ -1,0 +1,16 @@
+[
+  {
+    "max_abs_error": 0.0,
+    "mean_abs_error": 0.0,
+    "passed": true,
+    "scene": "scene0000_00",
+    "variant": "H200(Z200)"
+  },
+  {
+    "max_abs_error": 0.0,
+    "mean_abs_error": 0.0,
+    "passed": true,
+    "scene": "scene0000_00",
+    "variant": "H500(Z500)"
+  }
+]
