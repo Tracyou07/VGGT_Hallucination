@@ -1056,6 +1056,27 @@ For each `S` and iteration, report:
 
 The MVP research result is considered meaningful when a non-default iteration improves median aligned ATE by at least 5% over iteration 4 and is non-worse on at least 7 of 10 scenes. A change visible only in raw scale, one scene, or one frame count is not sufficient.
 
+## Round 1 Outcome
+
+The completed 10-scene study did not pass the non-default iteration gate. Raw
+9D update norms collapsed after the initial prediction (`1.8702` at iteration
+1, `0.004624` at iteration 2, `0.000439` at iteration 4, and `0.0000785` at
+iteration 16), while additional iterations produced no consistent aligned ATE
+gain. Keep `camera_num_iterations=4` as the fixed baseline and do not implement
+iteration selection.
+
+Interpret the first MLP output as the initial full 9D pose estimate and later
+outputs as additive residuals. All iterations reuse the same four-block trunk
+and pose MLP while the normalized Camera Tokens stay fixed. Sequence-length
+degradation is concentrated: at iteration 4, median aligned ATE is `0.0665` at
+200 frames and `0.0690` at 500 frames, but `scene0000_00` rises from `0.1933`
+to `1.3663` and `scene0691_00` from `0.0743` to `0.1336`.
+
+Different context lengths can strongly change the same frame's update norm,
+but Round 1 lacks matched per-frame Camera Tokens and aligned errors. Treat
+context-driven latent corruption as a hypothesis, not a result. Round 1.5 must
+measure that missing link before Round 2 begins.
+
 ## Acceptance Criteria
 
 - Existing default calls return the same `pose_enc`, `pose_enc_list`, and non-camera outputs as before.
@@ -1069,13 +1090,19 @@ The MVP research result is considered meaningful when a non-default iteration im
 
 These stages are deliberately excluded from the first code change. Each begins only after the preceding evidence gate and receives its own implementation plan before code is edited.
 
-### Round 2 Gate: Geometry-aware Iteration Selection
+### Round 1.5 Gate: Camera Context Consistency Diagnosis
 
-Enter when the iteration curve is U-shaped or different scenes prefer different iterations. Create `pre_experiments/camera_iteration/geometry_score.py`, `pre_experiments/camera_iteration/select_iteration.py`, and `tests/camera_iteration/test_geometry_score.py`. The score may consume predicted depth, point map, confidence, focal stability, temporal smoothness, and correction norm, but never GT. Keep an explicitly named oracle-by-ATE result only as an upper bound. Proceed when the selected iteration improves median aligned ATE by at least 5% over fixed iteration 4 on at least 7 of 10 scenes.
+Enter after Round 1 fixes the production baseline at `camera_num_iterations=4` but reveals sequence-length-dependent behavior. Reuse nested frame selections for `S = 25, 50, 100, 200, 500` on `scene0000_00`, `scene0691_00`, and two stable controls. Save `frame_ids`, final normalized Camera Tokens, iteration-4 raw pose, independently aligned predictions, raw GT, and per-frame translation/rotation errors. Compare only shared frame IDs across contexts. Report token cosine drift, pairwise-affinity drift, aligned pose drift, error change, and delta-norm change. Do not treat raw token MSE as a physical target. The GPU pass remains camera-only; dense Depth/Point outputs belong to Round 2 so 500-frame memory stays comparable to Round 1.
+
+Proceed when the exported diagnostics distinguish at least one reproducible mechanism: latent drift associated with error growth, stable latent with decoding degradation, localized bad-frame propagation, or sequence-wide trajectory drift. The diagnostic must include one failing scene and one stable control.
+
+### Round 2 Gate: GT-free Geometry Residual Validation
+
+Enter after Round 1.5 provides per-frame aligned diagnostics. Create a separate geometry-residual probe that evaluates temporal smoothness, focal/scale stability, Depth-Camera consistency, Point-Camera consistency, confidence, tracks, and correction norm without using GT in the score. Use raw GT only to measure correlation with aligned per-frame pose error and to define an explicitly named oracle upper bound. Test residual terms independently before combining them. Because Round 1 fixed iteration 4 as the robust default, do not build an iteration selector unless the oracle itself improves median aligned ATE by at least 5% and is non-worse on at least 7 of 10 scenes.
 
 ### Round 3 Gate: Training-free SE(3) Pose Refinement
 
-Enter when iteration choice alone is insufficient and a GT-free geometry score correlates with aligned pose error. Add `vggt/utils/se3.py`, `pre_experiments/pose_refinement/geometry_residuals.py`, `pre_experiments/pose_refinement/run_refinement.py`, and focused tests. Optimize `[S-1,6]` corrections with frame 0 fixed, left-compose `exp(delta_xi^)` with predicted `w2c`, recompute residuals every step, and retain correction regularization. Reject the method if geometry loss falls while median aligned ATE or aligned point-cloud error consistently worsens.
+Enter when a GT-free geometry score from Round 2 correlates with aligned pose error. Add `vggt/utils/se3.py`, `pre_experiments/pose_refinement/geometry_residuals.py`, `pre_experiments/pose_refinement/run_refinement.py`, and focused tests. Optimize `[S-1,6]` corrections with frame 0 fixed, left-compose `exp(delta_xi^)` with predicted `w2c`, recompute residuals every step, and retain correction regularization. Reject the method if geometry loss falls while median aligned ATE or aligned point-cloud error consistently worsens.
 
 ### Round 4 Gate: Low-rank Camera Latent Probing
 

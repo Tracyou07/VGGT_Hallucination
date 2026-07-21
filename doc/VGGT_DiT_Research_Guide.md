@@ -715,6 +715,68 @@ k^*=\arg\min_k \mathcal L_{\text{geo}}(p_k).
 
 这可以形成 **Geometry-aware Camera Head Early Stopping / Iteration Selection**。
 
+### Round 1 已观测结论（2026-07-21）
+
+正式预实验覆盖 10 个 ScanNet 场景、`S = 25, 50, 100, 200, 500` 和
+`num_iterations = 1, 2, 4, 8, 16`，共 50 个场景/长度组合。所有 prediction
+指标先完成 Sim(3) alignment，GT 始终使用 raw pose。
+
+1. Camera Head 在 2–4 轮后已基本收敛。平均 raw 9D update norm 从第 1 轮的
+   `1.8702` 降到第 2 轮的 `0.004624`、第 4 轮的 `0.000439`，继续到第 16 轮
+   只有 `0.0000785`。
+2. 非默认 iteration 没有达到“median aligned ATE 至少改善 5%，且至少 7/10
+   场景不退化”的门槛。不同组合的微小最优点不一致，因此保留默认 4 轮，不开发
+   iteration selector。
+3. 第 1 轮 MLP 输出承担初始完整 9D pose 预测；第 2 轮以后才是严格意义上的
+   additive residual refinement。四轮共享同一个 4-block Transformer trunk 和
+   pose MLP，原 normalized Camera Token 在轮间保持固定。
+4. 500 帧的总体均值退化主要由少数场景驱动，而非所有场景普遍恶化。在 iteration
+   4 下，ATE 中位数从 200 帧的 `0.0665` 仅变为 500 帧的 `0.0690`；但
+   `scene0000_00` 从 `0.1933` 增至 `1.3663`，`scene0691_00` 从 `0.0743`
+   增至 `0.1336`。
+5. 同一 frame ID 在不同上下文长度中的 update norm 可显著变化，说明 Camera Head
+   的输入表征或其上下文解码过程具有 context sensitivity。但 Round 1 没有保存逐帧
+   Camera Token 和 aligned error，因此不能据此断言 token drift 导致误差上升。
+
+结论：**长序列问题不是 Camera Head 迭代次数不足。当前证据将问题定位到固定
+Camera representation、全局上下文影响或 9D additive decoding，但三者的因果关系
+必须由 Round 1.5 进一步区分。**
+
+---
+
+## Phase 0.5：Camera Context Consistency Diagnosis — Round 1.5
+
+### 目的
+
+在固定 `num_iterations=4` 后，判断长上下文是否改变同一帧的 Camera
+representation，并确认这种变化是否对应真实 pose 误差上升。该阶段只做诊断，
+不训练参数，也不提出修复模块。
+
+### 定向实验
+
+- 异常场景：`scene0000_00`、`scene0691_00`；
+- 稳定对照：从 Round 1 中选择两个 ATE 随长度稳定的场景；
+- 使用 nested frame selections：`S = 25, 50, 100, 200, 500`；
+- 固定 Camera Head 为 4 次迭代；
+- 保存最终 normalized Camera Token、raw pose、aligned prediction、raw GT、
+  per-frame translation/rotation error 和 frame ID。
+
+只比较不同上下文中共有的 frame ID。预测误差必须在各自序列内完成 Sim(3)
+alignment 后计算，GT 始终保持 raw。Camera Token 只用于 cosine drift、pairwise
+affinity stability 等诊断，不把跨上下文 raw token MSE 当作物理监督。
+
+### 判断
+
+- token drift 与 aligned pose error increase 稳定相关：优先研究 Camera latent
+  denoising；
+- token 稳定但 pose error 上升：优先检查 Camera Head decoding；
+- 少数帧先异常并影响其余帧：研究污染传播和 robust context；
+- 整条序列同步漂移：优先检查 gauge、全局 attention 和轨迹约束。
+
+Round 1.5 的 GPU 工作只用于生成缺失的模型输出；共享帧匹配、alignment、统计和
+绘图均应在 CPU 上完成。首轮不启用 dense Depth/Point Head，避免 500 帧实验显存
+超过 Round 1；这些输出在下一阶段按需要单独生成。
+
 ---
 
 ## Phase 1：Training-free Pose Refinement Baseline
@@ -1139,35 +1201,71 @@ delta_norm_per_iter
 - 若误差持续下降：说明默认迭代不足；
 - 若所有 iteration 都差：说明主要问题不在 head iteration，而在 camera latent 或几何约束。
 
-## 14.3 第三阶段：Geometry-aware Iteration Selection
+## 14.3 Round 1.5：Camera Context Consistency Diagnosis
 
 ### 目标
 
-不训练任何参数，只从已有 `pose_enc_list` 中选择几何一致性最好的 iteration。
+固定 `num_iterations=4`，确认同一帧在不同上下文长度中的 Camera Token/Pose
+变化是否与 aligned pose error 上升相关，并区分局部异常帧传播和整条轨迹漂移。
+
+### 输入与输出
+
+- 输入场景：`scene0000_00`、`scene0691_00` 和两个稳定对照场景；
+- 帧数：`25, 50, 100, 200, 500`，沿用 nested sampling；
+- GPU 输出：`frame_ids`、`normalized_camera_tokens`、iteration 4 raw pose；
+- CPU 输出：逐帧 aligned translation/rotation error，以及相邻上下文之间的
+  matched-frame token/pose/error drift。
+
+### 核心指标
+
+```text
+token_cosine_distance
+token_pairwise_affinity_drift
+aligned_translation_error_change
+aligned_rotation_error_change
+aligned_pose_context_drift
+delta_norm_change
+```
+
+分析必须按 frame ID 匹配共享帧。prediction 使用各上下文独立 alignment 后的结果，
+GT 只使用 raw pose。禁止使用 raw prediction 与 aligned GT，也禁止把 raw token MSE
+解释为几何误差。
+
+### 进入 Round 2 的条件
+
+至少在一个异常场景和一个稳定对照上完成可复现导出，并能够区分以下至少一种现象：
+
+- representation drift 与 error increase 相关；
+- representation 稳定而 Camera decoding 退化；
+- 少数异常帧的更新在长上下文中扩散；
+- 整体轨迹发生同步漂移。
+
+## 14.4 Round 2：GT-free Geometry Residual Validation
+
+### 目标
+
+构造不使用 GT 的轻量几何评分，并验证它是否与 Round 1.5 的逐帧 aligned camera
+error 相关。GT 只能用于相关性评估和 oracle upper bound。
 
 ### 方法
 
-对每轮 pose 构造轻量几何评分：
+候选评分为：
 
 ```text
-score_k =
+score =
   λ_smooth * temporal_smoothness
-+ λ_scale  * scale_stability
-+ λ_depth  * depth_pose_consistency
-+ λ_reg    * correction_size
++ λ_scale   * focal_and_scale_stability
++ λ_depth   * depth_pose_consistency
++ λ_point   * point_camera_consistency
++ λ_track   * track_reprojection_error
++ λ_reg     * correction_size
 ```
 
-然后选择：
+先逐项报告相关性和异常检测能力，再决定是否组合。若 iteration 4 仍是稳定最优，
+不开发 iteration selector；只有 oracle 证明不同 iteration 存在足够收益时，才把
+`k* = argmin_k score_k` 作为附加基线。
 
-```text
-k* = argmin_k score_k
-```
-
-### 注意
-
-该阶段不能使用 GT 作为选择依据。GT 只用于最终评估。若 selection 使用 GT，就只能作为 oracle upper bound。
-
-## 14.4 第四阶段：Training-free Pose Residual Optimization
+## 14.5 Round 3：Training-free Pose Residual Optimization
 
 ### 目标
 
@@ -1217,7 +1315,7 @@ raw/scale 只用于诊断尺度漂移
 
 若 aligned pose 或 aligned point-cloud 明显改善，说明 closed-loop geometry residual 方向成立。
 
-## 14.5 第五阶段：Training-free Camera Latent Probing
+## 14.6 Round 4：Training-free Camera Latent Probing
 
 ### 目标
 
@@ -1258,7 +1356,7 @@ min_a L_geo(p') + λ ||a||² + μ ||z' - z||²
 - 若 latent probing 不稳定：优先保留 pose residual refinement，不进入 latent SFT；
 - 若 latent probing 只改善训练场景、不泛化：说明它可能在利用评估 loss shortcut。
 
-## 14.6 第六阶段：Small-scale SFT Tiny Latent Denoiser
+## 14.7 Round 5：Small-scale SFT Tiny Latent Denoiser
 
 只有在第五阶段有效后，才进入小规模训练。
 
@@ -1304,7 +1402,7 @@ Frozen Camera Head
 5. 优先使用 pose loss、relative pose loss、geometry consistency 和 latent relational loss；
 6. 每个实验报告可训练参数量、额外显存和推理时间。
 
-## 14.7 第七阶段：组合方法
+## 14.8 Round 6：组合方法
 
 只有当以下两个结论都成立时，才组合：
 
@@ -1323,7 +1421,7 @@ pose -> one-step SE(3) correction -> final pose
 
 不要一开始同时训练 latent denoiser 和 pose refiner，否则无法判断收益来源。
 
-## 14.8 最小可交付版本
+## 14.9 最小可交付版本
 
 第一轮代码改动应只交付：
 
