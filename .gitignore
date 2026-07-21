@@ -160,6 +160,11 @@ skyseg.onnx
 !/results/camera_context/**/*.json
 !/results/camera_context/**/*.csv
 !/results/camera_context/**/*.npz
+!/results/camera_head_amplification/
+/results/camera_head_amplification/**
+!/results/camera_head_amplification/**/
+!/results/camera_head_amplification/**/*.json
+!/results/camera_head_amplification/**/*.csv
 
 # pixi environments
 .pixi

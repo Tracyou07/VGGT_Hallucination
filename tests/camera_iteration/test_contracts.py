@@ -37,12 +37,15 @@ class CameraIterationContractTest(unittest.TestCase):
             "results/camera_iteration/run/run_metadata.json",
             "results/camera_iteration/run/summary.csv",
             "results/camera_iteration/run/scene0000_00/frames_25/camera_trace.npz",
+            "results/camera_head_amplification/run/amplification_summary.json",
+            "results/camera_head_amplification/run/amplification_per_frame.csv",
         ):
             self.assertFalse(is_ignored(path), path)
         for path in (
             "results/unpublished/output.json",
             "results/camera_iteration/run/scene0000_00/frames_25/cloud.ply",
             "results/camera_iteration/run/scene0000_00/frames_25/preview.jpg",
+            "results/camera_head_amplification/run/activations.npz",
         ):
             self.assertTrue(is_ignored(path), path)
 
