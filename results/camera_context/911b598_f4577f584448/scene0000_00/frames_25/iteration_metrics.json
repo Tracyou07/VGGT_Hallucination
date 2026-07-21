@@ -1,0 +1,21 @@
+[
+  {
+    "delta_norm_max": 0.002278902567923069,
+    "delta_norm_mean": 0.0004869433760177344,
+    "delta_norm_p95": 0.0016076136380434036,
+    "frame_count_actual": 25,
+    "frame_count_requested": 25,
+    "inference_time_ms": 1652.6100439950824,
+    "iteration": 4,
+    "peak_cuda_memory_mb": 8256.69287109375,
+    "pose_are_max_deg_aligned": 107.56985915325504,
+    "pose_are_mean_deg_aligned": 8.23482999515089,
+    "pose_ate_max_aligned": 5.297826595024402,
+    "pose_ate_mean_aligned": 0.6580697298880673,
+    "pose_ate_rmse_aligned": 1.1791560010416096,
+    "pose_rpe_rot_mean_deg": 11.068837775856968,
+    "pose_rpe_trans_mean_aligned": 0.6942892872892973,
+    "pose_sim3_scale": 2.720094559067518,
+    "scene": "scene0000_00"
+  }
+]

@@ -1,0 +1,68 @@
+{
+  "argv": [
+    "/root/autodl-tmp/VGGT_Hallucination/pre_experiments/camera_iteration/run_study.py",
+    "--data-dir",
+    "/root/autodl-tmp/datasets/scannetv2/process_scannet",
+    "--scene-list",
+    "/root/autodl-tmp/VGGT_Hallucination/configs/camera_context_scannet.txt",
+    "--scene-limit",
+    "4",
+    "--frame-counts",
+    "25",
+    "50",
+    "100",
+    "200",
+    "500",
+    "--iterations",
+    "4",
+    "--sampling",
+    "nested_uniform",
+    "--ckpt-dir",
+    "/root/autodl-tmp/ckpt/VGGT-1B",
+    "--device",
+    "cuda",
+    "--preprocess-mode",
+    "pad",
+    "--out-dir",
+    "/root/autodl-tmp/camera_context/results",
+    "--seed",
+    "33",
+    "--save-context-diagnostics"
+  ],
+  "git_commit": "911b598832bcf2f881eb44391d72c27455ff6757",
+  "invocation": {
+    "checkpoint_dir": "/root/autodl-tmp/ckpt/VGGT-1B",
+    "data_dir": "/root/autodl-tmp/datasets/scannetv2/process_scannet",
+    "device": "cuda",
+    "frame_counts": [
+      25,
+      50,
+      100,
+      200,
+      500
+    ],
+    "iterations": [
+      4
+    ],
+    "output_root": "/root/autodl-tmp/camera_context/results",
+    "preprocess_mode": "pad",
+    "sampling": "nested_uniform",
+    "save_camera_tokens": false,
+    "save_context_diagnostics": true,
+    "scene_list": "/root/autodl-tmp/VGGT_Hallucination/configs/camera_context_scannet.txt",
+    "scenes": [
+      "scene0000_00",
+      "scene0691_00",
+      "scene0013_02",
+      "scene0029_01"
+    ],
+    "seed": 33
+  },
+  "numpy": "2.2.6",
+  "primary_metric_policy": "prediction metrics use aligned values",
+  "python": "3.12.3",
+  "run_id": "911b598_f4577f584448",
+  "study_name": "camera_iteration",
+  "study_type": "method_pre_experiment",
+  "torch": "2.3.1+cu121"
+}
