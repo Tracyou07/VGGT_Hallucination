@@ -105,8 +105,11 @@ iteration configuration, environment versions, and metric schema. A run is
 considered complete only after its metrics and completion metadata are written
 atomically. Re-running skips complete runs and retries incomplete ones.
 
-Generated predictions, checkpoints, datasets, and result tables are not
-committed. Small schema fixtures used by CPU-only tests may be tracked.
+Generated predictions, checkpoints, datasets, images, and point clouds are not
+committed. Completed runs may publish only the compact JSON, CSV, and pose-trace
+NPZ artifacts validated by `export_numeric_results.py`; Camera Token arrays and
+oversized files remain external. Small schema fixtures used by CPU-only tests
+may also be tracked.
 
 ## Verification
 

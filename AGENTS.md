@@ -14,7 +14,9 @@ ScanNet input handling, local checkpoint loading, pose metrics, and the CLI.
 This branch must not contain or import `experiments/scannet_hallucination` or
 write to its result namespace. Generated outputs belong under
 `results/pre_experiments/camera_iteration/` locally or the explicit external
-AutoDL result directory and must not be committed.
+AutoDL result directory. Only artifacts filtered by
+`export_numeric_results.py` may be committed beneath
+`results/camera_iteration/<run_id>/`.
 
 ## Build, Test, and Development Commands
 
@@ -28,6 +30,8 @@ AutoDL result directory and must not be committed.
 - `bash scripts/autodl/download_vggt_weights.sh` prepares only VGGT weights.
 - `SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet_camera_iteration.sh`
   officially downloads and extracts only the configured ScanNet `.sens` files.
+- `python scripts/autodl/camera_iteration/export_numeric_results.py --source
+  /absolute/run/path` exports compact numeric artifacts for review and commit.
 
 ## Coding Style & Naming Conventions
 
@@ -59,6 +63,6 @@ The three preparation scripts remain independent. The runner assumes the
 `vggt` environment plus complete weights and processed data; it must not create
 environments, install packages, download files, or extract `.sens`. Record
 commands, resolved paths, commit, and result location in metadata and `log/`.
-Keep commits independently testable. Pull requests must
-list protocol changes and verification. Never commit datasets, checkpoints,
-tokens, or generated traces.
+Keep commits independently testable. Pull requests must list protocol changes
+and verification. Never commit datasets, checkpoints, images, point clouds,
+high-dimensional Camera Tokens, or files bypassing the numeric exporter.

@@ -147,7 +147,13 @@ dmypy.json
 **/outputs/skyseg.onnx
 skyseg.onnx
 .worktrees/
-/results/
+/results/*
+!/results/camera_iteration/
+/results/camera_iteration/**
+!/results/camera_iteration/**/
+!/results/camera_iteration/**/*.json
+!/results/camera_iteration/**/*.csv
+!/results/camera_iteration/**/*.npz
 
 # pixi environments
 .pixi

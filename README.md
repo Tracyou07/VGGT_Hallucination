@@ -41,6 +41,27 @@ SCENE_LIMIT=1 FRAME_COUNTS="25" ITERATIONS="1 2 4 8 16" \
   bash scripts/autodl/run_camera_iteration.sh
 ```
 
+## Publish Numeric Results
+
+After a completed AutoDL run, export its compact measurements into the
+repository. Pass the exact run directory printed by the study:
+
+```bash
+python scripts/autodl/camera_iteration/export_numeric_results.py \
+  --source /root/autodl-tmp/camera_iteration/results/<run_id>
+
+du -sh results/camera_iteration/<run_id>
+git status --short results/camera_iteration/<run_id>
+git add results/camera_iteration/<run_id>
+git commit -m "Add camera iteration numeric results <run_id>"
+git push origin camera-iteration-preexperiment
+```
+
+The exporter includes JSON/CSV measurements and compact pose-only
+`camera_trace.npz` files. It rejects high-dimensional Camera Token arrays and
+files over 50 MiB, and never copies images, point clouds, datasets, or weights.
+`publish_manifest.json` records every copied file's size and SHA-256 digest.
+
 ## Development
 
 ```bash

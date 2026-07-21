@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -13,6 +14,38 @@ from pre_experiments.camera_iteration.contracts import (
 
 
 class CameraIterationContractTest(unittest.TestCase):
+    def test_git_only_tracks_published_numeric_result_types(self):
+        repo_root = Path(__file__).resolve().parents[2]
+
+        def is_ignored(path: str) -> bool:
+            result = subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "safe.directory=*",
+                    "check-ignore",
+                    "--no-index",
+                    "--quiet",
+                    path,
+                ],
+                cwd=repo_root,
+                check=False,
+            )
+            return result.returncode == 0
+
+        for path in (
+            "results/camera_iteration/run/run_metadata.json",
+            "results/camera_iteration/run/summary.csv",
+            "results/camera_iteration/run/scene0000_00/frames_25/camera_trace.npz",
+        ):
+            self.assertFalse(is_ignored(path), path)
+        for path in (
+            "results/unpublished/output.json",
+            "results/camera_iteration/run/scene0000_00/frames_25/cloud.ply",
+            "results/camera_iteration/run/scene0000_00/frames_25/preview.jpg",
+        ):
+            self.assertTrue(is_ignored(path), path)
+
     def test_output_root_accepts_method_and_external_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)

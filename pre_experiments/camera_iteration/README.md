@@ -85,6 +85,22 @@ modulated Camera Tokens. It is opt-in because storage grows as `O(KSC)`.
 Incomplete selections are rerun; a selection is skipped only when all required
 artifacts exist and its run ID, frame IDs, and iterations match.
 
+## Publishing Numeric Artifacts
+
+Keep the full runtime tree on AutoDL, then export only Git-safe measurements:
+
+```bash
+python scripts/autodl/camera_iteration/export_numeric_results.py \
+  --source /root/autodl-tmp/camera_iteration/results/<run_id>
+```
+
+The destination is `results/camera_iteration/<run_id>/`. It contains root and
+per-selection JSON/CSV files, selected frame IDs, completion metadata, and
+pose-only `camera_trace.npz` files. NPZ traces containing
+`normalized_camera_tokens` or `pose_tokens_modulated`, and any allowed file
+larger than 50 MiB, are rejected. Review `publish_manifest.json` and `du -sh`
+before explicitly running `git add`, `git commit`, and `git push`.
+
 ## Metric Semantics
 
 Primary conclusions use aligned prediction metrics:
