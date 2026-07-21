@@ -32,3 +32,13 @@ Aggregator token drift from downstream Camera Head amplification.
 - Run `bash -n scripts/autodl/run_camera_head_amplification.sh`.
 - Run a one-scene replay before the four-scene protocol and verify both
   baseline replay checks pass.
+
+## Pending: Four-Scene Formal Validation
+
+- [x] Complete and publish the `scene0000_00` smoke run; both replay baselines
+  match exactly.
+- [ ] Run `SCENE_LIMIT=0 bash scripts/autodl/run_camera_head_amplification.sh`.
+- [ ] Verify eight baseline checks across two observed failures and two stable
+  controls.
+- [ ] Export and publish the four-scene CSV/JSON result.
+- [ ] Record the formal cross-scene conclusion before starting Round 2.
