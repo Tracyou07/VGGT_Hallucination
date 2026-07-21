@@ -7,12 +7,16 @@ no phenomenon-characterization code or result tree is imported.
 
 ## AutoDL Quick Start
 
-Weights and ScanNet data are expected to exist before the run:
+Prepare the shared environment, weights, and authorized ScanNet subset as
+three independent stages, then run the experiment:
 
 ```bash
 git clone https://github.com/Tracyou07/VGGT_Hallucination.git
 cd VGGT_Hallucination
 git switch camera-iteration-preexperiment
+bash scripts/autodl/setup_vggt_env.sh
+bash scripts/autodl/download_vggt_weights.sh
+SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet_camera_iteration.sh
 bash scripts/autodl/run_camera_iteration.sh
 ```
 
@@ -21,12 +25,14 @@ Default external paths are:
 - ScanNet: `/root/autodl-tmp/datasets/scannetv2`
 - VGGT-1B: `/root/autodl-tmp/ckpt/VGGT-1B`
 - Results: `/root/autodl-tmp/camera_iteration/results`
-- Conda environment: `vggt_camera_iteration`
+- Conda environment: `vggt` (cloned from the AutoDL `base` environment)
 
-The runner never downloads weights or ScanNet. It uses an existing
-`process_scannet/` tree, or extracts requested scenes when only `.sens` files
-are present. Every path and experiment size can be overridden with environment
-variables documented in `pre_experiments/camera_iteration/README.md`.
+The environment script preserves the image's existing Torch/CUDA installation.
+The weight script uses `facebook/VGGT-1B`; the data script invokes ScanNet's
+official downloader and requires prior acceptance of its terms. The runner
+only validates complete local inputs and executes the study. Every path and
+experiment size can be overridden with environment variables documented in
+`pre_experiments/camera_iteration/README.md`.
 
 A smaller smoke configuration is:
 

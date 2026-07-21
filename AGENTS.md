@@ -24,6 +24,10 @@ AutoDL result directory and must not be committed.
 - `python -m unittest discover -s tests` runs the complete CPU test suite.
 - `python -m pre_experiments.camera_iteration.run_study --help` checks the CLI.
 - `bash -n scripts/autodl/run_camera_iteration.sh` validates runner syntax.
+- `bash scripts/autodl/setup_vggt_env.sh` creates/reuses the shared `vggt` env.
+- `bash scripts/autodl/download_vggt_weights.sh` prepares only VGGT weights.
+- `SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet_camera_iteration.sh`
+  officially downloads and extracts only the configured ScanNet `.sens` files.
 
 ## Coding Style & Naming Conventions
 
@@ -51,9 +55,10 @@ worktree does not replace its branch. Do not continue research on detached
 HEAD. AutoDL reproduces a pushed branch or recorded commit, never local
 worktree metadata. Repository-wide guides remain only on `main`.
 
-The runner assumes existing weights and data, validates inputs before model
-construction, supports processed frames or raw `.sens`, and contains no
-download commands. Record commands, resolved paths, commit, and result location
-in metadata and `log/`. Keep commits independently testable. Pull requests must
+The three preparation scripts remain independent. The runner assumes the
+`vggt` environment plus complete weights and processed data; it must not create
+environments, install packages, download files, or extract `.sens`. Record
+commands, resolved paths, commit, and result location in metadata and `log/`.
+Keep commits independently testable. Pull requests must
 list protocol changes and verification. Never commit datasets, checkpoints,
 tokens, or generated traces.

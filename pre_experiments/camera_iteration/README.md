@@ -21,29 +21,36 @@ iteration selection or model updates.
 
 ## AutoDL Run
 
+On a new AutoDL Miniconda machine whose `base` environment already has working
+Torch and CUDA, prepare and run each stage independently:
+
 ```bash
 git switch camera-iteration-preexperiment
+bash scripts/autodl/setup_vggt_env.sh
+bash scripts/autodl/download_vggt_weights.sh
+SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet_camera_iteration.sh
 bash scripts/autodl/run_camera_iteration.sh
 ```
 
 Defaults are `SCANNET_ROOT=/root/autodl-tmp/datasets/scannetv2`,
 `CKPT_DIR=/root/autodl-tmp/ckpt/VGGT-1B`, and
-`RESULT_DIR=/root/autodl-tmp/camera_iteration/results`. The runner reuses or
-clones the local conda environment `vggt_camera_iteration`, installs only
-missing Python dependencies, and never downloads weights or ScanNet. With only
-raw `.sens` data, `RUN_EXTRACT=1` extracts configured scenes first.
+`RESULT_DIR=/root/autodl-tmp/camera_iteration/results`. The environment is
+`vggt`, cloned from `base` without replacing Torch/CUDA. The data stage requires
+prior acceptance of the official ScanNet terms, downloads only configured
+`.sens` scenes, and extracts only color/raw-pose data. Stages skip complete,
+non-empty artifacts. The runner only validates and executes the study.
 
 Override any protocol setting through the environment:
 
 ```bash
 SCENE_LIMIT=1 FRAME_COUNTS="25 50" ITERATIONS="1 2 4 8" \
-SAMPLING=nested_uniform PREPROCESS_MODE=pad RUN_EXTRACT=1 \
+SAMPLING=nested_uniform PREPROCESS_MODE=pad \
 RESULT_DIR=/root/autodl-tmp/camera_iteration/smoke \
   bash scripts/autodl/run_camera_iteration.sh
 ```
 
-Other overrides are `AUTODL_TMP`, `CONDA_ROOT`, `CONDA_ENV_NAME`,
-`CONDA_CLONE_FROM`, `SCENE_LIST`, `SEED`, and `SAVE_CAMERA_TOKENS=1`.
+Other overrides are `AUTODL_TMP`, `CONDA_ROOT`, `CONDA_ENV_NAME`, `CKPT_DIR`,
+`SCANNET_ROOT`, `SCENE_LIST`, `SEED`, and `SAVE_CAMERA_TOKENS=1`.
 
 ## Manual Run
 

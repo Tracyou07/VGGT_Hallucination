@@ -12,7 +12,10 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.autodl.camera_iteration.preflight import read_scene_list
+from scripts.autodl.camera_iteration.preflight import (
+    processed_scene_is_complete,
+    read_scene_list,
+)
 
 
 class SensorDataLike(Protocol):
@@ -38,21 +41,9 @@ def find_sens_file(raw_dir: Path, scene: str) -> Path:
     raise FileNotFoundError(f"Missing .sens file for {scene} under {raw_dir.resolve()}")
 
 
-def _frame_stems(directory: Path, suffixes: set[str]) -> set[str]:
-    if not directory.is_dir():
-        return set()
-    return {
-        path.stem
-        for path in directory.iterdir()
-        if path.is_file() and path.suffix.lower() in suffixes
-    }
-
-
 def scene_is_complete(scene_dir: Path) -> bool:
     """Require at least one frame with both an image and raw GT pose."""
-    color_ids = _frame_stems(scene_dir / "color", {".jpg", ".jpeg", ".png"})
-    pose_ids = _frame_stems(scene_dir / "pose", {".txt"})
-    return bool(color_ids.intersection(pose_ids))
+    return processed_scene_is_complete(scene_dir)
 
 
 def extract_scene(
