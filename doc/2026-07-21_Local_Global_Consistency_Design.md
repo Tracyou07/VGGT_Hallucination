@@ -73,6 +73,9 @@ do not claim dataset-level statistical generalization. A candidate advances if:
 
 ## Data-Pair Gate
 
+Dataset selection, splitting, versioning, and pair-release rules are defined in
+`doc/2026-07-21_Local_Global_Dataset_Construction_Design.md`.
+
 Round 2 does not yet publish `global -> local` training pairs. A frame becomes a
 candidate using only prediction-side conditions: two local windows agree and
 the global prediction differs. With two local observations, choose the token
