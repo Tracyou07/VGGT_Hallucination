@@ -18,6 +18,11 @@ For every scene, use the 200-frame selection and the same frame IDs inside the
 - `H500(Z500)`: all 500-context tokens decoded at length 500, validating replay
   against the original Round 1.5 prediction.
 
+The shared outputs of the second and third replay are also compared. Their
+shared-frame input token values are identical, so their layer drift measures
+the effect of adding 300 Camera Head context tokens and has no amplification
+ratio denominator.
+
 The first and third replays must reproduce the saved raw predictions within a
 configured tolerance before amplification conclusions are emitted.
 
@@ -38,7 +43,7 @@ diagnostic gain, not by itself causal proof.
 
 The CLI consumes a published Round 1.5 run plus the local official VGGT
 checkpoint. An AutoDL wrapper fixes contexts to 200 and 500 and iterations to
-four. Outputs are CSV/JSON/NPZ numeric summaries under an external run
+four. Outputs are CSV/JSON numeric summaries under an external run
 directory. Only compact summaries and per-frame scalar arrays may be exported
 to `results/camera_head_amplification/<run_id>`; checkpoints, datasets, and
 2048-dimensional activations are never committed.

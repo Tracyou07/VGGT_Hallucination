@@ -52,6 +52,27 @@ class AutoDLScriptsTest(unittest.TestCase):
             self.assertIn(value, content)
         self.assertNotIn("SAVE_CAMERA_TOKENS=1", content)
 
+    def test_camera_head_amplification_runner_is_replay_only(self):
+        content = self.read("run_camera_head_amplification.sh")
+        for value in (
+            "camera_head_amplification.run_replay",
+            "results/camera_context/911b598_f4577f584448",
+            'SHORT_FRAMES="${SHORT_FRAMES:-200}"',
+            'LONG_FRAMES="${LONG_FRAMES:-500}"',
+            'ITERATIONS="${ITERATIONS:-4}"',
+            "context_diagnostics.npz",
+            "model.safetensors",
+        ):
+            self.assertIn(value, content)
+        for forbidden in (
+            "run_camera_iteration.sh",
+            "load_and_preprocess_images",
+            "prepare_scannet",
+            "pip install",
+            "conda create",
+        ):
+            self.assertNotIn(forbidden, content)
+
     def test_shell_syntax(self):
         for path in AUTODL.glob("*.sh"):
             subprocess.run(

@@ -7,6 +7,8 @@ to `vggt/heads/camera_head.py` and `vggt/models/vggt.py`.
 `pre_experiments/camera_iteration/` provides the shared runner, ScanNet input,
 checkpoint loading, and pose metrics. `pre_experiments/camera_context/` owns
 Round 1.5 artifact construction and matched-context analysis.
+`pre_experiments/camera_head_amplification/` owns Round 1.6 selective Camera
+Head loading, hook replay, and scalar drift analysis.
 `tests/camera_iteration/` contains CPU-only unit tests. Default scenes live in
 `configs/camera_context_scannet.txt`; AutoDL tooling lives in
 `scripts/autodl/`. This branch keeps only its worktree reproduction design in
@@ -17,7 +19,8 @@ write to its result namespace. Generated outputs belong under
 `results/pre_experiments/camera_iteration/` locally or the explicit external
 AutoDL result directory. Only artifacts filtered by
 `export_numeric_results.py` may be committed beneath
-`results/camera_context/<run_id>/`.
+`results/camera_context/<run_id>/`. Round 1.6 raw outputs remain external; only
+the strict scalar exporter may write `results/camera_head_amplification/<run_id>/`.
 
 ## Build, Test, and Development Commands
 
@@ -31,6 +34,10 @@ AutoDL result directory. Only artifacts filtered by
   four-scene Round 1.5 protocol and then performs CPU analysis.
 - `python -m pre_experiments.camera_context.analyze --run-dir /absolute/run`
   regenerates matched-frame CSV/JSON summaries without a GPU.
+- `bash scripts/autodl/run_camera_head_amplification.sh` replays only the
+  frozen Camera Head from published Round 1.5 tokens; ScanNet data is not used.
+- `python scripts/autodl/camera_head_amplification/export_numeric_results.py --source
+  /absolute/run` publishes a completed scalar-only Round 1.6 run.
 - `bash scripts/autodl/setup_vggt_env.sh` creates/reuses the shared `vggt` env.
 - `bash scripts/autodl/download_vggt_weights.sh` prepares only VGGT weights.
 - `SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet_camera_iteration.sh`
@@ -60,9 +67,9 @@ data only; mixed prediction/GT metrics still follow the prediction rule.
 ## Worktree, AutoDL, and Commit Guidelines
 
 This worktree must remain attached to
-`camera-context-consistency-preexperiment`; a worktree does not replace its
-branch. Round 1 code, results, and conclusions stay frozen on
-`camera-iteration-preexperiment`. Do not continue research on detached HEAD.
+`camera-head-amplification-preexperiment`; a worktree does not replace its
+branch. Round 1 and Round 1.5 code, results, and conclusions stay frozen on
+their existing branches. Do not continue research on detached HEAD.
 AutoDL reproduces a pushed branch or recorded commit, never local worktree
 metadata. Repository-wide guides remain only on `main`.
 
@@ -72,7 +79,9 @@ environments, install packages, download files, or extract `.sens`. Record
 commands, resolved paths, commit, and result location in metadata and `log/`.
 Keep commits independently testable. Pull requests must list protocol changes
 and verification. Never commit datasets, checkpoints, images, point clouds,
-or files bypassing the numeric exporter. Normalized Camera Tokens are allowed
+or files bypassing the numeric exporter. Round 1.6 publishing rejects all
+Numpy arrays and checkpoint-like files and permits only its fixed CSV/JSON
+contract. Normalized Camera Tokens are allowed
 only inside the exact-member `context_diagnostics.npz` whitelist and under the
 configured per-file size limit; per-iteration modulated token dumps remain
 external.

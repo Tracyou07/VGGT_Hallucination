@@ -13,7 +13,7 @@ Aggregator token drift from downstream Camera Head amplification.
 ## Round 2: Metrics And Contracts
 
 - Test and implement RMS drift and input-relative amplification ratios.
-- Validate `H200(Z200)` and `H500(Z500)` against saved raw predictions.
+- Validate `H200(Z200)` and `H500(Z500)` against saved activated 9D encodings.
 - Decode 9D outputs to camera poses and independently align every prediction
   to raw GT; never align GT.
 - Persist only per-frame scalars and aggregate numeric summaries.
