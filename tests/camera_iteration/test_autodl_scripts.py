@@ -73,6 +73,30 @@ class AutoDLScriptsTest(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, content)
 
+    def test_local_global_runner_fixes_round2a_protocol(self):
+        content = self.read("run_local_global_consistency.sh")
+        for value in (
+            "local_global_consistency.run_study",
+            "local_global_consistency.analyze",
+            "results/camera_context/911b598_f4577f584448",
+            'WINDOW_LENGTH="${WINDOW_LENGTH:-100}"',
+            'WINDOW_STRIDE="${WINDOW_STRIDE:-50}"',
+            'CAMERA_ITERATIONS="4"',
+            "--run-dir-file",
+            "process_scannet",
+            "model.safetensors",
+        ):
+            self.assertIn(value, content)
+        for forbidden in (
+            "pip install",
+            "conda create",
+            "snapshot_download",
+            "prepare_scannet",
+            "run_camera_iteration.sh",
+            'find "$RESULT_DIR"',
+        ):
+            self.assertNotIn(forbidden, content)
+
     def test_shell_syntax(self):
         for path in AUTODL.glob("*.sh"):
             subprocess.run(

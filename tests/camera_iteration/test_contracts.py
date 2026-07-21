@@ -39,6 +39,8 @@ class CameraIterationContractTest(unittest.TestCase):
             "results/camera_iteration/run/scene0000_00/frames_25/camera_trace.npz",
             "results/camera_head_amplification/run/amplification_summary.json",
             "results/camera_head_amplification/run/amplification_per_frame.csv",
+            "results/local_global_consistency/run/prediction_scores_per_frame.csv",
+            "results/local_global_consistency/run/local_global_summary.json",
         ):
             self.assertFalse(is_ignored(path), path)
         for path in (
@@ -46,6 +48,7 @@ class CameraIterationContractTest(unittest.TestCase):
             "results/camera_iteration/run/scene0000_00/frames_25/cloud.ply",
             "results/camera_iteration/run/scene0000_00/frames_25/preview.jpg",
             "results/camera_head_amplification/run/activations.npz",
+            "results/local_global_consistency/run/window_diagnostics.npz",
         ):
             self.assertTrue(is_ignored(path), path)
 

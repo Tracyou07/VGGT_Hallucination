@@ -16,6 +16,10 @@ a CPU analysis pass. VGGT's default API and weights remain unchanged.
 **Tech Stack:** Python 3.10+, PyTorch 2.3, NumPy, `unittest`, Bash, existing VGGT
 checkpoint and ScanNet preparation tools.
 
+**Implementation status (2026-07-21):** Tasks 1-4 and the reproduction
+documentation are implemented. Local Python verification is unavailable; the
+full suite and GPU smoke remain required in the AutoDL `vggt` environment.
+
 ## Global Constraints
 
 - Implement only Round 2A; do not implement scene screening, dataset splits,
