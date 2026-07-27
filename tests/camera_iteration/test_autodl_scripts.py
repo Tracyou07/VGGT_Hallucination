@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import subprocess
 import unittest
 
@@ -16,6 +17,33 @@ class AutoDLScriptsTest(unittest.TestCase):
         for value in ("CONDA_ENV_NAME=\"${CONDA_ENV_NAME:-vggt}\"", "--clone", "--no-deps", "--no-build-isolation", "--print-missing", "torch.cuda.is_available"):
             self.assertIn(value, content)
         self.assertNotIn("pip install torch", content.lower())
+
+    def test_fastvggt_scannet50_list(self):
+        path = ROOT / "configs" / "fastvggt_scannet50.txt"
+        expected = [
+            "scene0000_00", "scene0013_02", "scene0029_01", "scene0042_02",
+            "scene0056_00", "scene0071_00", "scene0084_01", "scene0096_00",
+            "scene0109_00", "scene0121_01", "scene0136_01", "scene0150_00",
+            "scene0164_01", "scene0177_01", "scene0194_00", "scene0207_01",
+            "scene0221_01", "scene0238_00", "scene0254_01", "scene0267_00",
+            "scene0280_00", "scene0294_02", "scene0309_00", "scene0325_01",
+            "scene0340_01", "scene0353_02", "scene0367_01", "scene0380_02",
+            "scene0395_00", "scene0409_01", "scene0421_02", "scene0435_03",
+            "scene0451_01", "scene0466_01", "scene0477_00", "scene0493_01",
+            "scene0509_01", "scene0525_00", "scene0540_02", "scene0555_00",
+            "scene0571_00", "scene0582_02", "scene0593_00", "scene0606_01",
+            "scene0619_00", "scene0631_01", "scene0648_00", "scene0663_01",
+            "scene0675_00", "scene0691_00",
+        ]
+        entries = [
+            line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        self.assertEqual(len(entries), 50)
+        self.assertEqual(len(entries), len(set(entries)))
+        self.assertTrue(all(re.fullmatch(r"scene[0-9]{4}_[0-9]{2}", entry) for entry in entries))
+        self.assertEqual(entries, expected)
 
     def test_weight_setup_is_independent_and_resumable(self):
         content = self.read("download_vggt_weights.sh")
