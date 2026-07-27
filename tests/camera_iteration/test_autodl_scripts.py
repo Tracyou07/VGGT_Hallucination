@@ -86,6 +86,19 @@ class AutoDLScriptsTest(unittest.TestCase):
             self.assertNotIn(forbidden, content.lower())
         self.assertLess(content.index("SCANNET_TOS_ACCEPTED"), content.index("http://kaldir"))
 
+    def test_scannet_setup_preserves_consistent_raw_dir_override(self):
+        content = self.read("prepare_scannet_camera_iteration.sh")
+        for value in (
+            'RAW_DOWNLOAD_ROOT_WAS_SET="${RAW_DOWNLOAD_ROOT+x}"',
+            'RAW_DIR_WAS_SET="${RAW_DIR+x}"',
+            'RAW_DIR="${RAW_DIR:-$RAW_DOWNLOAD_ROOT/scans}"',
+            '[[ "$(basename "$RAW_DIR")" == "scans" ]]',
+            'RAW_DIR_DOWNLOAD_ROOT="$(dirname "$RAW_DIR")"',
+            'RAW_DOWNLOAD_ROOT="$RAW_DIR_DOWNLOAD_ROOT"',
+            'RAW_DOWNLOAD_ROOT and RAW_DIR must identify the same scans root.',
+        ):
+            self.assertIn(value, content)
+
     def test_runner_only_validates_and_executes(self):
         content = self.read("run_camera_iteration.sh")
         for value in ("CONDA_ENV_NAME=\"${CONDA_ENV_NAME:-vggt}\"", "preflight.py", "run_study", "setup_vggt_env.sh", "prepare_scannet_camera_iteration.sh", "25 50 100 200 500", "1 2 4 8 16"):

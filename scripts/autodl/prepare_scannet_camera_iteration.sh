@@ -12,9 +12,26 @@ AUTODL_TMP="${AUTODL_TMP:-/root/autodl-tmp}"
 CONDA_ROOT="${CONDA_ROOT:-/root/miniconda3}"
 CONDA_ENV_NAME="${CONDA_ENV_NAME:-vggt}"
 SCANNET_ROOT="${SCANNET_ROOT:-$AUTODL_TMP/datasets/scannetv2}"
+RAW_DOWNLOAD_ROOT_WAS_SET="${RAW_DOWNLOAD_ROOT+x}"
+RAW_DIR_WAS_SET="${RAW_DIR+x}"
 RAW_DOWNLOAD_ROOT="${RAW_DOWNLOAD_ROOT:-$SCANNET_ROOT/raw_sens}"
 GT_DOWNLOAD_ROOT="${GT_DOWNLOAD_ROOT:-$SCANNET_ROOT/raw}"
-RAW_DIR="$RAW_DOWNLOAD_ROOT/scans"
+RAW_DIR="${RAW_DIR:-$RAW_DOWNLOAD_ROOT/scans}"
+if [[ "$RAW_DOWNLOAD_ROOT" != "/" ]]; then
+  RAW_DOWNLOAD_ROOT="${RAW_DOWNLOAD_ROOT%/}"
+fi
+RAW_DIR="${RAW_DIR%/}"
+[[ "$(basename "$RAW_DIR")" == "scans" ]] || {
+  printf 'RAW_DIR must name a scans directory: %s\n' "$RAW_DIR" >&2
+  exit 1
+}
+RAW_DIR_DOWNLOAD_ROOT="$(dirname "$RAW_DIR")"
+if [[ "$RAW_DOWNLOAD_ROOT_WAS_SET" == "x" && "$RAW_DIR_WAS_SET" == "x" \
+  && "$RAW_DOWNLOAD_ROOT" != "$RAW_DIR_DOWNLOAD_ROOT" ]]; then
+  printf 'RAW_DOWNLOAD_ROOT and RAW_DIR must identify the same scans root.\n' >&2
+  exit 1
+fi
+RAW_DOWNLOAD_ROOT="$RAW_DIR_DOWNLOAD_ROOT"
 PROCESS_DIR="${PROCESS_DIR:-$SCANNET_ROOT/process_scannet}"
 SCENE_LIST="${SCENE_LIST:-$REPO_ROOT/configs/camera_iteration_scannet.txt}"
 SCENE_LIMIT="${SCENE_LIMIT:-10}"
