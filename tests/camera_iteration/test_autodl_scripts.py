@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import unittest
 
@@ -52,11 +53,36 @@ class AutoDLScriptsTest(unittest.TestCase):
         for forbidden in ("conda create", "scannet", "run_camera_iteration"):
             self.assertNotIn(forbidden, content.lower())
 
-    def test_scannet_setup_requires_tos_and_only_requests_sens(self):
+    def test_scannet_setup_downloads_validated_assets_with_bounded_retries(self):
         content = self.read("prepare_scannet_camera_iteration.sh")
-        for value in ("SCANNET_TOS_ACCEPTED", "http://kaldir.vc.in.tum.de/scannet/download-scannet.py", "camera_iteration_scannet.txt", "--type .sens", "extract_scannet_sens.py", "missing_processed_scenes"):
+        for value in (
+            "SCANNET_TOS_ACCEPTED",
+            "http://kaldir.vc.in.tum.de/scannet/download-scannet.py",
+            'SCENE_LIST="${SCENE_LIST:-$REPO_ROOT/configs/camera_iteration_scannet.txt}"',
+            'SCENE_LIMIT="${SCENE_LIMIT:-10}"',
+            'DOWNLOAD_RETRIES="${DOWNLOAD_RETRIES:-5}"',
+            'DOWNLOAD_GT_PLY="${DOWNLOAD_GT_PLY:-0}"',
+            'GT_DOWNLOAD_ROOT="${GT_DOWNLOAD_ROOT:-$SCANNET_ROOT/raw}"',
+            '[[ "$DOWNLOAD_RETRIES" =~ ^[1-9][0-9]*$ ]]',
+            '[[ "$DOWNLOAD_GT_PLY" == "0" || "$DOWNLOAD_GT_PLY" == "1" ]]',
+            "read_scene_list",
+            "re.fullmatch(r\"scene[0-9]{4}_[0-9]{2}\", scene)",
+            "len(scenes) != len(set(scenes))",
+            "Selected scene list is empty",
+            "download_asset() {",
+            "for ((attempt = 1; attempt <= DOWNLOAD_RETRIES; attempt++)); do",
+            'rm -f "${expected}.tmp"',
+            "printf '\\n\\n\\n\\n' | python \"$SCANNET_DOWNLOAD_SCRIPT\"",
+            "--type \"$file_type\"",
+            'sens="$RAW_DOWNLOAD_ROOT/scans/$scene/$scene.sens"',
+            'gt_ply="$GT_DOWNLOAD_ROOT/scans/$scene/${scene}_vh_clean_2.ply"',
+            'download_asset "$scene" .sens "$RAW_DOWNLOAD_ROOT" "$sens"',
+            'download_asset "$scene" _vh_clean_2.ply "$GT_DOWNLOAD_ROOT" "$gt_ply"',
+            "extract_scannet_sens.py",
+            "missing_processed_scenes",
+        ):
             self.assertIn(value, content)
-        for forbidden in ("export_depth", "ply", "download_vggt_weights", "conda create"):
+        for forbidden in ("export_depth", "download_vggt_weights", "conda create", "pip install", "snapshot_download", "find \"$raw_download_root\"", "cp \"$found\""):
             self.assertNotIn(forbidden, content.lower())
         self.assertLess(content.index("SCANNET_TOS_ACCEPTED"), content.index("http://kaldir"))
 
@@ -126,9 +152,11 @@ class AutoDLScriptsTest(unittest.TestCase):
             self.assertNotIn(forbidden, content)
 
     def test_shell_syntax(self):
+        bash = shutil.which("bash")
+        self.assertIsNotNone(bash)
         for path in AUTODL.glob("*.sh"):
             subprocess.run(
-                ["bash", "-n"],
+                [bash, "-n"],
                 input=path.read_text(encoding="utf-8").replace("\r", "").encode(),
                 check=True,
             )
