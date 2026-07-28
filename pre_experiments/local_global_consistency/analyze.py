@@ -212,6 +212,7 @@ def _calibration_analysis(
     summary_payload = {
         "mode": "calibration",
         "run_id": metadata.get("run_id"),
+        "scenes": scenes,
         "source_run_id": metadata.get("source_run_id"),
         "split_digest": metadata.get("split_digest"),
         "threshold_digest": threshold_payload["threshold_digest"],
@@ -271,6 +272,7 @@ def _holdout_analysis(
     summary_payload = {
         "mode": "holdout",
         "run_id": metadata.get("run_id"),
+        "scenes": scenes,
         "source_run_id": metadata.get("source_run_id"),
         "split_digest": metadata.get("split_digest"),
         "threshold_path": threshold_path_value,

@@ -185,12 +185,14 @@ def bootstrap_holdout(
         estimates = np.mean(values[indices], axis=1)
         estimate = float(np.mean(values))
         ci_low, ci_high = np.percentile(estimates, [2.5, 97.5])
+        ci_low = min(float(ci_low), estimate)
+        ci_high = max(float(ci_high), estimate)
         summaries.append(
             {
                 "metric": metric,
                 "estimate": estimate,
-                "ci95_low": float(ci_low),
-                "ci95_high": float(ci_high),
+                "ci95_low": ci_low,
+                "ci95_high": ci_high,
                 "contributing_scene_count": len(values),
                 "bootstrap_samples": samples,
                 "bootstrap_seed": seed,

@@ -460,18 +460,32 @@ class AutoDLScriptsTest(unittest.TestCase):
         ):
             self.assertFalse(path.exists(), path)
 
-    def test_local_global_runner_fixes_round2a_protocol(self):
-        content = self.read("run_local_global_consistency.sh")
+    def test_scannet50_local_global_runner_freezes_stage_order_and_inputs(self):
+        content = self.read("run_scannet50_local_global.sh")
         for value in (
             "local_global_consistency.run_study",
             "local_global_consistency.analyze",
-            "results/camera_context/911b598_f4577f584448",
-            'WINDOW_LENGTH="${WINDOW_LENGTH:-100}"',
-            'WINDOW_STRIDE="${WINDOW_STRIDE:-50}"',
+            "local_global_consistency.visualize",
+            'SOURCE_RUN_DIR="${SOURCE_RUN_DIR:-}"',
+            "SOURCE_RUN_DIR must be set explicitly",
+            "configs/scannet50_local_global_split.json",
+            'STAGE="${STAGE:-all}"',
+            "calibration",
+            "holdout",
+            "--split-manifest",
+            "--partition",
+            "--mode",
+            "--thresholds",
+            "frozen_reliability_thresholds.json",
+            'WINDOW_LENGTH="100"',
+            'WINDOW_STRIDE="50"',
             'CAMERA_ITERATIONS="4"',
             "--run-dir-file",
             "process_scannet",
             "model.safetensors",
+            "calibration_run_dir.txt",
+            "holdout_run_dir.txt",
+            "frozen_threshold_path.txt",
         ):
             self.assertIn(value, content)
         for forbidden in (
@@ -479,10 +493,23 @@ class AutoDLScriptsTest(unittest.TestCase):
             "conda create",
             "snapshot_download",
             "prepare_scannet",
+            "camera_iteration.run_study",
+            "camera_context",
             "run_camera_iteration.sh",
             'find "$RESULT_DIR"',
+            "latest",
         ):
             self.assertNotIn(forbidden, content)
+        calibration_run = content.index('--partition "$partition"')
+        calibration_analysis = content.index('--mode calibration')
+        holdout_analysis = content.index('--mode holdout')
+        self.assertLess(calibration_run, calibration_analysis)
+        self.assertLess(calibration_analysis, holdout_analysis)
+
+    def test_legacy_local_global_runner_is_only_a_compatibility_shim(self):
+        content = self.read("run_local_global_consistency.sh")
+        self.assertIn("run_scannet50_local_global.sh", content)
+        self.assertNotIn("911b598_f4577f584448", content)
 
     def test_shell_syntax(self):
         with tempfile.TemporaryDirectory() as directory:

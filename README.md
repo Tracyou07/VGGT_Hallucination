@@ -1,68 +1,102 @@
-# VGGT Local-Global Consistency Pre-experiment
+# VGGT ScanNet-50 Local-Global Validation
 
-This branch contains the Round 2A training-free study of camera consistency
-between overlapping local windows and frozen 500-frame global inference.
-Historical experiment documents and logs remain for traceability, but retired
-Round 1, Round 1.5, and Round 1.6 runtime code is intentionally absent.
+This branch tests whether prediction-only disagreement between 100-frame local
+inference and 500-frame global inference identifies long-context Camera Pose
+degradation. It does not train or modify VGGT.
 
 ## Prerequisites
 
-The machine must already provide:
+AutoDL must already contain:
 
-- a Conda environment named `vggt` with compatible PyTorch and CUDA;
-- a nonempty `model.safetensors` or `model.pt` under
-  `/root/autodl-tmp/ckpt/VGGT-1B`;
-- accepted ScanNet terms of use.
+- the `vggt` Conda environment with compatible CUDA and PyTorch;
+- the checkout under `/root/autodl-tmp/VGGT_Hallucination`;
+- `VGGT-1B` under `/root/autodl-tmp/ckpt/VGGT-1B`;
+- processed ScanNet scenes under
+  `/root/autodl-tmp/datasets/scannetv2/process_scannet`;
+- one complete 50-scene, 500-frame Camera Context source run.
 
-Install the checked-out package and any missing project dependencies in that
-environment. This branch does not create environments or download weights.
+The scripts never create an environment, download weights, or select the
+newest result directory. Matplotlib is required only for PNG diagnostics and
+is available through the existing `viz` optional dependency.
 
-## Prepare ScanNet-50
+## Freeze The 10/40 Split
 
-The default command downloads all scenes in
-`configs/fastvggt_scannet50.txt`, extracts RGB frames and raw GT poses, and
-optionally downloads the GT PLY files:
+Set the exact global source directory, then generate the raw-GT-only split
+before running any new local-window inference:
 
 ```bash
 conda activate vggt
-SCANNET_TOS_ACCEPTED=1 DOWNLOAD_GT_PLY=1 \
-  bash scripts/autodl/prepare_scannet50.sh
+cd /root/autodl-tmp/VGGT_Hallucination
+export SOURCE_RUN_DIR=/root/autodl-tmp/camera_context/results/<run_id>
+
+python -m pre_experiments.local_global_consistency.split \
+  --data-dir /root/autodl-tmp/datasets/scannetv2/process_scannet \
+  --scene-list configs/fastvggt_scannet50.txt \
+  --source-run-dir "$SOURCE_RUN_DIR" \
+  --output configs/scannet50_local_global_split.json \
+  --seed 33
+
+python -m pre_experiments.local_global_consistency.split \
+  --validate configs/scannet50_local_global_split.json \
+  --scene-list configs/fastvggt_scannet50.txt
 ```
 
-Existing nonempty assets and processed scenes are reused. Interrupted official
-downloads remain as `<asset>.partial`; rerun the same command to continue with
-HTTP Range instead of restarting the asset from zero.
+Commit the split JSON before formal inference. Construction reads source frame
+IDs and raw GT poses, never VGGT prediction arrays.
 
-## Run Round 2A
+## Run On AutoDL
 
-The repository retains only the four 500-frame context artifacts required as
-frozen input under `results/camera_context/911b598_f4577f584448/`.
+A one-scene smoke runs one calibration scene and one holdout scene without
+formal analysis:
 
 ```bash
-# One-scene smoke
-SCENE_LIMIT=1 bash scripts/autodl/run_local_global_consistency.sh
-
-# Fixed four-scene protocol
-bash scripts/autodl/run_local_global_consistency.sh
+SOURCE_RUN_DIR="$SOURCE_RUN_DIR" SCENE_LIMIT=1 STAGE=all \
+  bash scripts/autodl/run_scannet50_local_global.sh
 ```
 
-Raw window artifacts remain outside Git under
-`/root/autodl-tmp/local_global_consistency/results/`. Publish completed scalar
-tables only:
+Run the complete 90-window calibration followed by the frozen-threshold,
+360-window holdout:
+
+```bash
+SOURCE_RUN_DIR="$SOURCE_RUN_DIR" STAGE=all \
+  bash scripts/autodl/run_scannet50_local_global.sh
+```
+
+Rerun the same command to resume completed windows. Stable pointers and logs
+are written under
+`/root/autodl-tmp/local_global_consistency/scannet50/{pointers,logs}/`.
+For separate jobs, run `STAGE=calibration`, then:
+
+```bash
+SOURCE_RUN_DIR="$SOURCE_RUN_DIR" \
+CALIBRATION_RUN_DIR=/absolute/calibration/run \
+STAGE=holdout bash scripts/autodl/run_scannet50_local_global.sh
+```
+
+Each completed run writes PNG diagnostics under `visualizations/`. Holdout
+figures cover split difficulty, per-scene error growth, score-versus-GT
+association, frozen reliability coverage, and scene-bootstrap confidence
+intervals.
+
+## Export Numeric Evidence
+
+Figures and raw window NPZ files stay outside Git. Publish only authenticated
+split, threshold, CSV, JSON, and manifest files:
 
 ```bash
 python scripts/autodl/local_global_consistency/export_numeric_results.py \
-  --source /root/autodl-tmp/local_global_consistency/results/<run_id>
+  --calibration-run /absolute/calibration/run \
+  --holdout-run /absolute/holdout/run \
+  --split-manifest configs/scannet50_local_global_split.json
 ```
+
+Prediction-only scores never contain GT-derived values. Prediction-versus-GT
+metrics align predictions to raw GT; GT arrays are never aligned or replaced.
 
 ## Development
 
 ```bash
-pip install -e .
 python -m unittest discover -s tests/local_global_consistency -v
-bash -n scripts/autodl/prepare_scannet50.sh
-bash -n scripts/autodl/run_local_global_consistency.sh
+bash -n scripts/autodl/run_scannet50_local_global.sh
+python -m compileall -q pre_experiments/local_global_consistency
 ```
-
-Prediction metrics use aligned predictions against raw GT. GT data is never
-aligned or replaced.

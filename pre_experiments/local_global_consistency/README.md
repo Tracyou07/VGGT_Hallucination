@@ -1,47 +1,45 @@
-# Round 2A Local-Global Consistency
+# ScanNet-50 Local-Global Consistency
 
-This pre-experiment tests whether prediction-only disagreement between local
-and 500-frame global inference identifies long-context camera degradation. It
-does not train VGGT, construct a dataset, or modify model weights.
+This training-free study asks whether context-dependent Camera Token and Camera
+Pose disagreement predicts VGGT long-context degradation.
 
-## Fixed Protocol
+## Protocol
 
-- Reuse the exact frame IDs and four minimal frozen global artifacts from
-  Round 1.5 run `911b598_f4577f584448`.
-- Run frozen camera-only VGGT with four Camera Head iterations.
-- Split each 500-frame sequence into nine 100-frame windows at stride 50.
-- Compare Camera Tokens directly and align predicted trajectories to each
-  other with Sim(3) before measuring pose disagreement.
-- Fit local-local reliability thresholds only from stable control scenes
-  `scene0013_02` and `scene0029_01`.
+- Global reference: one explicit 50-scene Camera Context run with 500 frames,
+  four Camera Head iterations, `nested_uniform` sampling, and `pad`
+  preprocessing.
+- Local inference: nine 100-frame windows per scene at stride 50.
+- Calibration: 10 scenes and 90 windows fit three prediction-only P95
+  Local-Local reliability thresholds.
+- Holdout: 40 disjoint scenes and 360 windows consume those thresholds without
+  refitting.
+- Statistics: frames are reduced to scene summaries before 10,000 deterministic
+  bootstrap resamples with seed 33.
 
-Detection tables contain no GT-derived score. Validation independently aligns
-global and local predictions to `gt_c2w_raw`; GT is never aligned or replaced.
+The split is selected from raw GT motion statistics before new VGGT outcomes
+are inspected. Detection tables contain no GT values. Validation separately
+aligns predictions to `gt_c2w_raw`; GT remains unchanged.
 
-## AutoDL Runs
+## Modules
 
-The runner assumes the `vggt` Conda environment, processed ScanNet scenes, and
-official checkpoint already exist. The required Round 1.5 inputs are committed
-as `run_metadata.json` plus one `frames_500/context_diagnostics.npz` per scene.
+- `split.py`: deterministic raw-motion split and manifest validation.
+- `context_source.py`: exact 50-scene source preflight.
+- `run_study.py`: resumable calibration or holdout local inference.
+- `metrics.py`: prediction-only disagreement and separate GT labels.
+- `thresholds.py`: authenticated frozen calibration thresholds.
+- `aggregate.py`: per-scene summaries and scene bootstrap intervals.
+- `analyze.py`: strict calibration and holdout output modes.
+- `visualize.py`: PNG diagnostics derived only from completed CSV/JSON.
 
-```bash
-# One-scene pipeline smoke; thresholds remain intentionally unfitted.
-SCENE_LIMIT=1 bash scripts/autodl/run_local_global_consistency.sh
+## Outputs
 
-# Fixed four-scene formal pre-experiment.
-bash scripts/autodl/run_local_global_consistency.sh
-```
+Calibration produces `frozen_reliability_thresholds.json`, frame-level
+prediction and GT-validation tables, and calibration summaries. Holdout
+produces separate frame tables, per-scene summaries, aggregate confidence
+intervals, and `holdout_complete.json`. PNGs are written under
+`visualizations/`; neither figures nor raw `window_diagnostics.npz` files are
+eligible for repository export.
 
-Raw per-window `window_diagnostics.npz` files stay under
-`/root/autodl-tmp/local_global_consistency/results/<run_id>/`. After reviewing
-the analysis, publish only scalar CSV/JSON outputs:
-
-```bash
-python scripts/autodl/local_global_consistency/export_numeric_results.py \
-  --source /root/autodl-tmp/local_global_consistency/results/<run_id>
-```
-
-`prediction_scores_per_frame.csv` is the deployable prediction-only signal.
-`gt_validation_per_frame.csv` supplies separate aligned-prediction versus raw-GT
-labels. `local_global_summary.csv` reports score/error-growth correlations;
-these remain pre-experiment evidence until the formal multi-scene run finishes.
+Use `scripts/autodl/run_scannet50_local_global.sh` for AutoDL execution and
+`scripts/autodl/local_global_consistency/export_numeric_results.py` for strict
+numeric publication. The top-level README contains exact commands.
