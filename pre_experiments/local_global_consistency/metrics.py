@@ -263,7 +263,7 @@ def apply_reliability(
     return output
 
 
-def _pearson(left: np.ndarray, right: np.ndarray) -> float | None:
+def pearson_correlation(left: np.ndarray, right: np.ndarray) -> float | None:
     if len(left) < 3 or np.std(left) <= 1e-12 or np.std(right) <= 1e-12:
         return None
     return float(np.corrcoef(left, right)[0, 1])
@@ -282,8 +282,8 @@ def _ranks(values: np.ndarray) -> np.ndarray:
     return ranks
 
 
-def _spearman(left: np.ndarray, right: np.ndarray) -> float | None:
-    return _pearson(_ranks(left), _ranks(right))
+def spearman_correlation(left: np.ndarray, right: np.ndarray) -> float | None:
+    return pearson_correlation(_ranks(left), _ranks(right))
 
 
 def summarize_scores(
@@ -347,10 +347,14 @@ def summarize_scores(
                         "score_mean": float(np.mean(scores)),
                         "score_p95": float(np.percentile(scores, 95)),
                         "translation_growth_mean": float(np.mean(translation)),
-                        "translation_growth_pearson": _pearson(scores, translation),
-                        "translation_growth_spearman": _spearman(scores, translation),
-                        "rotation_growth_pearson": _pearson(scores, rotation),
-                        "rotation_growth_spearman": _spearman(scores, rotation),
+                        "translation_growth_pearson": pearson_correlation(
+                            scores, translation
+                        ),
+                        "translation_growth_spearman": spearman_correlation(
+                            scores, translation
+                        ),
+                        "rotation_growth_pearson": pearson_correlation(scores, rotation),
+                        "rotation_growth_spearman": spearman_correlation(scores, rotation),
                         "translation_growth_bottom_quartile_mean": float(
                             np.mean(translation[order[:quartile_count]])
                         ),

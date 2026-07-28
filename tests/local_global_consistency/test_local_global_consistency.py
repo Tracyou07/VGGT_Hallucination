@@ -31,6 +31,9 @@ from pre_experiments.local_global_consistency.metrics import (
     build_scene_rows,
     summarize_scores,
 )
+from pre_experiments.local_global_consistency.thresholds import (
+    fit_frozen_thresholds,
+)
 from pre_experiments.local_global_consistency.windows import build_sliding_windows
 
 
@@ -700,6 +703,177 @@ class LocalGlobalAnalysisTest(unittest.TestCase):
                     path.write_text(json.dumps(metadata), encoding="utf-8")
                     with self.assertRaises(ValueError):
                         write_analysis(Path(tmp), mode="calibration")
+
+    def test_holdout_analysis_uses_frozen_thresholds_without_refitting(self):
+        calibration_scenes = [f"calibration{index:02d}" for index in range(10)]
+        holdout_scenes = [f"holdout{index:02d}" for index in range(40)]
+        threshold_rows = [
+            {
+                "scene": scene,
+                "frame_id": 0,
+                "local_local_token_cosine": float(index + 1),
+                "local_local_pose_translation": float(index + 1),
+                "local_local_pose_rotation_deg": float(index + 1),
+            }
+            for index, scene in enumerate(calibration_scenes)
+        ]
+        threshold_payload = fit_frozen_thresholds(
+            threshold_rows,
+            {
+                "calibration_scenes": calibration_scenes,
+                "source_run_id": "source-run",
+                "calibration_run_id": "calibration-run",
+                "split_digest": "a" * 64,
+                "code_commit": "b" * 40,
+            },
+        )
+        scores = []
+        validation = []
+        for scene_index, scene in enumerate(holdout_scenes):
+            for frame_id in range(3):
+                value = float(scene_index + frame_id + 1)
+                scores.append(
+                    {
+                        "scene": scene,
+                        "frame_id": frame_id,
+                        "global_local_token_cosine": value,
+                        "global_local_pose_translation": value,
+                        "global_local_pose_rotation_deg": value,
+                        "local_local_token_cosine": value,
+                        "local_local_pose_translation": value,
+                        "local_local_pose_rotation_deg": value,
+                    }
+                )
+                validation.append(
+                    {
+                        "scene": scene,
+                        "frame_id": frame_id,
+                        "translation_error_growth_global_minus_local": value,
+                        "rotation_error_growth_global_minus_local_deg": value,
+                    }
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            metadata = {
+                "run_id": "holdout-run",
+                "git_commit": "b" * 40,
+                "source_run_id": "source-run",
+                "split_digest": "a" * 64,
+                "partition": "holdout",
+                "protocol_complete": True,
+                "invocation": {
+                    "scenes": holdout_scenes,
+                    "partition_scenes": holdout_scenes,
+                    "source_run_id": "source-run",
+                    "split_digest": "a" * 64,
+                    "partition": "holdout",
+                    "protocol_complete": True,
+                    "window_length": 100,
+                    "window_stride": 50,
+                    "camera_iterations": 4,
+                    "preprocess_mode": "pad",
+                },
+            }
+            (run_dir / "run_metadata.json").write_text(
+                json.dumps(metadata), encoding="utf-8"
+            )
+            thresholds_path = run_dir / "external_thresholds.json"
+            thresholds_path.write_text(
+                json.dumps(threshold_payload, sort_keys=True), encoding="utf-8"
+            )
+            original_threshold_bytes = thresholds_path.read_bytes()
+            collected = {
+                "observations": [],
+                "overlaps": [],
+                "scores": scores,
+                "validation": validation,
+                "window_count": 360,
+            }
+            with mock.patch(
+                "pre_experiments.local_global_consistency.analyze.collect_run_rows",
+                return_value=collected,
+            ), mock.patch(
+                "pre_experiments.local_global_consistency.analyze.fit_frozen_thresholds",
+                side_effect=AssertionError("holdout attempted threshold fitting"),
+            ):
+                completion = write_analysis(
+                    run_dir,
+                    mode="holdout",
+                    thresholds_path=thresholds_path,
+                )
+
+            self.assertEqual(thresholds_path.read_bytes(), original_threshold_bytes)
+            self.assertTrue(completion["analysis_complete"])
+            self.assertEqual(
+                completion["threshold_digest"],
+                threshold_payload["threshold_digest"],
+            )
+            for filename in (
+                "holdout_prediction_scores_per_frame.csv",
+                "holdout_gt_validation_per_frame.csv",
+                "holdout_per_scene_summary.csv",
+                "holdout_aggregate_summary.csv",
+                "holdout_aggregate_summary.json",
+                "holdout_complete.json",
+            ):
+                self.assertTrue((run_dir / filename).is_file(), filename)
+
+    def test_holdout_analysis_rejects_calibration_scene_overlap(self):
+        calibration_scenes = [f"calibration{index:02d}" for index in range(10)]
+        threshold_payload = fit_frozen_thresholds(
+            [
+                {
+                    "scene": scene,
+                    "local_local_token_cosine": 1.0,
+                    "local_local_pose_translation": 1.0,
+                    "local_local_pose_rotation_deg": 1.0,
+                }
+                for scene in calibration_scenes
+            ],
+            {
+                "calibration_scenes": calibration_scenes,
+                "source_run_id": "source-run",
+                "calibration_run_id": "calibration-run",
+                "split_digest": "a" * 64,
+                "code_commit": "b" * 40,
+            },
+        )
+        holdout_scenes = [calibration_scenes[0]] + [
+            f"holdout{index:02d}" for index in range(39)
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            metadata = {
+                "run_id": "holdout-run",
+                "source_run_id": "source-run",
+                "split_digest": "a" * 64,
+                "partition": "holdout",
+                "protocol_complete": True,
+                "invocation": {
+                    "scenes": holdout_scenes,
+                    "partition_scenes": holdout_scenes,
+                    "source_run_id": "source-run",
+                    "split_digest": "a" * 64,
+                    "partition": "holdout",
+                    "protocol_complete": True,
+                    "window_length": 100,
+                    "window_stride": 50,
+                    "camera_iterations": 4,
+                    "preprocess_mode": "pad",
+                },
+            }
+            (run_dir / "run_metadata.json").write_text(
+                json.dumps(metadata), encoding="utf-8"
+            )
+            thresholds_path = run_dir / "thresholds.json"
+            thresholds_path.write_text(json.dumps(threshold_payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "overlap"):
+                write_analysis(
+                    run_dir,
+                    mode="holdout",
+                    thresholds_path=thresholds_path,
+                )
 
 
 if __name__ == "__main__":

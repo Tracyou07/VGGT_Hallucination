@@ -8,6 +8,10 @@ import json
 from pathlib import Path
 
 from pre_experiments.common.contracts import atomic_write_json
+from pre_experiments.local_global_consistency.aggregate import (
+    bootstrap_holdout,
+    summarize_holdout_scenes,
+)
 from pre_experiments.local_global_consistency.artifacts import (
     load_global_context,
     load_window_diagnostics,
@@ -19,6 +23,7 @@ from pre_experiments.local_global_consistency.metrics import (
 )
 from pre_experiments.local_global_consistency.thresholds import (
     fit_frozen_thresholds,
+    load_frozen_thresholds,
 )
 from pre_experiments.local_global_consistency.windows import build_sliding_windows
 
@@ -231,6 +236,68 @@ def _calibration_analysis(
     return completion
 
 
+def _holdout_analysis(
+    run_dir: Path,
+    metadata: dict[str, object],
+    scenes: list[str],
+    collected: dict[str, object],
+    threshold_payload: dict[str, object],
+    thresholds_path: Path,
+) -> dict[str, object]:
+    if collected.get("window_count") != 360:
+        raise ValueError("formal holdout requires exactly 360 completed windows")
+    score_rows = collected.get("scores")
+    validation_rows = collected.get("validation")
+    if not isinstance(score_rows, list) or not isinstance(validation_rows, list):
+        raise ValueError("analysis row collection is invalid")
+    thresholds = threshold_payload.get("thresholds")
+    if not isinstance(thresholds, dict):
+        raise ValueError("frozen threshold payload is invalid")
+    scored = apply_reliability(score_rows, thresholds)
+    scene_rows = summarize_holdout_scenes(scored, validation_rows)
+    if len(scene_rows) != 40 or [row["scene"] for row in scene_rows] != sorted(scenes):
+        raise ValueError("holdout summaries must contain exactly the 40 declared scenes")
+    aggregate_rows = bootstrap_holdout(scene_rows, samples=10_000, seed=33)
+    outputs = {
+        "holdout_prediction_scores_per_frame.csv": scored,
+        "holdout_gt_validation_per_frame.csv": validation_rows,
+        "holdout_per_scene_summary.csv": scene_rows,
+        "holdout_aggregate_summary.csv": aggregate_rows,
+    }
+    for filename, rows in outputs.items():
+        _write_csv(run_dir / filename, rows)
+
+    threshold_path_value = thresholds_path.resolve().as_posix()
+    summary_payload = {
+        "mode": "holdout",
+        "run_id": metadata.get("run_id"),
+        "source_run_id": metadata.get("source_run_id"),
+        "split_digest": metadata.get("split_digest"),
+        "threshold_path": threshold_path_value,
+        "threshold_digest": threshold_payload["threshold_digest"],
+        "bootstrap_samples": 10_000,
+        "bootstrap_seed": 33,
+        "bootstrap_unit": "scene",
+        "metrics": aggregate_rows,
+    }
+    atomic_write_json(run_dir / "holdout_aggregate_summary.json", summary_payload)
+    completion = {
+        "run_id": metadata.get("run_id"),
+        "mode": "holdout",
+        "partition": "holdout",
+        "scenes": scenes,
+        "window_count": collected["window_count"],
+        "analysis_complete": True,
+        "split_digest": metadata.get("split_digest"),
+        "source_run_id": metadata.get("source_run_id"),
+        "threshold_path": threshold_path_value,
+        "threshold_digest": threshold_payload["threshold_digest"],
+    }
+    atomic_write_json(run_dir / "holdout_complete.json", completion)
+    atomic_write_json(run_dir / "complete.json", completion)
+    return completion
+
+
 def write_analysis(
     run_dir: Path,
     *,
@@ -242,10 +309,22 @@ def write_analysis(
     _, scenes = _formal_metadata(metadata, mode=mode)
     if mode == "calibration" and thresholds_path is not None:
         raise ValueError("calibration analysis fits its own frozen thresholds")
+    threshold_payload = None
+    resolved_thresholds = None
     if mode == "holdout":
         if thresholds_path is None:
             raise ValueError("holdout analysis requires an external threshold artifact")
-        raise ValueError("holdout analysis is implemented in the holdout stage")
+        resolved_thresholds = thresholds_path.resolve()
+        threshold_payload = load_frozen_thresholds(
+            resolved_thresholds,
+            expected_split_digest=str(metadata.get("split_digest")),
+            expected_source_run_id=str(metadata.get("source_run_id")),
+        )
+        calibration_scenes = threshold_payload.get("calibration_scenes")
+        if not isinstance(calibration_scenes, list):
+            raise ValueError("frozen thresholds have no calibration scene set")
+        if set(calibration_scenes).intersection(scenes):
+            raise ValueError("calibration and holdout scene sets overlap")
     atomic_write_json(
         run_dir / "complete.json",
         {
@@ -256,7 +335,18 @@ def write_analysis(
         },
     )
     collected = collect_run_rows(run_dir)
-    return _calibration_analysis(run_dir, metadata, scenes, collected)
+    if mode == "calibration":
+        return _calibration_analysis(run_dir, metadata, scenes, collected)
+    if threshold_payload is None or resolved_thresholds is None:
+        raise ValueError("holdout threshold state is missing")
+    return _holdout_analysis(
+        run_dir,
+        metadata,
+        scenes,
+        collected,
+        threshold_payload,
+        resolved_thresholds,
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
