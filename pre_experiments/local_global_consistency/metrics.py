@@ -236,30 +236,6 @@ def build_scene_rows(
     return observations, overlap_rows, score_rows, validation_rows
 
 
-def fit_reliability_thresholds(
-    score_rows: list[dict[str, object]],
-    *,
-    stable_scenes: set[str],
-) -> dict[str, float]:
-    """Fit p95 reliability thresholds from prediction-only stable controls."""
-    mapping = {
-        "token_cosine_p95": "local_local_token_cosine",
-        "pose_translation_p95": "local_local_pose_translation",
-        "pose_rotation_deg_p95": "local_local_pose_rotation_deg",
-    }
-    thresholds = {}
-    for output_name, field in mapping.items():
-        values = [
-            float(row[field])
-            for row in score_rows
-            if row["scene"] in stable_scenes and row.get(field) is not None
-        ]
-        if not values:
-            raise ValueError(f"no stable-control values available for {field}")
-        thresholds[output_name] = float(np.percentile(values, 95))
-    return thresholds
-
-
 def apply_reliability(
     score_rows: list[dict[str, object]],
     thresholds: dict[str, float] | None,

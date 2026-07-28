@@ -1,3 +1,4 @@
+import json
 import math
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,7 +16,10 @@ from pre_experiments.local_global_consistency.artifacts import (
     build_window_diagnostics,
     load_window_diagnostics,
 )
-from pre_experiments.local_global_consistency.analyze import write_analysis
+from pre_experiments.local_global_consistency.analyze import (
+    collect_run_rows,
+    write_analysis,
+)
 from pre_experiments.local_global_consistency.run_study import (
     _run_id,
     configure_camera_only,
@@ -25,7 +29,6 @@ from pre_experiments.local_global_consistency.run_study import (
 )
 from pre_experiments.local_global_consistency.metrics import (
     build_scene_rows,
-    fit_reliability_thresholds,
     summarize_scores,
 )
 from pre_experiments.local_global_consistency.windows import build_sliding_windows
@@ -422,31 +425,6 @@ class LocalGlobalMetricTest(unittest.TestCase):
             0.0,
         )
 
-    def test_thresholds_use_only_named_stable_controls(self):
-        rows = [
-            {
-                "scene": "stable",
-                "local_local_token_cosine": value,
-                "local_local_pose_translation": value * 2,
-                "local_local_pose_rotation_deg": value * 3,
-            }
-            for value in (0.1, 0.2, 0.3, 0.4)
-        ]
-        rows.append(
-            {
-                "scene": "failure",
-                "local_local_token_cosine": 99.0,
-                "local_local_pose_translation": 99.0,
-                "local_local_pose_rotation_deg": 99.0,
-            }
-        )
-
-        thresholds = fit_reliability_thresholds(rows, stable_scenes={"stable"})
-
-        self.assertLess(thresholds["token_cosine_p95"], 0.5)
-        self.assertLess(thresholds["pose_translation_p95"], 1.0)
-        self.assertLess(thresholds["pose_rotation_deg_p95"], 2.0)
-
     def test_prediction_scores_are_invariant_to_raw_gt_changes(self):
         poses = self.make_poses(5)
         global_artifact = {
@@ -569,7 +547,7 @@ class LocalGlobalAnalysisTest(unittest.TestCase):
                 )
                 np.savez_compressed(directory / "window_diagnostics.npz", **local)
                 (directory / "complete.json").write_text(
-                    '{"run_id":"run","window_index":'
+                    '{"run_id":"run","scene":"scene","window_index":'
                     + str(index)
                     + ',"start":'
                     + str(start)
@@ -583,24 +561,145 @@ class LocalGlobalAnalysisTest(unittest.TestCase):
             renamed = run_dir / scene / "omitted_window"
             missing.rename(renamed)
             with self.assertRaisesRegex(ValueError, "window set"):
-                write_analysis(run_dir, stable_scenes=set())
-            invalidated = (run_dir / "complete.json").read_text(encoding="utf-8")
-            self.assertIn('"analysis_complete": false', invalidated)
+                collect_run_rows(run_dir)
             renamed.rename(missing)
 
-            completion = write_analysis(run_dir, stable_scenes=set())
+            collected = collect_run_rows(run_dir)
+
+            self.assertEqual(collected["window_count"], 2)
+            self.assertNotIn("gt", " ".join(collected["scores"][0]))
+            self.assertIn("global_translation_error_aligned", collected["validation"][0])
+
+    def test_calibration_analysis_requires_complete_partition_and_freezes_thresholds(self):
+        scenes = [f"scene{index:04d}_00" for index in range(10)]
+        score_rows = []
+        validation_rows = []
+        for scene_index, scene in enumerate(scenes):
+            for frame_id in range(3):
+                value = float(scene_index + frame_id + 1)
+                score_rows.append(
+                    {
+                        "scene": scene,
+                        "frame_id": frame_id,
+                        "global_local_token_cosine": value,
+                        "global_local_pose_translation": value,
+                        "global_local_pose_rotation_deg": value,
+                        "local_local_token_cosine": value,
+                        "local_local_pose_translation": value,
+                        "local_local_pose_rotation_deg": value,
+                    }
+                )
+                validation_rows.append(
+                    {
+                        "scene": scene,
+                        "frame_id": frame_id,
+                        "translation_error_growth_global_minus_local": value,
+                        "rotation_error_growth_global_minus_local_deg": value,
+                    }
+                )
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            metadata = {
+                "run_id": "calibration-run",
+                "git_commit": "b" * 40,
+                "source_run_id": "source-run",
+                "split_digest": "a" * 64,
+                "partition": "calibration",
+                "protocol_complete": True,
+                "invocation": {
+                    "scenes": scenes,
+                    "partition_scenes": scenes,
+                    "source_run_id": "source-run",
+                    "split_digest": "a" * 64,
+                    "partition": "calibration",
+                    "protocol_complete": True,
+                    "window_length": 100,
+                    "window_stride": 50,
+                    "camera_iterations": 4,
+                    "preprocess_mode": "pad",
+                },
+            }
+            (run_dir / "run_metadata.json").write_text(
+                json.dumps(metadata), encoding="utf-8"
+            )
+            collected = {
+                "observations": [],
+                "overlaps": [],
+                "scores": score_rows,
+                "validation": validation_rows,
+                "window_count": 90,
+            }
+            with mock.patch(
+                "pre_experiments.local_global_consistency.analyze.collect_run_rows",
+                return_value=collected,
+            ):
+                completion = write_analysis(run_dir, mode="calibration")
 
             self.assertTrue(completion["analysis_complete"])
-            self.assertEqual(completion["window_count"], 2)
-            score_header = (run_dir / "prediction_scores_per_frame.csv").read_text(
-                encoding="utf-8"
-            ).splitlines()[0]
-            self.assertNotIn("gt", score_header)
-            validation_header = (run_dir / "gt_validation_per_frame.csv").read_text(
-                encoding="utf-8"
-            ).splitlines()[0]
-            self.assertIn("error_aligned", validation_header)
-            self.assertNotIn("gt_aligned", validation_header)
+            self.assertTrue(
+                (run_dir / "frozen_reliability_thresholds.json").is_file()
+            )
+            self.assertTrue(
+                (run_dir / "calibration_prediction_scores_per_frame.csv").is_file()
+            )
+            self.assertTrue(
+                (run_dir / "calibration_gt_validation_per_frame.csv").is_file()
+            )
+            threshold_payload = json.loads(
+                (run_dir / "frozen_reliability_thresholds.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                completion["threshold_digest"],
+                threshold_payload["threshold_digest"],
+            )
+
+            metadata["protocol_complete"] = False
+            (run_dir / "run_metadata.json").write_text(
+                json.dumps(metadata), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "smoke"):
+                write_analysis(run_dir, mode="calibration")
+
+    def test_calibration_analysis_rejects_protocol_metadata_tampering(self):
+        scenes = [f"scene{index:04d}_00" for index in range(10)]
+        base = {
+            "run_id": "calibration-run",
+            "git_commit": "b" * 40,
+            "source_run_id": "source-run",
+            "split_digest": "a" * 64,
+            "partition": "calibration",
+            "protocol_complete": True,
+            "invocation": {
+                "scenes": scenes,
+                "partition_scenes": scenes,
+                "source_run_id": "source-run",
+                "split_digest": "a" * 64,
+                "partition": "calibration",
+                "protocol_complete": True,
+                "window_length": 100,
+                "window_stride": 50,
+                "camera_iterations": 4,
+                "preprocess_mode": "pad",
+            },
+        }
+        changes = {
+            "window_length": 99,
+            "window_stride": 49,
+            "camera_iterations": 3,
+            "preprocess_mode": "crop",
+            "split_digest": "c" * 64,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run_metadata.json"
+            for field, value in changes.items():
+                with self.subTest(field=field):
+                    metadata = json.loads(json.dumps(base))
+                    metadata["invocation"][field] = value
+                    path.write_text(json.dumps(metadata), encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        write_analysis(Path(tmp), mode="calibration")
 
 
 if __name__ == "__main__":

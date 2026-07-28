@@ -1,4 +1,4 @@
-"""Analyze a completed Round 2A local-window run on CPU."""
+"""Analyze formal ScanNet-50 calibration or holdout local-window runs."""
 
 from __future__ import annotations
 
@@ -15,17 +15,19 @@ from pre_experiments.local_global_consistency.artifacts import (
 from pre_experiments.local_global_consistency.metrics import (
     apply_reliability,
     build_scene_rows,
-    fit_reliability_thresholds,
     summarize_scores,
+)
+from pre_experiments.local_global_consistency.thresholds import (
+    fit_frozen_thresholds,
 )
 from pre_experiments.local_global_consistency.windows import build_sliding_windows
 
 
-DEFAULT_STABLE_SCENES = {"scene0013_02", "scene0029_01"}
-
-
 def _json_object(path: Path) -> dict[str, object]:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"invalid JSON object: {path}") from error
     if not isinstance(value, dict):
         raise ValueError(f"expected JSON object: {path}")
     return value
@@ -42,21 +44,10 @@ def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
     temporary.replace(path)
 
 
-def write_analysis(
-    run_dir: Path,
-    *,
-    stable_scenes: set[str] = DEFAULT_STABLE_SCENES,
-) -> dict[str, object]:
+def collect_run_rows(run_dir: Path) -> dict[str, object]:
+    """Load and validate every declared local window, then build scalar rows."""
     run_dir = run_dir.resolve()
     metadata = _json_object(run_dir / "run_metadata.json")
-    atomic_write_json(
-        run_dir / "complete.json",
-        {
-            "run_id": metadata.get("run_id"),
-            "analysis_complete": False,
-            "status": "analysis_in_progress",
-        },
-    )
     invocation = metadata.get("invocation")
     if not isinstance(invocation, dict):
         raise ValueError("run metadata must contain invocation")
@@ -88,6 +79,16 @@ def write_analysis(
             completion = _json_object(directory / "complete.json")
             if completion.get("run_id") != metadata.get("run_id"):
                 raise ValueError(f"window run_id mismatch: {directory}")
+            if completion.get("scene") != scene:
+                raise ValueError(f"window scene mismatch: {directory}")
+            if metadata.get("partition") is not None and completion.get(
+                "partition"
+            ) != metadata.get("partition"):
+                raise ValueError(f"window partition mismatch: {directory}")
+            if metadata.get("split_digest") is not None and completion.get(
+                "split_digest"
+            ) != metadata.get("split_digest"):
+                raise ValueError(f"window split digest mismatch: {directory}")
             window_records.append(
                 {
                     "index": completion["window_index"],
@@ -117,48 +118,162 @@ def write_analysis(
         all_scores.extend(scores)
         all_validation.extend(validation)
 
-    available_controls = stable_scenes.intersection(scenes)
-    thresholds = (
-        fit_reliability_thresholds(all_scores, stable_scenes=available_controls)
-        if available_controls
-        else None
-    )
-    scored = apply_reliability(all_scores, thresholds)
-    summaries = summarize_scores(scored, all_validation)
-    threshold_payload = {
-        "fitted": thresholds is not None,
-        "stable_scenes": sorted(available_controls),
-        "thresholds": thresholds,
+    return {
+        "observations": all_observations,
+        "overlaps": all_overlaps,
+        "scores": all_scores,
+        "validation": all_validation,
+        "window_count": len(list(run_dir.glob("*/window_*"))),
     }
+
+
+def _formal_metadata(
+    metadata: dict[str, object],
+    *,
+    mode: str,
+) -> tuple[dict[str, object], list[str]]:
+    if mode not in {"calibration", "holdout"}:
+        raise ValueError("analysis mode must be calibration or holdout")
+    if metadata.get("partition") != mode:
+        raise ValueError(f"{mode} analysis requires a {mode} run")
+    if metadata.get("protocol_complete") is not True:
+        raise ValueError("smoke or incomplete runs cannot produce formal analysis")
+    invocation = metadata.get("invocation")
+    if not isinstance(invocation, dict):
+        raise ValueError("run metadata must contain invocation")
+    for field in ("source_run_id", "split_digest", "partition", "protocol_complete"):
+        if invocation.get(field) != metadata.get(field):
+            raise ValueError(f"run metadata {field} disagrees with invocation")
+    expected_protocol = {
+        "window_length": 100,
+        "window_stride": 50,
+        "camera_iterations": 4,
+        "preprocess_mode": "pad",
+    }
+    for field, expected in expected_protocol.items():
+        if invocation.get(field) != expected:
+            raise ValueError(
+                f"formal analysis requires {field}={expected!r}, "
+                f"found {invocation.get(field)!r}"
+            )
+    scenes = invocation.get("scenes")
+    partition_scenes = invocation.get("partition_scenes")
+    expected_count = 10 if mode == "calibration" else 40
+    if (
+        not isinstance(scenes, list)
+        or len(scenes) != expected_count
+        or len(set(scenes)) != expected_count
+        or scenes != partition_scenes
+    ):
+        raise ValueError(
+            f"formal {mode} analysis requires the complete ordered "
+            f"{expected_count}-scene partition"
+        )
+    return invocation, scenes
+
+
+def _calibration_analysis(
+    run_dir: Path,
+    metadata: dict[str, object],
+    scenes: list[str],
+    collected: dict[str, object],
+) -> dict[str, object]:
+    if collected.get("window_count") != 90:
+        raise ValueError("formal calibration requires exactly 90 completed windows")
+    score_rows = collected.get("scores")
+    validation_rows = collected.get("validation")
+    if not isinstance(score_rows, list) or not isinstance(validation_rows, list):
+        raise ValueError("analysis row collection is invalid")
+    provenance = {
+        "calibration_scenes": scenes,
+        "source_run_id": metadata.get("source_run_id"),
+        "calibration_run_id": metadata.get("run_id"),
+        "split_digest": metadata.get("split_digest"),
+        "code_commit": metadata.get("git_commit"),
+    }
+    threshold_payload = fit_frozen_thresholds(score_rows, provenance)
+    thresholds = threshold_payload["thresholds"]
+    if not isinstance(thresholds, dict):
+        raise ValueError("frozen threshold payload is invalid")
+    scored = apply_reliability(score_rows, thresholds)
+    summaries = summarize_scores(scored, validation_rows)
     outputs = {
-        "local_observations.csv": all_observations,
-        "local_overlap_scores.csv": all_overlaps,
-        "prediction_scores_per_frame.csv": scored,
-        "gt_validation_per_frame.csv": all_validation,
-        "local_global_summary.csv": summaries,
+        "calibration_prediction_scores_per_frame.csv": scored,
+        "calibration_gt_validation_per_frame.csv": validation_rows,
+        "calibration_summary.csv": summaries,
     }
     for filename, rows in outputs.items():
         _write_csv(run_dir / filename, rows)
-    atomic_write_json(run_dir / "local_global_summary.json", summaries)
-    atomic_write_json(run_dir / "reliability_thresholds.json", threshold_payload)
+    summary_payload = {
+        "mode": "calibration",
+        "run_id": metadata.get("run_id"),
+        "source_run_id": metadata.get("source_run_id"),
+        "split_digest": metadata.get("split_digest"),
+        "threshold_digest": threshold_payload["threshold_digest"],
+        "rows": summaries,
+    }
+    atomic_write_json(run_dir / "calibration_summary.json", summary_payload)
+    atomic_write_json(
+        run_dir / "frozen_reliability_thresholds.json", threshold_payload
+    )
     completion = {
         "run_id": metadata.get("run_id"),
+        "mode": "calibration",
+        "partition": "calibration",
         "scenes": scenes,
-        "window_count": len(list(run_dir.glob("*/window_*"))),
+        "window_count": collected["window_count"],
         "analysis_complete": True,
-        "reliability_thresholds_fitted": thresholds is not None,
+        "split_digest": metadata.get("split_digest"),
+        "source_run_id": metadata.get("source_run_id"),
+        "threshold_digest": threshold_payload["threshold_digest"],
     }
     atomic_write_json(run_dir / "complete.json", completion)
     return completion
 
 
+def write_analysis(
+    run_dir: Path,
+    *,
+    mode: str,
+    thresholds_path: Path | None = None,
+) -> dict[str, object]:
+    run_dir = run_dir.resolve()
+    metadata = _json_object(run_dir / "run_metadata.json")
+    _, scenes = _formal_metadata(metadata, mode=mode)
+    if mode == "calibration" and thresholds_path is not None:
+        raise ValueError("calibration analysis fits its own frozen thresholds")
+    if mode == "holdout":
+        if thresholds_path is None:
+            raise ValueError("holdout analysis requires an external threshold artifact")
+        raise ValueError("holdout analysis is implemented in the holdout stage")
+    atomic_write_json(
+        run_dir / "complete.json",
+        {
+            "run_id": metadata.get("run_id"),
+            "mode": mode,
+            "analysis_complete": False,
+            "status": "analysis_in_progress",
+        },
+    )
+    collected = collect_run_rows(run_dir)
+    return _calibration_analysis(run_dir, metadata, scenes, collected)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
-    parser.add_argument("--stable-scenes", nargs="*", default=sorted(DEFAULT_STABLE_SCENES))
+    parser.add_argument("--mode", choices=["calibration", "holdout"], required=True)
+    parser.add_argument("--thresholds", type=Path)
     args = parser.parse_args(argv)
-    completion = write_analysis(args.run_dir, stable_scenes=set(args.stable_scenes))
-    print(f"[done] analysis={args.run_dir.resolve()} windows={completion['window_count']}")
+    completion = write_analysis(
+        args.run_dir,
+        mode=args.mode,
+        thresholds_path=args.thresholds,
+    )
+    print(
+        f"[done] analysis={args.run_dir.resolve()} "
+        f"mode={args.mode} windows={completion['window_count']}"
+    )
 
 
 if __name__ == "__main__":
