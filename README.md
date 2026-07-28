@@ -1,81 +1,43 @@
-# VGGT Camera Iteration Pre-experiment
+# VGGT Camera Head Amplification Pre-experiment
 
-The `camera-iteration-preexperiment` branch exposes and evaluates intermediate
-VGGT Camera Head refinements without training or parameter updates. Its model
-hooks, ScanNet reader, metrics, tests, and AutoDL entrypoint are self-contained;
-no phenomenon-characterization code or result tree is imported.
+The `camera-head-amplification-preexperiment` branch implements Round 1.6. It
+replays the frozen four-block Camera Head from published Round 1.5 Camera
+Tokens to test whether the head amplifies upstream representation drift.
 
-## AutoDL Quick Start
+## AutoDL Run
 
-Prepare the shared environment, weights, and authorized ScanNet subset as
-three independent stages, then run the experiment:
+This replay does not load ScanNet images or rerun the Aggregator. It expects
+the existing `vggt` conda environment, VGGT-1B checkpoint, and the committed
+Round 1.5 numeric input:
 
 ```bash
-git clone https://github.com/Tracyou07/VGGT_Hallucination.git
-cd VGGT_Hallucination
-git switch camera-iteration-preexperiment
-bash scripts/autodl/setup_vggt_env.sh
-bash scripts/autodl/download_vggt_weights.sh
-SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet_camera_iteration.sh
-bash scripts/autodl/run_camera_iteration.sh
+git switch camera-head-amplification-preexperiment
+bash scripts/autodl/run_camera_head_amplification.sh
 ```
 
-Default external paths are:
+Defaults are:
 
-- ScanNet: `/root/autodl-tmp/datasets/scannetv2`
-- VGGT-1B: `/root/autodl-tmp/ckpt/VGGT-1B`
-- Results: `/root/autodl-tmp/camera_iteration/results`
-- Conda environment: `vggt` (cloned from the AutoDL `base` environment)
+- Input: `results/camera_context/911b598_f4577f584448`
+- Checkpoint: `/root/autodl-tmp/ckpt/VGGT-1B`
+- Output: `/root/autodl-tmp/camera_head_amplification/results`
+- Conda environment: `vggt`
 
-The environment script preserves the image's existing Torch/CUDA installation.
-The weight script uses `facebook/VGGT-1B`; the data script invokes ScanNet's
-official downloader and requires prior acceptance of its terms. The runner
-only validates complete local inputs and executes the study. Every path and
-experiment size can be overridden with environment variables documented in
-`pre_experiments/camera_iteration/README.md`.
+Use `SCENE_LIMIT=1` for a smoke run. `SOURCE_RUN_DIR`, `CKPT_DIR`,
+`RESULT_DIR`, `DEVICE`, and replay tolerances can be overridden through
+environment variables.
 
-A smaller smoke configuration is:
+## Publish and Verify
 
-```bash
-SCENE_LIMIT=1 FRAME_COUNTS="25" ITERATIONS="1 2 4 8 16" \
-  bash scripts/autodl/run_camera_iteration.sh
-```
-
-## Publish Numeric Results
-
-After a completed AutoDL run, export its compact measurements into the
-repository. Pass the exact run directory printed by the study:
+Only scalar CSV/JSON artifacts are publishable:
 
 ```bash
-python scripts/autodl/camera_iteration/export_numeric_results.py \
-  --source /root/autodl-tmp/camera_iteration/results/<run_id>
-
-du -sh results/camera_iteration/<run_id>
-git status --short results/camera_iteration/<run_id>
-git add results/camera_iteration/<run_id>
-git commit -m "Add camera iteration numeric results <run_id>"
-git push origin camera-iteration-preexperiment
-```
-
-The exporter includes JSON/CSV measurements and compact pose-only
-`camera_trace.npz` files. It rejects high-dimensional Camera Token arrays and
-files over 50 MiB, and never copies images, point clouds, datasets, or weights.
-`publish_manifest.json` records every copied file's size and SHA-256 digest.
-
-## Development
-
-```bash
-pip install -r requirements.txt
-pip install -r requirements-camera-iteration.txt
-pip install -e .
+python scripts/autodl/camera_head_amplification/export_numeric_results.py \
+  --source /root/autodl-tmp/camera_head_amplification/results/<run_id>
 python -m unittest discover -s tests
 ```
 
-Core model changes live in `vggt/`. The method package lives in
-`pre_experiments/camera_iteration/`, CPU tests in `tests/camera_iteration/`,
-and the branch-specific reproduction design in
-`doc/2026-07-16_Camera_Iteration_Worktree_Design.md`. The repository-wide
-research guide and implementation plan are maintained only on `main`.
-
-The local CPU regression suite passes. No checkpoint-backed ScanNet experiment
-has been run on this branch yet; run outputs must not be committed.
+Round 1.6 implementation is under
+`pre_experiments/camera_head_amplification/`. Shared checkpoint, pose, and
+artifact-contract helpers are the only retained files under
+`pre_experiments/camera_iteration/`. Detailed method documentation remains in
+`doc/`; repository-wide research guides remain on `main`.

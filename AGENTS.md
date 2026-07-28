@@ -2,86 +2,46 @@
 
 ## Project Structure & Module Organization
 
-`vggt/` contains the baseline model. Camera observability changes are limited
-to `vggt/heads/camera_head.py` and `vggt/models/vggt.py`.
-`pre_experiments/camera_iteration/` provides the shared runner, ScanNet input,
-checkpoint loading, and pose metrics. `pre_experiments/camera_context/` owns
-Round 1.5 artifact construction and matched-context analysis.
-`pre_experiments/camera_head_amplification/` owns Round 1.6 selective Camera
-Head loading, hook replay, and scalar drift analysis.
-`tests/camera_iteration/` contains CPU-only unit tests. Default scenes live in
-`configs/camera_context_scannet.txt`; AutoDL tooling lives in
-`scripts/autodl/`. This branch keeps only its worktree reproduction design in
-`doc/`; repository-wide research and implementation guides live on `main`.
+`vggt/` contains the baseline model and Camera Head observability hooks.
+`pre_experiments/camera_head_amplification/` owns Round 1.6 checkpoint
+selection, replay, metrics, and its CLI. The retained
+`pre_experiments/camera_iteration/{contracts,model_io,pose_metrics}.py` files
+are shared dependencies, not a runnable Round 1 study. Tests remain under
+`tests/camera_iteration/` to preserve history. AutoDL entrypoints are in
+`scripts/autodl/`; only the Camera Head replay runner belongs on this branch.
 
-This branch must not contain or import `experiments/scannet_hallucination` or
-write to its result namespace. Generated outputs belong under
-`results/pre_experiments/camera_iteration/` locally or the explicit external
-AutoDL result directory. Only artifacts filtered by
-`export_numeric_results.py` may be committed beneath
-`results/camera_context/<run_id>/`. Round 1.6 raw outputs remain external; only
-the strict scalar exporter may write `results/camera_head_amplification/<run_id>/`.
+`results/camera_context/911b598_f4577f584448/` is the frozen Round 1.5 input.
+Round 1.6 scalar results belong under `results/camera_head_amplification/`.
+Keep all raw activation arrays and checkpoints outside Git.
 
 ## Build, Test, and Development Commands
 
 - `pip install -e .` installs VGGT in editable mode.
-- `pip install -r requirements-camera-iteration.txt` installs study helpers;
-  use the AutoDL image's existing PyTorch installation.
-- `python -m unittest discover -s tests` runs the complete CPU test suite.
-- `python -m pre_experiments.camera_iteration.run_study --help` checks the CLI.
-- `bash -n scripts/autodl/run_camera_iteration.sh` validates runner syntax.
-- `bash scripts/autodl/run_camera_context.sh` runs the fixed iteration-4,
-  four-scene Round 1.5 protocol and then performs CPU analysis.
-- `python -m pre_experiments.camera_context.analyze --run-dir /absolute/run`
-  regenerates matched-frame CSV/JSON summaries without a GPU.
-- `bash scripts/autodl/run_camera_head_amplification.sh` replays only the
-  frozen Camera Head from published Round 1.5 tokens; ScanNet data is not used.
-- `python scripts/autodl/camera_head_amplification/export_numeric_results.py --source
-  /absolute/run` publishes a completed scalar-only Round 1.6 run.
-- `bash scripts/autodl/setup_vggt_env.sh` creates/reuses the shared `vggt` env.
-- `bash scripts/autodl/download_vggt_weights.sh` prepares only VGGT weights.
-- `SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet_camera_iteration.sh`
-  officially downloads and extracts only the configured ScanNet `.sens` files.
-- `python scripts/autodl/camera_iteration/export_numeric_results.py --source
-  /absolute/run/path` exports compact numeric artifacts for review and commit.
+- `pip install -r requirements-camera-head-amplification.txt` installs the
+  replay-specific Python dependencies without replacing Torch/CUDA.
+- `python -m unittest discover -s tests` runs the CPU regression suite.
+- `bash scripts/autodl/run_camera_head_amplification.sh` runs the frozen-head
+  replay from committed Round 1.5 tokens.
+- `python scripts/autodl/camera_head_amplification/export_numeric_results.py
+  --source /absolute/run` publishes a validated scalar-only run.
 
-## Coding Style & Naming Conventions
+## Coding, Testing, and Metric Rules
 
 Use Python 3.10+, four-space indentation, `snake_case` functions and variables,
-and `CamelCase` classes. Follow neighboring PyTorch code and preserve existing
-default APIs. Document tensor shapes and coordinate conventions at module
-boundaries. Avoid unrelated formatting and refactoring.
+and `CamelCase` classes. Match neighboring PyTorch code and document tensor
+shapes at module boundaries. Tests use `unittest` and names of the form
+`test_<behavior>`; unit tests must not require CUDA, checkpoints, or network.
 
-## Testing and Metric Rules
+Any metric containing a prediction uses independently aligned predictions for
+the primary conclusion. Raw predictions and recovered scale are diagnostics.
+GT is always raw and is never replaced by an aligned copy.
 
-Use `unittest` and name tests `test_<behavior>`. New unit tests must not require
-CUDA, checkpoints, network access, or ScanNet. Follow TDD for model and study
-code: observe the focused test fail, implement the minimum change, then rerun
-the focused and full suites.
+## Worktree and Commit Guidelines
 
-Any metric containing a VGGT prediction uses aligned data for the primary
-conclusion, including pose ATE/ARE/RPE and predicted depth or point metrics.
-Raw values and recovered scale are diagnostics only. Pure GT baselines use raw
-data only; mixed prediction/GT metrics still follow the prediction rule.
-
-## Worktree, AutoDL, and Commit Guidelines
-
-This worktree must remain attached to
-`camera-head-amplification-preexperiment`; a worktree does not replace its
-branch. Round 1 and Round 1.5 code, results, and conclusions stay frozen on
-their existing branches. Do not continue research on detached HEAD.
-AutoDL reproduces a pushed branch or recorded commit, never local worktree
-metadata. Repository-wide guides remain only on `main`.
-
-The three preparation scripts remain independent. The runner assumes the
-`vggt` environment plus complete weights and processed data; it must not create
-environments, install packages, download files, or extract `.sens`. Record
-commands, resolved paths, commit, and result location in metadata and `log/`.
-Keep commits independently testable. Pull requests must list protocol changes
-and verification. Never commit datasets, checkpoints, images, point clouds,
-or files bypassing the numeric exporter. Round 1.6 publishing rejects all
-Numpy arrays and checkpoint-like files and permits only its fixed CSV/JSON
-contract. Normalized Camera Tokens are allowed
-only inside the exact-member `context_diagnostics.npz` whitelist and under the
-configured per-file size limit; per-iteration modulated token dumps remain
-external.
+Keep this worktree attached to `camera-head-amplification-preexperiment`.
+Round 1 and Round 1.5 runnable code remain on their own branches; only the
+frozen Round 1.5 numeric input is retained here. Keep `doc/` and `log/` as the
+research record. Commits should be independently testable, and pull requests
+must state protocol changes and verification. Never commit datasets, images,
+point clouds, checkpoints, high-dimensional activations, or files bypassing
+the strict scalar exporter.
