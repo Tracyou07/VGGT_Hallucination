@@ -1,3 +1,4 @@
+import ast
 import json
 from pathlib import Path
 import subprocess
@@ -11,6 +12,32 @@ from pre_experiments.common.contracts import (
 
 
 class CommonContractTest(unittest.TestCase):
+    def test_run_study_imports_every_artifact_helper_it_calls(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        path = (
+            repo_root
+            / "pre_experiments"
+            / "local_global_consistency"
+            / "run_study.py"
+        )
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        artifact_imports = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and node.module
+            == "pre_experiments.local_global_consistency.artifacts"
+            for alias in node.names
+        }
+        called_names = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+
+        self.assertIn("load_window_diagnostics", called_names)
+        self.assertIn("load_window_diagnostics", artifact_imports)
+
     def test_git_only_tracks_published_numeric_result_types(self):
         repo_root = Path(__file__).resolve().parents[2]
 

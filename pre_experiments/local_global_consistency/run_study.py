@@ -23,6 +23,7 @@ from pre_experiments.local_global_consistency.artifacts import (
     atomic_save_npz,
     build_window_diagnostics,
     load_global_context,
+    load_window_diagnostics,
 )
 from pre_experiments.local_global_consistency.windows import FrameWindow, build_sliding_windows
 from vggt.utils.load_fn import load_and_preprocess_images
