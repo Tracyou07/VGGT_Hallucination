@@ -29,8 +29,9 @@ SCANNET_TOS_ACCEPTED=1 DOWNLOAD_GT_PLY=1 \
   bash scripts/autodl/prepare_scannet50.sh
 ```
 
-Existing nonempty assets and processed scenes are reused. Failed official
-downloads are retried in isolated staging directories.
+Existing nonempty assets and processed scenes are reused. Interrupted official
+downloads remain as `<asset>.partial`; rerun the same command to continue with
+HTTP Range instead of restarting the asset from zero.
 
 ## Run Round 2A
 

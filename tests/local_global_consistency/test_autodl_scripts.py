@@ -50,6 +50,7 @@ class ScanNetDownloadBehaviorTest(unittest.TestCase):
         self.scene_list = self.temp_dir / "scenes.txt"
         self.scene_list.write_text(f"{self.scene}\n", encoding="utf-8")
         self.downloader_state = self.temp_dir / "downloader-state.tsv"
+        self.curl_state = self.temp_dir / "curl-state.tsv"
         self.extract_log = self.temp_dir / "extract-raw-dir.txt"
         self.fake_downloader = self.temp_dir / "fake-download-scannet.py"
         self.fake_downloader.write_text(
@@ -93,6 +94,45 @@ class ScanNetDownloadBehaviorTest(unittest.TestCase):
                     raise SystemExit(23)
 
                 target.write_bytes(b"complete")
+                """
+            ),
+            encoding="utf-8",
+        )
+        self.fake_curl = self.temp_dir / "fake-curl.py"
+        self.fake_curl.write_text(
+            textwrap.dedent(
+                """\
+                from pathlib import Path
+                import os
+                import sys
+
+                args = sys.argv[1:]
+                output = Path(args[args.index("-o") + 1])
+                url = args[-1]
+                state = Path(os.environ["FAKE_CURL_STATE"])
+                previous = state.read_text(encoding="utf-8").splitlines() if state.exists() else []
+                attempt = len(previous) + 1
+                state.write_text(
+                    "\\n".join([*previous, f"{attempt}\\t{output}\\t{url}"]) + "\\n",
+                    encoding="utf-8",
+                )
+
+                mode = os.environ["FAKE_CURL_MODE"]
+                if mode == "must_not_run":
+                    raise SystemExit("curl must not be invoked")
+                output.parent.mkdir(parents=True, exist_ok=True)
+                if mode == "resume_after_interrupt" and attempt == 1:
+                    output.write_bytes(b"partial")
+                    raise SystemExit(18)
+                if mode == "resume_after_interrupt":
+                    if "-C" not in args or args[args.index("-C") + 1] != "-":
+                        raise SystemExit("resume flag missing")
+                    if output.read_bytes() != b"partial":
+                        raise SystemExit("partial download was not preserved")
+                    with output.open("ab") as handle:
+                        handle.write(b"-complete")
+                else:
+                    output.write_bytes(b"complete")
                 """
             ),
             encoding="utf-8",
@@ -168,6 +208,10 @@ class ScanNetDownloadBehaviorTest(unittest.TestCase):
                 "TEST_EXTRACT_LOG": bash_path(self.extract_log),
                 "FAKE_DOWNLOADER_STATE": str(self.downloader_state),
                 "FAKE_DOWNLOADER_MODE": "success",
+                "FAKE_CURL_STATE": str(self.curl_state),
+                "FAKE_CURL_MODE": "success",
+                "SCANNET_CURL": bash_path(Path(sys.executable)),
+                "SCANNET_CURL_ARGS": bash_path(self.fake_curl),
             }
         )
 
@@ -200,6 +244,40 @@ class ScanNetDownloadBehaviorTest(unittest.TestCase):
             )
         ]
 
+    def curl_invocations(self) -> list[list[str]]:
+        if not self.curl_state.exists():
+            return []
+        return [
+            line.split("\t")
+            for line in self.curl_state.read_text(encoding="utf-8").splitlines()
+        ]
+
+    def test_interrupted_sens_download_resumes_the_same_partial_file(self):
+        destination = (
+            self.raw_download_root / "scans" / self.scene / f"{self.scene}.sens"
+        )
+        partial = destination.with_name(f"{destination.name}.partial")
+        self.env["DOWNLOAD_RETRIES"] = "1"
+        self.env["FAKE_DOWNLOADER_MODE"] = "must_not_run"
+        self.env["FAKE_CURL_MODE"] = "resume_after_interrupt"
+
+        interrupted = self.run_prepare()
+
+        self.assertNotEqual(interrupted.returncode, 0)
+        self.assertEqual(partial.read_bytes(), b"partial")
+        resumed = self.run_prepare()
+        self.assert_success(resumed)
+        self.assertEqual(destination.read_bytes(), b"partial-complete")
+        self.assertFalse(partial.exists())
+        invocations = self.curl_invocations()
+        self.assertEqual([int(row[0]) for row in invocations], [1, 2])
+        self.assertEqual(len({row[1] for row in invocations}), 1)
+        self.assertTrue(
+            invocations[0][2].endswith(
+                f"/scannet/v1/scans/{self.scene}/{self.scene}.sens"
+            )
+        )
+
     def test_zero_byte_destination_gets_one_real_attempt(self):
         destination = (
             self.raw_download_root / "scans" / self.scene / f"{self.scene}.sens"
@@ -212,25 +290,27 @@ class ScanNetDownloadBehaviorTest(unittest.TestCase):
 
         self.assert_success(result)
         self.assertEqual(destination.read_bytes(), b"complete")
-        self.assertEqual(len(self.downloader_invocations()), 1)
+        self.assertEqual(len(self.curl_invocations()), 1)
+        self.assertEqual(self.downloader_invocations(), [])
 
-    def test_failed_random_partial_is_isolated_and_cleaned_before_retry(self):
+    def test_legacy_staging_is_removed_before_resumable_download(self):
         destination = (
             self.raw_download_root / "scans" / self.scene / f"{self.scene}.sens"
         )
-        self.env["DOWNLOAD_RETRIES"] = "2"
-        self.env["FAKE_DOWNLOADER_MODE"] = "fail_once_random_then_succeed"
+        stale_staging = (
+            destination.parent
+            / f".scannet-download-{destination.name}.staging.stale"
+        )
+        stale_staging.mkdir(parents=True)
+        (stale_staging / "random.part").write_bytes(b"obsolete")
 
         result = self.run_prepare()
 
         self.assert_success(result)
         self.assertEqual(destination.read_bytes(), b"complete")
-        invocations = self.downloader_invocations()
-        self.assertEqual([attempt for attempt, _ in invocations], [1, 2])
-        self.assertFalse(list(self.temp_dir.rglob("*.part")))
-        for _, staging_root in invocations:
-            self.assertNotEqual(staging_root, self.raw_download_root)
-            self.assertFalse(staging_root.exists())
+        self.assertFalse(stale_staging.exists())
+        self.assertEqual(len(self.curl_invocations()), 1)
+        self.assertEqual(self.downloader_invocations(), [])
 
     def test_valid_destination_is_reused_without_downloader(self):
         destination = (
@@ -318,7 +398,9 @@ class AutoDLScriptsTest(unittest.TestCase):
         content = self.read("prepare_scannet50.sh")
         for value in (
             "SCANNET_TOS_ACCEPTED",
-            "http://kaldir.vc.in.tum.de/scannet/download-scannet.py",
+            "http://kaldir.vc.cit.tum.de/scannet/v1/scans",
+            "http://kaldir.vc.cit.tum.de/scannet/v2/scans",
+            'SCANNET_CURL="${SCANNET_CURL:-curl}"',
             'SCENE_LIST="${SCENE_LIST:-$REPO_ROOT/configs/fastvggt_scannet50.txt}"',
             'SCENE_LIMIT="${SCENE_LIMIT:-0}"',
             'DOWNLOAD_RETRIES="${DOWNLOAD_RETRIES:-5}"',
@@ -339,9 +421,19 @@ class AutoDLScriptsTest(unittest.TestCase):
             "missing_processed_scenes",
         ):
             self.assertIn(value, content)
+        download_helper = self.read("scannet_download.sh")
+        for value in (
+            'partial="$expected.partial"',
+            '"${curl_command[@]}" -fL -C -',
+            "Partial file retained for the next run",
+        ):
+            self.assertIn(value, download_helper)
         for forbidden in ("export_depth", "download_vggt_weights", "conda create", "pip install", "snapshot_download", "find \"$raw_download_root\"", "cp \"$found\""):
             self.assertNotIn(forbidden, content.lower())
-        self.assertLess(content.index("SCANNET_TOS_ACCEPTED"), content.index("http://kaldir"))
+        self.assertLess(
+            content.index("SCANNET_TOS_ACCEPTED"),
+            content.index("http://kaldir"),
+        )
 
     def test_scannet_setup_keeps_raw_dir_as_destination_and_extractor_input(self):
         content = self.read("prepare_scannet50.sh")

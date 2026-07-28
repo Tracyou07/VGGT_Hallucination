@@ -26,8 +26,10 @@ SCENE_LIST="${SCENE_LIST:-$REPO_ROOT/configs/fastvggt_scannet50.txt}"
 SCENE_LIMIT="${SCENE_LIMIT:-0}"
 DOWNLOAD_RETRIES="${DOWNLOAD_RETRIES:-5}"
 DOWNLOAD_GT_PLY="${DOWNLOAD_GT_PLY:-0}"
-SCANNET_DOWNLOAD_SCRIPT="${SCANNET_DOWNLOAD_SCRIPT:-$SCANNET_ROOT/tools/download-scannet.py}"
-SCANNET_DOWNLOAD_URL="${SCANNET_DOWNLOAD_URL:-http://kaldir.vc.in.tum.de/scannet/download-scannet.py}"
+SCANNET_V1_SCANS_URL="${SCANNET_V1_SCANS_URL:-http://kaldir.vc.cit.tum.de/scannet/v1/scans}"
+SCANNET_V2_SCANS_URL="${SCANNET_V2_SCANS_URL:-http://kaldir.vc.cit.tum.de/scannet/v2/scans}"
+SCANNET_CURL="${SCANNET_CURL:-curl}"
+SCANNET_CURL_ARGS="${SCANNET_CURL_ARGS:-}"
 CONDA_SH="$CONDA_ROOT/etc/profile.d/conda.sh"
 # shellcheck source=scannet_download.sh
 source "$SCRIPT_DIR/scannet_download.sh"
@@ -74,17 +76,7 @@ for scene in scenes:
         raise SystemExit(f"Invalid ScanNet scene ID: {scene}")
 PY
 
-mkdir -p "$(dirname "$SCANNET_DOWNLOAD_SCRIPT")" "$RAW_DIR" "$PROCESS_DIR"
-if [[ ! -s "$SCANNET_DOWNLOAD_SCRIPT" ]]; then
-  if command -v curl >/dev/null 2>&1; then
-    curl -fL --retry 5 "$SCANNET_DOWNLOAD_URL" -o "$SCANNET_DOWNLOAD_SCRIPT"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -O "$SCANNET_DOWNLOAD_SCRIPT" "$SCANNET_DOWNLOAD_URL"
-  else
-    printf 'curl or wget is required to retrieve the official ScanNet downloader.\n' >&2
-    exit 1
-  fi
-fi
+mkdir -p "$RAW_DIR" "$PROCESS_DIR"
 
 for scene in "${scenes[@]}"; do
   sens="$RAW_DIR/$scene/$scene.sens"
