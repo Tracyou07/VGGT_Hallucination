@@ -7,16 +7,13 @@ no phenomenon-characterization code or result tree is imported.
 
 ## AutoDL Quick Start
 
-Prepare the shared environment, weights, and authorized ScanNet subset as
-three independent stages, then run the experiment:
+This branch assumes the AutoDL machine already has the `vggt` conda
+environment, VGGT-1B checkpoint, and ScanNet data. Run the experiment with:
 
 ```bash
 git clone https://github.com/Tracyou07/VGGT_Hallucination.git
 cd VGGT_Hallucination
 git switch camera-iteration-preexperiment
-bash scripts/autodl/setup_vggt_env.sh
-bash scripts/autodl/download_vggt_weights.sh
-SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet_camera_iteration.sh
 bash scripts/autodl/run_camera_iteration.sh
 ```
 
@@ -25,14 +22,18 @@ Default external paths are:
 - ScanNet: `/root/autodl-tmp/datasets/scannetv2`
 - VGGT-1B: `/root/autodl-tmp/ckpt/VGGT-1B`
 - Results: `/root/autodl-tmp/camera_iteration/results`
-- Conda environment: `vggt` (cloned from the AutoDL `base` environment)
+- Conda environment: `vggt`
 
-The environment script preserves the image's existing Torch/CUDA installation.
-The weight script uses `facebook/VGGT-1B`; the data script invokes ScanNet's
-official downloader and requires prior acceptance of its terms. The runner
-only validates complete local inputs and executes the study. Every path and
-experiment size can be overridden with environment variables documented in
-`pre_experiments/camera_iteration/README.md`.
+The runner validates these existing inputs and executes the study. If ScanNet
+must be repaired or extended, the retained data-only script invokes the
+official downloader:
+
+```bash
+SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet_camera_iteration.sh
+```
+
+Every path and experiment size can be overridden with environment variables
+documented in `pre_experiments/camera_iteration/README.md`.
 
 A smaller smoke configuration is:
 
@@ -77,5 +78,5 @@ and the branch-specific reproduction design in
 `doc/2026-07-16_Camera_Iteration_Worktree_Design.md`. The repository-wide
 research guide and implementation plan are maintained only on `main`.
 
-The local CPU regression suite passes. No checkpoint-backed ScanNet experiment
-has been run on this branch yet; run outputs must not be committed.
+Checkpoint-backed numeric results are stored under
+`results/camera_iteration/faf32cb_7ed95de4ff81/`.

@@ -21,11 +21,11 @@ SCANNET_DOWNLOAD_SCRIPT="${SCANNET_DOWNLOAD_SCRIPT:-$SCANNET_ROOT/tools/download
 SCANNET_DOWNLOAD_URL="${SCANNET_DOWNLOAD_URL:-http://kaldir.vc.in.tum.de/scannet/download-scannet.py}"
 CONDA_SH="$CONDA_ROOT/etc/profile.d/conda.sh"
 
-[[ -f "$CONDA_SH" ]] || { printf 'Run setup_vggt_env.sh first.\n' >&2; exit 1; }
+[[ -f "$CONDA_SH" ]] || { printf 'Conda initialization not found at %s.\n' "$CONDA_SH" >&2; exit 1; }
 # shellcheck source=/dev/null
 source "$CONDA_SH"
 conda run -n "$CONDA_ENV_NAME" python -c "import imageio" >/dev/null 2>&1 || {
-  printf 'Run setup_vggt_env.sh first; environment %s is unavailable.\n' "$CONDA_ENV_NAME" >&2
+  printf 'The existing conda environment %s must provide imageio.\n' "$CONDA_ENV_NAME" >&2
   exit 1
 }
 conda activate "$CONDA_ENV_NAME"

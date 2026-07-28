@@ -21,24 +21,24 @@ iteration selection or model updates.
 
 ## AutoDL Run
 
-On a new AutoDL Miniconda machine whose `base` environment already has working
-Torch and CUDA, prepare and run each stage independently:
+The runner expects an existing `vggt` conda environment, VGGT-1B checkpoint,
+and processed ScanNet data:
 
 ```bash
 git switch camera-iteration-preexperiment
-bash scripts/autodl/setup_vggt_env.sh
-bash scripts/autodl/download_vggt_weights.sh
-SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet_camera_iteration.sh
 bash scripts/autodl/run_camera_iteration.sh
 ```
 
 Defaults are `SCANNET_ROOT=/root/autodl-tmp/datasets/scannetv2`,
 `CKPT_DIR=/root/autodl-tmp/ckpt/VGGT-1B`, and
 `RESULT_DIR=/root/autodl-tmp/camera_iteration/results`. The environment is
-`vggt`, cloned from `base` without replacing Torch/CUDA. The data stage requires
-prior acceptance of the official ScanNet terms, downloads only configured
-`.sens` scenes, and extracts only color/raw-pose data. Stages skip complete,
-non-empty artifacts. The runner only validates and executes the study.
+`vggt`. The runner validates existing inputs and executes the study. To repair
+or extend the ScanNet subset, use the retained data-only script after accepting
+the official terms:
+
+```bash
+SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet_camera_iteration.sh
+```
 
 Override any protocol setting through the environment:
 
@@ -123,4 +123,5 @@ bash -n scripts/autodl/run_camera_iteration.sh
 The branch-local contract is recorded in
 `doc/2026-07-16_Camera_Iteration_Worktree_Design.md`. The repository-wide
 research guide and implementation plan are maintained only on `main`, not
-duplicated in this worktree. No checkpoint-backed experiment has run yet.
+duplicated in this worktree. Published numeric results live under
+`results/camera_iteration/`.

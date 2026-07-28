@@ -19,11 +19,11 @@ SEED="${SEED:-33}"
 SAVE_CAMERA_TOKENS="${SAVE_CAMERA_TOKENS:-0}"
 CONDA_SH="$CONDA_ROOT/etc/profile.d/conda.sh"
 
-[[ -f "$CONDA_SH" ]] || { printf 'Run scripts/autodl/setup_vggt_env.sh first.\n' >&2; exit 1; }
+[[ -f "$CONDA_SH" ]] || { printf 'Conda initialization not found at %s.\n' "$CONDA_SH" >&2; exit 1; }
 # shellcheck source=/dev/null
 source "$CONDA_SH"
 conda run -n "$CONDA_ENV_NAME" python -c "import torch, vggt" >/dev/null 2>&1 || {
-  printf 'Run scripts/autodl/setup_vggt_env.sh first.\n' >&2
+  printf 'The existing conda environment %s must provide torch and vggt.\n' "$CONDA_ENV_NAME" >&2
   exit 1
 }
 conda activate "$CONDA_ENV_NAME"
@@ -31,7 +31,7 @@ conda activate "$CONDA_ENV_NAME"
 if ! python "$REPO_ROOT/scripts/autodl/camera_iteration/preflight.py" \
   --scannet-root "$SCANNET_ROOT" --ckpt-dir "$CKPT_DIR" \
   --scene-list "$SCENE_LIST" --scene-limit "$SCENE_LIMIT" --print-layout | grep -qx processed; then
-  printf 'Inputs are not ready. Run download_vggt_weights.sh and prepare_scannet_camera_iteration.sh first.\n' >&2
+  printf 'Inputs are not ready. Check CKPT_DIR=%s and SCANNET_ROOT=%s.\n' "$CKPT_DIR" "$SCANNET_ROOT" >&2
   exit 1
 fi
 
