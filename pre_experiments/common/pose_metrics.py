@@ -34,6 +34,10 @@ def rotation_angle_deg(rotation: np.ndarray) -> float:
     if matrix.shape != (3, 3):
         raise ValueError("rotation must have shape [3, 3]")
     value = float(np.clip((np.trace(matrix) - 1.0) / 2.0, -1.0, 1.0))
+    if math.isclose(value, 1.0, rel_tol=0.0, abs_tol=1e-12):
+        value = 1.0
+    elif math.isclose(value, -1.0, rel_tol=0.0, abs_tol=1e-12):
+        value = -1.0
     return math.degrees(math.acos(value))
 
 
