@@ -50,3 +50,17 @@ def load_scene_frames(
     if not valid_ids:
         raise FileNotFoundError(f"no matching color frames and finite poses for {scene}")
     return image_by_id, poses_by_id, valid_ids
+
+
+def uniform_frame_ids(valid_ids: list[int], count: int) -> list[int]:
+    """Match the Camera Context protocol's deterministic uniform selection."""
+    if count <= 0:
+        raise ValueError("count must be positive")
+    if len(valid_ids) < count:
+        raise ValueError(f"need at least {count} valid frames, found {len(valid_ids)}")
+    if any(not isinstance(value, (int, np.integer)) for value in valid_ids):
+        raise ValueError("valid_ids must contain integers")
+    if any(left >= right for left, right in zip(valid_ids, valid_ids[1:])):
+        raise ValueError("valid_ids must be strictly increasing and unique")
+    indices = np.linspace(0, len(valid_ids) - 1, count, dtype=np.int64)
+    return [int(valid_ids[int(index)]) for index in indices]
