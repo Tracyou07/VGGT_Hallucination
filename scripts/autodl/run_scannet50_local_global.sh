@@ -152,6 +152,12 @@ run_calibration() {
 
 run_holdout() {
   local threshold_path="${1:-}"
+  if [[ "$SCENE_LIMIT" == "0" ]]; then
+    [[ -f "$threshold_path" ]] || {
+      printf 'Missing frozen threshold artifact: %s\n' "$threshold_path" >&2
+      exit 1
+    }
+  fi
   run_partition \
     holdout \
     "$RESULT_ROOT/runs/holdout" \
@@ -161,10 +167,6 @@ run_holdout() {
     printf '[smoke] holdout inference only: %s\n' "$holdout_run_dir"
     return
   fi
-  [[ -f "$threshold_path" ]] || {
-    printf 'Missing frozen threshold artifact: %s\n' "$threshold_path" >&2
-    exit 1
-  }
 
   python -m pre_experiments.local_global_consistency.analyze \
     --run-dir "$holdout_run_dir" \

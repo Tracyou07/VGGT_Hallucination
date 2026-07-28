@@ -505,6 +505,13 @@ class AutoDLScriptsTest(unittest.TestCase):
         holdout_analysis = content.index('--mode holdout')
         self.assertLess(calibration_run, calibration_analysis)
         self.assertLess(calibration_analysis, holdout_analysis)
+        holdout_function = content[
+            content.index("run_holdout()") : content.index('case "$STAGE"')
+        ]
+        self.assertLess(
+            holdout_function.index('[[ -f "$threshold_path" ]]'),
+            holdout_function.index("run_partition"),
+        )
 
     def test_legacy_local_global_runner_is_only_a_compatibility_shim(self):
         content = self.read("run_local_global_consistency.sh")

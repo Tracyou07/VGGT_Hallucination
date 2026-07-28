@@ -15,6 +15,7 @@ from pre_experiments.common.contracts import atomic_write_json
 from pre_experiments.common.scannet import load_scene_frames, uniform_frame_ids
 from pre_experiments.local_global_consistency.context_source import (
     load_context_frame_ids,
+    validate_context_source_metadata,
 )
 
 
@@ -241,23 +242,13 @@ def _read_scene_list(path: Path) -> list[str]:
     return scenes
 
 
-def _source_run_id(source: Path) -> str:
-    try:
-        metadata = json.loads((source / "run_metadata.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"invalid source metadata: {source}") from error
-    run_id = metadata.get("run_id") if isinstance(metadata, dict) else None
-    if not isinstance(run_id, str) or not run_id:
-        raise ValueError("source metadata must declare a non-empty run_id")
-    return run_id
-
-
 def _build_from_paths(
     data_dir: Path,
     source_run_dir: Path,
     scenes: Sequence[str],
     seed: int,
 ) -> dict[str, object]:
+    source_metadata = validate_context_source_metadata(source_run_dir, list(scenes))
     trajectories: dict[str, np.ndarray] = {}
     for scene in scenes:
         frame_ids = load_context_frame_ids(
@@ -271,7 +262,7 @@ def _build_from_paths(
     return build_split_manifest(
         scenes,
         trajectories,
-        source_run_id=_source_run_id(source_run_dir),
+        source_run_id=str(source_metadata["run_id"]),
         seed=seed,
     )
 

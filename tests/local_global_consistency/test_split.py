@@ -10,6 +10,7 @@ from pre_experiments.local_global_consistency.split import (
     FIXED_OBSERVED_SCENES,
     build_split_manifest,
     load_split_manifest,
+    main,
     motion_features,
 )
 
@@ -109,6 +110,44 @@ class SplitManifestTest(unittest.TestCase):
             path.write_text(json.dumps(loaded), encoding="utf-8")
             with self.assertRaises(ValueError):
                 load_split_manifest(path, list(reversed(self.scenes)))
+
+    def test_split_cli_rejects_source_protocol_before_reading_npz(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            source.mkdir()
+            (source / "run_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "source-run",
+                        "invocation": {
+                            "scenes": self.scenes,
+                            "frame_counts": [100, 500],
+                            "iterations": [4],
+                            "sampling": "nested_uniform",
+                            "preprocess_mode": "pad",
+                            "save_context_diagnostics": True,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            scene_list = root / "scenes.txt"
+            scene_list.write_text("\n".join(self.scenes) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "frame_counts"):
+                main(
+                    [
+                        "--data-dir",
+                        str(root / "processed"),
+                        "--scene-list",
+                        str(scene_list),
+                        "--source-run-dir",
+                        str(source),
+                        "--output",
+                        str(root / "split.json"),
+                    ]
+                )
 
 
 if __name__ == "__main__":

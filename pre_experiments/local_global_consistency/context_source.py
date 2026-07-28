@@ -52,24 +52,17 @@ def _json_object(path: Path) -> dict[str, object]:
     return payload
 
 
-def validate_context_source(
+def validate_context_source_metadata(
     source: Path,
-    split: Mapping[str, object],
-    data_dir: Path,
+    scenes: list[str],
 ) -> dict[str, object]:
-    """Validate the complete ScanNet-50 global source before GPU inference."""
+    """Validate source identity and protocol without opening any NPZ member."""
+    if len(scenes) != 50 or len(set(scenes)) != 50:
+        raise ValueError("context source contract requires 50 unique scenes")
     metadata = _json_object(source / "run_metadata.json")
     invocation = metadata.get("invocation")
     if not isinstance(invocation, dict):
         raise ValueError("source metadata must declare an invocation object")
-    scenes = split.get("scene_order")
-    if (
-        not isinstance(scenes, list)
-        or len(scenes) != 50
-        or len(set(scenes)) != 50
-        or not all(isinstance(scene, str) for scene in scenes)
-    ):
-        raise ValueError("split must declare exactly 50 unique ordered scenes")
     if invocation.get("scenes") != scenes:
         raise ValueError("source metadata scenes must exactly match the split scene order")
     for field, expected in EXPECTED_CONTEXT_PROTOCOL.items():
@@ -81,9 +74,6 @@ def validate_context_source(
     source_run_id = metadata.get("run_id")
     if not isinstance(source_run_id, str) or not source_run_id:
         raise ValueError("source metadata must declare a non-empty run_id")
-    if split.get("source_run_id") != source_run_id:
-        raise ValueError("split source_run_id does not match source metadata")
-
     discovered = {
         path.parents[1].name
         for path in source.glob("*/frames_500/context_diagnostics.npz")
@@ -94,6 +84,27 @@ def validate_context_source(
         raise ValueError(
             f"context artifact scene set mismatch; missing={missing}, extra={extra}"
         )
+    return metadata
+
+
+def validate_context_source(
+    source: Path,
+    split: Mapping[str, object],
+    data_dir: Path,
+) -> dict[str, object]:
+    """Validate the complete ScanNet-50 global source before GPU inference."""
+    scenes = split.get("scene_order")
+    if (
+        not isinstance(scenes, list)
+        or len(scenes) != 50
+        or len(set(scenes)) != 50
+        or not all(isinstance(scene, str) for scene in scenes)
+    ):
+        raise ValueError("split must declare exactly 50 unique ordered scenes")
+    metadata = validate_context_source_metadata(source, scenes)
+    source_run_id = metadata.get("run_id")
+    if split.get("source_run_id") != source_run_id:
+        raise ValueError("split source_run_id does not match source metadata")
 
     frame_ids_by_scene: dict[str, list[int]] = {}
     for scene in scenes:
