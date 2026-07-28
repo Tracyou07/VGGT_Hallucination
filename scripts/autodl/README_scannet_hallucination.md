@@ -1,74 +1,39 @@
 # AutoDL ScanNet Hallucination Probe
 
-This folder contains one-click AutoDL scripts for the VGGT hallucination study.
-The pipeline downloads VGGT weights, downloads/extracts a licensed ScanNet subset,
-then evaluates depth, camera pose, derived point clouds, and optional native
-`world_points`.
+The pipeline evaluates camera pose, depth, derived point clouds, and optional
+native `world_points` using an existing AutoDL setup.
 
-## Quick Start
+## Run
 
 ```bash
-cd /root/autodl-tmp
-git clone https://github.com/Tracyou07/VGGT_Hallucination.git
-cd VGGT_Hallucination
+git switch phenomenon-characterization
 bash scripts/autodl/run_scannet_hallucination.sh
 ```
 
-The default setup clones AutoDL's `base` conda environment into
-`vggt_hallucination`, preserving the image's CUDA/PyTorch installation. The
-script does not install torch.
+Required defaults are the `vggt` conda environment,
+`/root/autodl-tmp/ckpt/VGGT-1B`, and processed data under
+`/root/autodl-tmp/datasets/scannetv2/process_scannet`.
 
-Default output paths:
-
-- Code: `/root/autodl-tmp/VGGT_Hallucination`
-- Conda env: `/root/miniconda3/envs/vggt_hallucination`
-- Data: `/root/autodl-tmp/datasets/scannetv2`
-- Weights: `/root/autodl-tmp/ckpt/VGGT-1B`
-- Results: `/root/autodl-tmp/vggt_hallucination/results`
-
-## ScanNet Access
-
-ScanNet requires terms-of-use acceptance. If the automatic script download fails,
-place the official `download-scannet.py` on AutoDL and run:
+The runner does not create environments, install packages, or download model
+weights. For authorized ScanNet maintenance:
 
 ```bash
-SCANNET_DOWNLOAD_SCRIPT=/root/autodl-tmp/download-scannet.py \
-bash scripts/autodl/run_scannet_hallucination.sh
+RUN_DATA_DOWNLOAD=1 bash scripts/autodl/run_scannet_hallucination.sh
+RUN_EXTRACT=1 bash scripts/autodl/run_scannet_hallucination.sh
 ```
 
-## Common Overrides
+ScanNet downloading requires prior terms-of-use acceptance and the official
+downloader. Override its location with `SCANNET_DOWNLOAD_SCRIPT`.
+
+## Protocol Overrides
 
 ```bash
 SCENE_LIMIT=2 FRAME_COUNTS="100 300" bash scripts/autodl/run_scannet_hallucination.sh
 SAMPLING=regime_step bash scripts/autodl/run_scannet_hallucination.sh
-HF_ENDPOINT=https://hf-mirror.com bash scripts/autodl/run_scannet_hallucination.sh
-CONDA_ENV_NAME=base bash scripts/autodl/run_scannet_hallucination.sh
-INSTALL_ENV=0 RUN_DOWNLOADS=0 bash scripts/autodl/run_scannet_hallucination.sh
-INSTALL_ENV=0 RUN_DOWNLOADS=0 RUN_EXTRACT=0 FRAME_COUNTS="500 1000" bash scripts/autodl/run_scannet_hallucination.sh
-EVAL_NATIVE_POINTS=0 EVAL_COUNTERFACTUALS=0 bash scripts/autodl/run_scannet_hallucination.sh
+EVAL_NATIVE_POINTS=0 EVAL_COUNTERFACTUALS=0 \
+  bash scripts/autodl/run_scannet_hallucination.sh
 ```
 
-Use `INSTALL_ENV=0` after the conda environment has already been created. The
-script still activates that environment and, by default, extracts uploaded
-`.sens` files before evaluation. Set `RUN_EXTRACT=0` only if
-`process_scannet/` is already populated. Evaluation resumes by default: an
-existing `metrics.json` under a scene/frame-count directory is skipped and added
-back into the summary.
-
-Sampling modes:
-
-- `prefix`: strict cumulative sequence; best for observing error accumulation.
-- `uniform`: independent uniform sampling for each frame count.
-- `nested_uniform`: samples from a shared long-frame base.
-- `regime_step`: matches the Regime/FastVGGT ScanNet eval style.
-
-## Result Files
-
-Each scene/count writes:
-
-- `metrics.json`: pose, depth, point-cloud, and counterfactual metrics.
-- `selected_frame_ids.json`: exact frames used.
-- `predicted_cameras.npz`: predicted camera matrices and GT poses.
-- `trajectory.png`: aligned predicted/GT trajectory preview.
-
-The full run also writes `summary.csv` and `summary.json`.
+Sampling modes are `prefix`, `uniform`, `nested_uniform`, and `regime_step`.
+Each selection writes metrics, selected frame IDs, predicted cameras, and a
+trajectory preview. The run root contains `summary.csv` and `summary.json`.

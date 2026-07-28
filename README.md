@@ -1,64 +1,37 @@
-# VGGT Hallucination
+# VGGT Phenomenon Characterization
 
-This repository contains a minimal VGGT codebase plus AutoDL scripts for
-observing hallucination across the camera pose, depth, and point-cloud outputs.
+This branch contains the original ScanNet experiments used to characterize
+VGGT camera, depth, and point-cloud failure patterns. These observations remain
+active evidence to be expanded, not archived conclusions.
 
-## AutoDL One-Click Run
+## AutoDL Run
+
+The runner expects the existing `vggt` conda environment, VGGT-1B checkpoint,
+and processed ScanNet data:
 
 ```bash
-cd /root/autodl-tmp
-git clone https://github.com/Tracyou07/VGGT_Hallucination.git
-cd VGGT_Hallucination
+git switch phenomenon-characterization
 bash scripts/autodl/run_scannet_hallucination.sh
 ```
 
-The script clones the AutoDL image's existing CUDA/PyTorch conda environment,
-installs only the missing VGGT helper dependencies, downloads VGGT-1B weights,
-downloads/extracts a licensed ScanNet subset, and runs the eval.
+Default locations are:
 
-Default locations:
-
-- Code: `/root/autodl-tmp/VGGT_Hallucination`
-- Conda env: `/root/miniconda3/envs/vggt_hallucination`
+- Environment: `/root/miniconda3/envs/vggt`
 - Data: `/root/autodl-tmp/datasets/scannetv2`
 - Weights: `/root/autodl-tmp/ckpt/VGGT-1B`
 - Results: `/root/autodl-tmp/vggt_hallucination/results`
 
-ScanNet requires official data access. If automatic download fails, place the
-official `download-scannet.py` on AutoDL and run:
+The runner validates dependencies, CUDA, weights, and then executes inference.
+It never creates environments, installs packages, or downloads checkpoints.
+Use `RUN_DATA_DOWNLOAD=1` only to invoke the authorized ScanNet data script, or
+`RUN_EXTRACT=1` to re-extract existing `.sens` files.
 
 ```bash
-SCANNET_DOWNLOAD_SCRIPT=/root/autodl-tmp/download-scannet.py \
-bash scripts/autodl/run_scannet_hallucination.sh
+SCENE_LIMIT=2 FRAME_COUNTS="100 300 500" \
+  bash scripts/autodl/run_scannet_hallucination.sh
 ```
 
-If VGGT weight download from Hugging Face is reset, rerun with the mirror
-endpoint:
-
-```bash
-HF_ENDPOINT=https://hf-mirror.com bash scripts/autodl/run_scannet_hallucination.sh
-```
-
-If the conda environment, weights, and uploaded ScanNet files already exist,
-reuse them without reinstalling dependencies:
-
-```bash
-INSTALL_ENV=0 RUN_DOWNLOADS=0 SCENE_LIMIT=5 FRAME_COUNTS="100 300 500 1000" \
-bash scripts/autodl/run_scannet_hallucination.sh
-```
-
-This still activates `/root/miniconda3/envs/vggt_hallucination` and extracts
-uploaded `.sens` files into `process_scannet` before evaluation.
-
-If `process_scannet/` already exists and you only want the long-frame pass:
-
-```bash
-INSTALL_ENV=0 RUN_DOWNLOADS=0 RUN_EXTRACT=0 SCENE_LIMIT=5 FRAME_COUNTS="500 1000" \
-bash scripts/autodl/run_scannet_hallucination.sh
-```
-
-Evaluation resumes by default. Existing `metrics.json` files are skipped, so the
-same command can be rerun after interruption.
-
-See `scripts/autodl/README_scannet_hallucination.md` for sampling modes and
-common overrides.
+Evaluation resumes by default: complete `metrics.json` selections are reused.
+Published observations and numeric artifacts live under
+`results/scannet_hallucination/`. See
+`scripts/autodl/README_scannet_hallucination.md` for protocol details.
