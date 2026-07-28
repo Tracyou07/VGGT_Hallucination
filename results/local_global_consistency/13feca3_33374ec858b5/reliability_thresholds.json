@@ -1,0 +1,12 @@
+{
+  "fitted": true,
+  "stable_scenes": [
+    "scene0013_02",
+    "scene0029_01"
+  ],
+  "thresholds": {
+    "pose_rotation_deg_p95": 13.960984667098272,
+    "pose_translation_p95": 0.019838940918375316,
+    "token_cosine_p95": 0.48487310877625445
+  }
+}
