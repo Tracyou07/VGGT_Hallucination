@@ -25,6 +25,10 @@ from pre_experiments.local_global_consistency.artifacts import (
     load_global_context,
     load_window_diagnostics,
 )
+from pre_experiments.local_global_consistency.context_source import (
+    validate_context_source,
+)
+from pre_experiments.local_global_consistency.split import load_split_manifest
 from pre_experiments.local_global_consistency.windows import FrameWindow, build_sliding_windows
 from vggt.utils.load_fn import load_and_preprocess_images
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
@@ -34,19 +38,22 @@ ROOT = Path(__file__).resolve().parents[2]
 AUTODL_TMP = Path(os.environ.get("AUTODL_TMP", "/root/autodl-tmp"))
 DEFAULT_DATA = AUTODL_TMP / "datasets" / "scannetv2" / "process_scannet"
 DEFAULT_CHECKPOINT = AUTODL_TMP / "ckpt" / "VGGT-1B"
-DEFAULT_GLOBAL_RUN = ROOT / "results" / "camera_context" / "911b598_f4577f584448"
 DEFAULT_OUTPUT = AUTODL_TMP / "local_global_consistency" / "results"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA)
-    parser.add_argument("--source-run-dir", type=Path, default=DEFAULT_GLOBAL_RUN)
+    parser.add_argument("--source-run-dir", type=Path, required=True)
+    parser.add_argument("--split-manifest", type=Path, required=True)
+    parser.add_argument(
+        "--partition", choices=["calibration", "holdout"], required=True
+    )
     parser.add_argument("--ckpt-dir", type=Path, default=DEFAULT_CHECKPOINT)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--run-dir-file", type=Path)
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
-    parser.add_argument("--scene-limit", type=int, default=4)
+    parser.add_argument("--scene-limit", type=int, default=0)
     parser.add_argument("--window-length", type=int, default=100)
     parser.add_argument("--window-stride", type=int, default=50)
     parser.add_argument("--camera-iterations", type=int, choices=[4], default=4)
@@ -69,15 +76,6 @@ def _json_object(path: Path) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError(f"expected JSON object: {path}")
     return value
-
-
-def _source_scenes(source: Path, limit: int) -> tuple[dict[str, object], list[str]]:
-    metadata = _json_object(source / "run_metadata.json")
-    invocation = metadata.get("invocation")
-    scenes = invocation.get("scenes") if isinstance(invocation, dict) else None
-    if not isinstance(scenes, list) or not scenes or not all(isinstance(x, str) for x in scenes):
-        raise ValueError("source run metadata must declare invocation.scenes")
-    return metadata, scenes[:limit] if limit else scenes
 
 
 def _run_id(commit: str, invocation: dict[str, object]) -> str:
@@ -106,6 +104,8 @@ def window_is_complete(
     directory: Path,
     *,
     run_id: str,
+    partition: str,
+    split_digest: str,
     scene: str,
     window_index: int,
     start: int,
@@ -122,6 +122,8 @@ def window_is_complete(
         for key, value in {
             "frame_ids": frame_ids,
             "run_id": run_id,
+            "partition": partition,
+            "split_digest": split_digest,
             "scene": scene,
             "start": start,
             "stop": stop,
@@ -141,6 +143,8 @@ def run_window(
     preprocess_mode: str,
     output_dir: Path,
     run_id: str,
+    partition: str,
+    split_digest: str,
     camera_iterations: int,
     image_loader: Callable[[list[str], str], torch.Tensor] = load_and_preprocess_images,
 ) -> dict[str, object]:
@@ -178,6 +182,8 @@ def run_window(
     atomic_save_npz(output_dir / "window_diagnostics.npz", artifact)
     completion: dict[str, object] = {
         "run_id": run_id,
+        "partition": partition,
+        "split_digest": split_digest,
         "scene": scene,
         "window_index": window.index,
         "start": window.start,
@@ -197,15 +203,36 @@ def run_window(
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     source = args.source_run_dir.resolve()
+    split_path = args.split_manifest.resolve()
     data_dir = args.data_dir.resolve()
     checkpoint = args.ckpt_dir.resolve()
     output = args.out_dir.resolve()
-    source_metadata, scenes = _source_scenes(source, args.scene_limit)
+    expected_scenes = [
+        line.strip()
+        for line in (ROOT / "configs" / "fastvggt_scannet50.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    split = load_split_manifest(split_path, expected_scenes)
+    source_contract = validate_context_source(source, split, data_dir)
+    source_metadata = source_contract["metadata"]
+    partition_key = f"{args.partition}_scenes"
+    partition_scenes = split[partition_key]
+    if not isinstance(partition_scenes, list):
+        raise ValueError(f"split manifest has no {partition_key} list")
+    scenes = partition_scenes[: args.scene_limit] if args.scene_limit else partition_scenes
+    protocol_complete = args.scene_limit == 0
     commit = read_git_commit(ROOT)
     device = resolve_device(args.device)
     invocation = {
         "source_run_dir": source.as_posix(),
         "source_run_id": source_metadata.get("run_id"),
+        "split_manifest": split_path.as_posix(),
+        "split_digest": split["split_digest"],
+        "partition": args.partition,
+        "partition_scenes": partition_scenes,
+        "protocol_complete": protocol_complete,
         "data_dir": data_dir.as_posix(),
         "checkpoint_dir": checkpoint.as_posix(),
         "device": str(device),
@@ -225,6 +252,9 @@ def main(argv: list[str] | None = None) -> None:
             "git_commit": commit,
             "run_id": run_id,
             "source_run_id": source_metadata.get("run_id"),
+            "split_digest": split["split_digest"],
+            "partition": args.partition,
+            "protocol_complete": protocol_complete,
             "invocation": invocation,
             "argv": list(sys.argv if argv is None else argv),
             "python": platform.python_version(),
@@ -256,6 +286,8 @@ def main(argv: list[str] | None = None) -> None:
             if window_is_complete(
                 directory,
                 run_id=run_id,
+                partition=args.partition,
+                split_digest=str(split["split_digest"]),
                 scene=scene,
                 window_index=window.index,
                 start=window.start,
@@ -280,6 +312,8 @@ def main(argv: list[str] | None = None) -> None:
                     preprocess_mode=args.preprocess_mode,
                     output_dir=directory,
                     run_id=run_id,
+                    partition=args.partition,
+                    split_digest=str(split["split_digest"]),
                     camera_iterations=args.camera_iterations,
                 )
             )

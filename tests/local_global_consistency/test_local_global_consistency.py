@@ -17,6 +17,7 @@ from pre_experiments.local_global_consistency.artifacts import (
 )
 from pre_experiments.local_global_consistency.analyze import write_analysis
 from pre_experiments.local_global_consistency.run_study import (
+    _run_id,
     configure_camera_only,
     parse_args,
     run_window,
@@ -162,12 +163,44 @@ class LocalWindowRunnerContractTest(unittest.TestCase):
         self.assertIsNone(model.point_head)
         self.assertIsNone(model.track_head)
 
-    def test_parser_fixes_round2a_defaults(self):
-        args = parse_args([])
+    def test_parser_requires_partitioned_scannet50_inputs(self):
+        args = parse_args(
+            [
+                "--source-run-dir",
+                "source",
+                "--split-manifest",
+                "split.json",
+                "--partition",
+                "calibration",
+            ]
+        )
         self.assertEqual(args.window_length, 100)
         self.assertEqual(args.window_stride, 50)
         self.assertEqual(args.camera_iterations, 4)
-        self.assertEqual(args.scene_limit, 4)
+        self.assertEqual(args.scene_limit, 0)
+        self.assertEqual(args.partition, "calibration")
+        with self.assertRaises(SystemExit):
+            parse_args([])
+
+    def test_partition_split_and_source_are_part_of_run_id(self):
+        base = {
+            "source_run_id": "source-a",
+            "split_digest": "a" * 64,
+            "partition": "calibration",
+        }
+        calibration = _run_id("1" * 40, base)
+        self.assertNotEqual(
+            calibration,
+            _run_id("1" * 40, {**base, "partition": "holdout"}),
+        )
+        self.assertNotEqual(
+            calibration,
+            _run_id("1" * 40, {**base, "split_digest": "b" * 64}),
+        )
+        self.assertNotEqual(
+            calibration,
+            _run_id("1" * 40, {**base, "source_run_id": "source-b"}),
+        )
 
     def test_completion_requires_matching_window_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -182,7 +215,8 @@ class LocalWindowRunnerContractTest(unittest.TestCase):
                 gt_c2w_raw=poses,
             )
             (directory / "complete.json").write_text(
-                '{"run_id":"run","scene":"scene","window_index":0,'
+                '{"run_id":"run","partition":"calibration",'
+                '"split_digest":"digest","scene":"scene","window_index":0,'
                 '"start":0,"stop":2,"frame_ids":[10,20]}\n',
                 encoding="utf-8",
             )
@@ -191,6 +225,8 @@ class LocalWindowRunnerContractTest(unittest.TestCase):
                 window_is_complete(
                     directory,
                     run_id="run",
+                    partition="calibration",
+                    split_digest="digest",
                     scene="scene",
                     window_index=0,
                     start=0,
@@ -202,6 +238,8 @@ class LocalWindowRunnerContractTest(unittest.TestCase):
                 window_is_complete(
                     directory,
                     run_id="run",
+                    partition="calibration",
+                    split_digest="digest",
                     scene="scene",
                     window_index=0,
                     start=0,
@@ -217,11 +255,56 @@ class LocalWindowRunnerContractTest(unittest.TestCase):
                 window_is_complete(
                     directory,
                     run_id="run",
+                    partition="calibration",
+                    split_digest="digest",
                     scene="scene",
                     window_index=0,
                     start=0,
                     stop=2,
                     frame_ids=[10, 20],
+                )
+            )
+
+    def test_completion_requires_partition_and_split_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            poses = np.tile(np.eye(4, dtype=np.float64), (2, 1, 1))
+            np.savez_compressed(
+                directory / "window_diagnostics.npz",
+                frame_ids=np.array([10, 20]),
+                normalized_camera_tokens=np.ones((2, 4)),
+                pred_c2w_raw=poses,
+                gt_c2w_raw=poses,
+            )
+            (directory / "complete.json").write_text(
+                '{"run_id":"run","partition":"calibration",'
+                '"split_digest":"digest","scene":"scene","window_index":0,'
+                '"start":0,"stop":2,"frame_ids":[10,20]}\n',
+                encoding="utf-8",
+            )
+
+            common = {
+                "directory": directory,
+                "run_id": "run",
+                "scene": "scene",
+                "window_index": 0,
+                "start": 0,
+                "stop": 2,
+                "frame_ids": [10, 20],
+            }
+            self.assertTrue(
+                window_is_complete(
+                    partition="calibration", split_digest="digest", **common
+                )
+            )
+            self.assertFalse(
+                window_is_complete(
+                    partition="holdout", split_digest="digest", **common
+                )
+            )
+            self.assertFalse(
+                window_is_complete(
+                    partition="calibration", split_digest="changed", **common
                 )
             )
 
@@ -263,6 +346,8 @@ class LocalWindowRunnerContractTest(unittest.TestCase):
                     preprocess_mode="pad",
                     output_dir=output,
                     run_id="run",
+                    partition="calibration",
+                    split_digest="digest",
                     camera_iterations=4,
                     image_loader=lambda paths, mode: torch.zeros((2, 3, 8, 8)),
                 )
@@ -274,6 +359,8 @@ class LocalWindowRunnerContractTest(unittest.TestCase):
             self.assertEqual(model.kwargs["camera_num_iterations"], 4)
             self.assertTrue(model.kwargs["return_camera_trace"])
             self.assertEqual(completion["frame_ids"], [10, 20])
+            self.assertEqual(completion["partition"], "calibration")
+            self.assertEqual(completion["split_digest"], "digest")
 
 
 class LocalGlobalMetricTest(unittest.TestCase):
