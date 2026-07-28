@@ -72,12 +72,14 @@ Expected: one passing test.
 - Produces: exact nonempty `.sens`, optional `_vh_clean_2.ply`, and extracted
   `process_scannet/<scene>/{color,pose}`.
 
-- [ ] **Step 1: Write failing shell-contract tests**
+- [ ] **Step 1: Write failing shell-contract and behavior tests**
 
 Assert the script contains `DOWNLOAD_RETRIES`, `DOWNLOAD_GT_PLY`, scene-ID
-validation, `printf '\n\n\n\n'`, both official `--type` values, retry attempts,
-exact expected paths, and temporary-file cleanup. Assert its defaults still
-use the existing 10-scene list and do not install dependencies or weights.
+validation, exact expected paths, and the focused download library. Assert its
+defaults still use the existing 10-scene list and do not install dependencies
+or weights. Run the main script against a fake downloader to verify zero-byte
+replacement, random-partial isolation and cleanup, valid-file reuse, and
+arbitrary explicit `RAW_DIR` handling.
 
 - [ ] **Step 2: Run the focused tests and verify failure**
 
@@ -99,17 +101,25 @@ DOWNLOAD_GT_PLY="${DOWNLOAD_GT_PLY:-0}"
 GT_DOWNLOAD_ROOT="${GT_DOWNLOAD_ROOT:-$SCANNET_ROOT/raw}"
 ```
 
-Validate positive retry count and boolean PLY mode. Implement a
-`download_asset(scene, file_type, download_root, expected)` function that:
+Validate positive retry count and boolean PLY mode. Implement a focused
+`download_asset(scene, file_type, expected)` Bash function that:
 
-1. returns immediately for a nonempty `expected`;
-2. invokes the official downloader with automated confirmation;
-3. retries only when the command fails or the exact expected file is empty;
-4. removes `expected.tmp` before the next attempt;
-5. exits after `DOWNLOAD_RETRIES` failures.
+1. removes stale staging roots for the same exact asset;
+2. returns immediately for a nonempty `expected`;
+3. removes an existing zero-byte destination before the first attempt;
+4. creates a fresh per-attempt staging root beside `expected`;
+5. invokes the official downloader with the staging root as `-o` and automated
+   confirmation;
+6. validates `<staging>/scans/<scene>/<filename>`, then moves that nonempty
+   file to `expected` only after downloader success;
+7. removes the complete staging root after every failed or successful attempt;
+8. exits after `DOWNLOAD_RETRIES` failures.
 
 Call it for `.sens` in every selected scene and for `_vh_clean_2.ply` only
-when `DOWNLOAD_GT_PLY=1`.
+when `DOWNLOAD_GT_PLY=1`. Use `RAW_DIR/<scene>/<scene>.sens` as the exact
+`.sens` destination and extractor input. `RAW_DOWNLOAD_ROOT` defines the
+default `RAW_DIR=$RAW_DOWNLOAD_ROOT/scans`; an explicit `RAW_DIR` wins without
+a basename restriction. Keep PLY under `GT_DOWNLOAD_ROOT/scans/<scene>/`.
 
 - [ ] **Step 4: Preserve extraction and final validation**
 

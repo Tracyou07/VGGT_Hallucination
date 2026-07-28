@@ -49,15 +49,23 @@ The script:
    `_vh_clean_2.ply`;
 5. pipes confirmation input to the official downloader, so no manual space or
    key press is required;
-6. retries each failed asset a configurable number of times and removes only
-   that asset's incomplete downloader temporary file before retrying;
-7. validates the exact expected nonempty final file after every download;
-8. extracts `.sens` files and verifies every selected processed scene.
+6. invokes each attempt with a fresh per-asset staging root beside the final
+   destination, isolating all downloader-created files on the same filesystem;
+7. validates the exact staged nonempty file, moves it to the requested
+   destination only after downloader success, and removes the entire staging
+   root after every attempt;
+8. removes stale staging roots for the same asset on restart, while reusing a
+   valid nonempty destination;
+9. extracts `.sens` files and verifies every selected processed scene.
 
 An interrupted run is restarted with the same command. Valid final files are
-reused; incomplete downloader temporary files are not treated as complete.
-The existing 10-scene command keeps its current behavior because PLY download
-remains opt-in.
+reused; zero-byte destinations are removed before the first real attempt, and
+randomly named downloader partials remain confined to staging roots. `RAW_DIR`
+is the exact `.sens` destination and extractor input. `RAW_DOWNLOAD_ROOT`
+defines only the default `RAW_DIR=$RAW_DOWNLOAD_ROOT/scans`, so an explicit
+`RAW_DIR` wins even when both variables are set. PLY files remain under
+`GT_DOWNLOAD_ROOT/scans/<scene>/`. The existing 10-scene command keeps its
+current behavior because PLY download remains opt-in.
 
 ## Controls And Testing
 
@@ -67,9 +75,11 @@ variables. `DOWNLOAD_GT_PLY` defaults to `0` for backward compatibility; the
 ScanNet-50 command explicitly sets it to `1`.
 
 CPU-only tests lock the FastVGGT configuration to exactly 50 unique expected
-scene IDs and inspect the shell contract: official downloader use, automatic
-confirmation, retries, `.sens` extraction, PLY naming, ToS guard, and absence
-of environment/weight installation.
+scene IDs. Behavior tests run the main script against a fake official
+downloader to cover zero-byte replacement, failed random-partial cleanup,
+valid-file reuse, and arbitrary `RAW_DIR` overrides. Static contract checks
+retain the ToS guard, defaults, extraction, and absence of environment/weight
+installation.
 
 Run the prepared workflow with:
 

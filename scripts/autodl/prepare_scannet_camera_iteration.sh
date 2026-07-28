@@ -12,26 +12,15 @@ AUTODL_TMP="${AUTODL_TMP:-/root/autodl-tmp}"
 CONDA_ROOT="${CONDA_ROOT:-/root/miniconda3}"
 CONDA_ENV_NAME="${CONDA_ENV_NAME:-vggt}"
 SCANNET_ROOT="${SCANNET_ROOT:-$AUTODL_TMP/datasets/scannetv2}"
-RAW_DOWNLOAD_ROOT_WAS_SET="${RAW_DOWNLOAD_ROOT+x}"
-RAW_DIR_WAS_SET="${RAW_DIR+x}"
 RAW_DOWNLOAD_ROOT="${RAW_DOWNLOAD_ROOT:-$SCANNET_ROOT/raw_sens}"
 GT_DOWNLOAD_ROOT="${GT_DOWNLOAD_ROOT:-$SCANNET_ROOT/raw}"
 RAW_DIR="${RAW_DIR:-$RAW_DOWNLOAD_ROOT/scans}"
 if [[ "$RAW_DOWNLOAD_ROOT" != "/" ]]; then
   RAW_DOWNLOAD_ROOT="${RAW_DOWNLOAD_ROOT%/}"
 fi
-RAW_DIR="${RAW_DIR%/}"
-[[ "$(basename "$RAW_DIR")" == "scans" ]] || {
-  printf 'RAW_DIR must name a scans directory: %s\n' "$RAW_DIR" >&2
-  exit 1
-}
-RAW_DIR_DOWNLOAD_ROOT="$(dirname "$RAW_DIR")"
-if [[ "$RAW_DOWNLOAD_ROOT_WAS_SET" == "x" && "$RAW_DIR_WAS_SET" == "x" \
-  && "$RAW_DOWNLOAD_ROOT" != "$RAW_DIR_DOWNLOAD_ROOT" ]]; then
-  printf 'RAW_DOWNLOAD_ROOT and RAW_DIR must identify the same scans root.\n' >&2
-  exit 1
+if [[ "$RAW_DIR" != "/" ]]; then
+  RAW_DIR="${RAW_DIR%/}"
 fi
-RAW_DOWNLOAD_ROOT="$RAW_DIR_DOWNLOAD_ROOT"
 PROCESS_DIR="${PROCESS_DIR:-$SCANNET_ROOT/process_scannet}"
 SCENE_LIST="${SCENE_LIST:-$REPO_ROOT/configs/camera_iteration_scannet.txt}"
 SCENE_LIMIT="${SCENE_LIMIT:-10}"
@@ -40,6 +29,8 @@ DOWNLOAD_GT_PLY="${DOWNLOAD_GT_PLY:-0}"
 SCANNET_DOWNLOAD_SCRIPT="${SCANNET_DOWNLOAD_SCRIPT:-$SCANNET_ROOT/tools/download-scannet.py}"
 SCANNET_DOWNLOAD_URL="${SCANNET_DOWNLOAD_URL:-http://kaldir.vc.in.tum.de/scannet/download-scannet.py}"
 CONDA_SH="$CONDA_ROOT/etc/profile.d/conda.sh"
+# shellcheck source=scannet_download.sh
+source "$SCRIPT_DIR/scannet_download.sh"
 
 [[ "$DOWNLOAD_RETRIES" =~ ^[1-9][0-9]*$ ]] || {
   printf 'DOWNLOAD_RETRIES must be a positive integer.\n' >&2
@@ -95,47 +86,12 @@ if [[ ! -s "$SCANNET_DOWNLOAD_SCRIPT" ]]; then
   fi
 fi
 
-download_asset() {
-  local scene="$1"
-  local file_type="$2"
-  local download_root="$3"
-  local expected="$4"
-  local attempt
-
-  if [[ -s "$expected" ]]; then
-    printf '[scannet] reuse %s\n' "$expected"
-    return 0
-  fi
-
-  mkdir -p "$(dirname "$expected")"
-  for ((attempt = 1; attempt <= DOWNLOAD_RETRIES; attempt++)); do
-    rm -f "${expected}.tmp"
-    if printf '\n\n\n\n' | python "$SCANNET_DOWNLOAD_SCRIPT" \
-      -o "$download_root" --id "$scene" --type "$file_type"; then
-      if [[ -s "$expected" ]]; then
-        return 0
-      fi
-    fi
-
-    if [[ -e "$expected" && ! -s "$expected" ]]; then
-      rm -f "$expected"
-    fi
-    rm -f "${expected}.tmp"
-    printf '[scannet] attempt %s/%s failed for %s\n' \
-      "$attempt" "$DOWNLOAD_RETRIES" "$expected" >&2
-  done
-
-  printf 'Official downloader did not produce %s after %s attempts.\n' \
-    "$expected" "$DOWNLOAD_RETRIES" >&2
-  return 1
-}
-
 for scene in "${scenes[@]}"; do
-  sens="$RAW_DOWNLOAD_ROOT/scans/$scene/$scene.sens"
-  download_asset "$scene" .sens "$RAW_DOWNLOAD_ROOT" "$sens"
+  sens="$RAW_DIR/$scene/$scene.sens"
+  download_asset "$scene" .sens "$sens"
   if [[ "$DOWNLOAD_GT_PLY" == "1" ]]; then
     gt_ply="$GT_DOWNLOAD_ROOT/scans/$scene/${scene}_vh_clean_2.ply"
-    download_asset "$scene" _vh_clean_2.ply "$GT_DOWNLOAD_ROOT" "$gt_ply"
+    download_asset "$scene" _vh_clean_2.ply "$gt_ply"
   fi
 done
 
