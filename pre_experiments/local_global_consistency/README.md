@@ -6,8 +6,8 @@ does not train VGGT, construct a dataset, or modify model weights.
 
 ## Fixed Protocol
 
-- Reuse the exact frame IDs and global artifacts from Round 1.5 run
-  `911b598_f4577f584448`.
+- Reuse the exact frame IDs and four minimal frozen global artifacts from
+  Round 1.5 run `911b598_f4577f584448`.
 - Run frozen camera-only VGGT with four Camera Head iterations.
 - Split each 500-frame sequence into nine 100-frame windows at stride 50.
 - Compare Camera Tokens directly and align predicted trajectories to each
@@ -20,8 +20,9 @@ global and local predictions to `gt_c2w_raw`; GT is never aligned or replaced.
 
 ## AutoDL Runs
 
-The runner assumes the `vggt` conda environment, processed ScanNet scenes,
-official checkpoint, and published Round 1.5 artifacts already exist.
+The runner assumes the `vggt` Conda environment, processed ScanNet scenes, and
+official checkpoint already exist. The required Round 1.5 inputs are committed
+as `run_metadata.json` plus one `frames_500/context_diagnostics.npz` per scene.
 
 ```bash
 # One-scene pipeline smoke; thresholds remain intentionally unfitted.

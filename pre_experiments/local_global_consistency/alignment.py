@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from pre_experiments.camera_iteration.pose_metrics import rotation_angle_deg, umeyama
+from pre_experiments.common.pose_metrics import rotation_angle_deg, umeyama
 
 
 def _pose_stack(name: str, value: np.ndarray) -> np.ndarray:

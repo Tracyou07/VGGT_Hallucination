@@ -63,7 +63,7 @@ Expected: one passing test.
 ### Task 2: Generalize The Existing ScanNet Preparation Script
 
 **Files:**
-- Modify: `scripts/autodl/prepare_scannet_camera_iteration.sh`
+- Modify: `scripts/autodl/prepare_scannet50.sh`
 - Modify: `tests/camera_iteration/test_autodl_scripts.py`
 
 **Interfaces:**
@@ -149,7 +149,7 @@ python -m unittest discover -s tests/camera_iteration -v
 - [ ] **Step 2: Run shell syntax and whitespace validation**
 
 ```bash
-bash -n scripts/autodl/prepare_scannet_camera_iteration.sh
+bash -n scripts/autodl/prepare_scannet50.sh
 git diff --check
 ```
 

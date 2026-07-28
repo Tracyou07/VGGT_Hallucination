@@ -7,7 +7,7 @@ from collections.abc import Iterable
 
 import numpy as np
 
-from pre_experiments.camera_iteration.pose_metrics import align_pose_sequence
+from pre_experiments.common.pose_metrics import align_pose_sequence
 from pre_experiments.local_global_consistency.alignment import (
     align_prediction_trajectories,
 )

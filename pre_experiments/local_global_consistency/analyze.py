@@ -7,7 +7,7 @@ import csv
 import json
 from pathlib import Path
 
-from pre_experiments.camera_iteration.contracts import atomic_write_json
+from pre_experiments.common.contracts import atomic_write_json
 from pre_experiments.local_global_consistency.artifacts import (
     load_global_context,
     load_window_diagnostics,

@@ -34,7 +34,7 @@ original `.sens` file.
 
 ## Unified Download Workflow
 
-Extend the existing `scripts/autodl/prepare_scannet_camera_iteration.sh`
+Use `scripts/autodl/prepare_scannet50.sh`
 instead of adding a second preparation script. The current 10-scene camera
 iteration workflow and FastVGGT ScanNet-50 then share the same official
 downloader, retry behavior, directory layout, and `.sens` extractor.
@@ -88,5 +88,5 @@ SCANNET_TOS_ACCEPTED=1 \
 SCENE_LIST=configs/fastvggt_scannet50.txt \
 SCENE_LIMIT=0 \
 DOWNLOAD_GT_PLY=1 \
-bash scripts/autodl/prepare_scannet_camera_iteration.sh
+bash scripts/autodl/prepare_scannet50.sh
 ```

@@ -15,10 +15,10 @@ from typing import Callable
 import numpy as np
 import torch
 
-from pre_experiments.camera_iteration.contracts import atomic_write_json, read_git_commit
-from pre_experiments.camera_iteration.model_io import load_local_model, resolve_device
-from pre_experiments.camera_iteration.pose_metrics import to_homogeneous
-from pre_experiments.camera_iteration.scannet import load_scene_frames
+from pre_experiments.common.contracts import atomic_write_json, read_git_commit
+from pre_experiments.common.model_io import load_local_model, resolve_device
+from pre_experiments.common.pose_metrics import to_homogeneous
+from pre_experiments.common.scannet import load_scene_frames
 from pre_experiments.local_global_consistency.artifacts import (
     atomic_save_npz,
     build_window_diagnostics,
