@@ -16,7 +16,7 @@ Use the existing `vggt` conda environment, checkpoint, and processed ScanNet
 data:
 
 ```bash
-git switch camera-iteration-preexperiment
+git switch camera-context-consistency-preexperiment
 bash scripts/autodl/run_camera_context.sh
 ```
 

@@ -11,18 +11,9 @@ class AutoDLScriptsTest(unittest.TestCase):
     def read(self, name: str) -> str:
         return (AUTODL / name).read_text(encoding="utf-8")
 
-    def test_environment_setup_preserves_base_torch(self):
-        content = self.read("setup_vggt_env.sh")
-        for value in ("CONDA_ENV_NAME=\"${CONDA_ENV_NAME:-vggt}\"", "--clone", "--no-deps", "--no-build-isolation", "--print-missing", "torch.cuda.is_available"):
-            self.assertIn(value, content)
-        self.assertNotIn("pip install torch", content.lower())
-
-    def test_weight_setup_is_independent_and_resumable(self):
-        content = self.read("download_vggt_weights.sh")
-        for value in ("facebook/VGGT-1B", "https://hf-mirror.com", "snapshot_download", "max_workers=1", "model.safetensors", "model.pt", "HF_MAX_RETRIES"):
-            self.assertIn(value, content)
-        for forbidden in ("conda create", "scannet", "run_camera_iteration"):
-            self.assertNotIn(forbidden, content.lower())
+    def test_retired_setup_scripts_are_absent(self):
+        self.assertFalse((AUTODL / "setup_vggt_env.sh").exists())
+        self.assertFalse((AUTODL / "download_vggt_weights.sh").exists())
 
     def test_scannet_setup_requires_tos_and_only_requests_sens(self):
         content = self.read("prepare_scannet_camera_iteration.sh")
@@ -34,9 +25,9 @@ class AutoDLScriptsTest(unittest.TestCase):
 
     def test_runner_only_validates_and_executes(self):
         content = self.read("run_camera_iteration.sh")
-        for value in ("CONDA_ENV_NAME=\"${CONDA_ENV_NAME:-vggt}\"", "preflight.py", "run_study", "setup_vggt_env.sh", "prepare_scannet_camera_iteration.sh", "25 50 100 200 500", "1 2 4 8 16"):
+        for value in ("CONDA_ENV_NAME=\"${CONDA_ENV_NAME:-vggt}\"", "preflight.py", "run_study", "existing conda environment", "CKPT_DIR", "SCANNET_ROOT", "25 50 100 200 500", "1 2 4 8 16"):
             self.assertIn(value, content)
-        for forbidden in ("conda create", "pip install", "snapshot_download", "extract_scannet", "RUN_EXTRACT", "wget", "curl"):
+        for forbidden in ("setup_vggt_env", "download_vggt_weights", "conda create", "pip install", "snapshot_download", "extract_scannet", "RUN_EXTRACT", "wget", "curl"):
             self.assertNotIn(forbidden, content)
 
     def test_context_runner_fixes_round_1_5_protocol(self):
