@@ -291,7 +291,8 @@ Expected: fail because the threshold module is absent.
 - [ ] **Step 3: Implement calibration-only fitting**
 
 Move threshold fitting out of the implicit stable-scene path. Calibration mode
-must require all ten calibration scenes and a complete 90-window run. Write:
+must require all ten calibration scenes and the source-derived complete window
+count: 89 if `scene0150_00` is in calibration, otherwise 90. Write:
 
 ```text
 frozen_reliability_thresholds.json
@@ -380,8 +381,9 @@ frames independently because frames within one scene are correlated.
 
 - [ ] **Step 5: Implement strict holdout analysis**
 
-Require exactly 40 holdout scenes and 360 complete windows. Apply the frozen
-threshold values unchanged. Write:
+Require exactly 40 holdout scenes and the source-derived complete window count:
+359 if `scene0150_00` is in holdout, otherwise 360. Apply the frozen threshold
+values unchanged. Write:
 
 ```text
 holdout_prediction_scores_per_frame.csv
@@ -575,9 +577,10 @@ Expected: zero failures and zero whitespace errors.
 
 - [ ] **Step 4: Run one-scene GPU smoke tests**
 
-Run calibration and holdout inference with `--scene-limit 1`. Confirm each
-produces nine windows, approximately 15 GB peak allocated memory, no analysis
-completion marker, and `protocol_complete=false`.
+Run calibration and holdout inference with `--scene-limit 1`. Confirm a normal
+scene produces nine windows and `scene0150_00` produces eight, approximately
+15 GB peak allocated memory, no analysis completion marker, and
+`protocol_complete=false`.
 
 - [ ] **Step 5: Run formal calibration then holdout**
 
@@ -586,8 +589,9 @@ STAGE=all \
 bash scripts/autodl/run_scannet50_local_global.sh
 ```
 
-Expected: 90 calibration windows, one frozen threshold artifact, 360 holdout
-windows, and holdout aggregate outputs referencing the frozen threshold digest.
+Expected: 449 windows across calibration and holdout, one frozen threshold
+artifact, and holdout aggregate outputs referencing the frozen threshold
+digest. Partition counts are 89/360 or 90/359 according to the frozen split.
 
 - [ ] **Step 6: Export numeric evidence and inspect repository policy**
 

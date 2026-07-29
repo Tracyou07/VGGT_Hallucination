@@ -5,14 +5,17 @@ Pose disagreement predicts VGGT long-context degradation.
 
 ## Protocol
 
-- Global reference: one explicit 50-scene Camera Context run with 500 frames,
-  four Camera Head iterations, `nested_uniform` sampling, and `pad`
-  preprocessing.
-- Local inference: nine 100-frame windows per scene at stride 50.
-- Calibration: 10 scenes and 90 windows fit three prediction-only P95
-  Local-Local reliability thresholds.
-- Holdout: 40 disjoint scenes and 360 windows consume those thresholds without
-  refitting.
+- Global reference: one explicit 50-scene Camera Context run requesting 500
+  frames, with four Camera Head iterations, `nested_uniform` sampling, and
+  `pad` preprocessing. Every scene must contain exactly 500 selected frames
+  except `scene0150_00`, which must contain exactly its 430 available frames.
+- Local inference: nine 100-frame, stride-50 windows per normal scene;
+  `scene0150_00` has eight windows, ending with `[330, 430)`.
+- Calibration: 10 scenes and the source-derived complete window count fit
+  three prediction-only P95 Local-Local reliability thresholds.
+- Holdout: 40 disjoint scenes and the source-derived complete window count
+  consume those thresholds without refitting. The two stages total 449
+  windows.
 - Statistics: frames are reduced to scene summaries before 10,000 deterministic
   bootstrap resamples with seed 33.
 

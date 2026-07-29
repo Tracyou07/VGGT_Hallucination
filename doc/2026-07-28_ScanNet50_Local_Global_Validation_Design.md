@@ -3,9 +3,9 @@
 ## Goal
 
 Extend Round 2A from four observed scenes to a leakage-controlled ScanNet-50
-validation. The Camera Context branch produces one compatible 500-frame global
-artifact for every scene. All split handling, local-window inference, threshold
-fitting, and evaluation belong to the
+validation. The Camera Context branch produces one compatible global artifact
+per scene under a requested 500-frame protocol. All split handling,
+local-window inference, threshold fitting, and evaluation belong to the
 `local-global-consistency-preexperiment` worktree.
 
 ## Leakage-Controlled Stratified Split
@@ -19,7 +19,7 @@ scene0000_00  scene0013_02  scene0029_01  scene0691_00
 These currently represent two easy, one medium, and one difficult observed
 case. Select the other six calibration scenes before inspecting any new VGGT
 predictions. For each of the remaining 46 scenes, use the exact deterministic
-500-frame selection and raw GT poses to calculate:
+source-frame selection and raw GT poses to calculate:
 
 - cumulative translation;
 - cumulative geodesic rotation;
@@ -45,20 +45,23 @@ to split construction.
 
 The workflow requires an explicit `SOURCE_RUN_DIR` containing:
 
-- metadata declaring all 50 scenes and the fixed 500-frame, four-iteration,
-  `nested_uniform`, `pad` protocol;
+- metadata declaring all 50 scenes and the requested 500-frame,
+  four-iteration, `nested_uniform`, `pad` protocol;
 - one `frames_500/context_diagnostics.npz` per scene;
 - processed ScanNet RGB frames and raw GT poses;
 - the existing VGGT checkpoint.
 
 The runner must not select the newest context directory automatically. Missing
-or incompatible metadata and artifacts are hard failures.
+or incompatible metadata and artifacts are hard failures. Each source artifact
+must contain exactly 500 frames except `scene0150_00`, which must contain
+exactly its 430 available frames; no other short sequence is accepted.
 
 ## Two-Stage Workflow
 
 ### Calibration
 
-Run nine local windows per calibration scene with length 100 and stride 50.
+Run length-100 local windows at stride 50. Normal scenes produce nine windows;
+`scene0150_00` produces eight, with the final tail-coverage window `[330, 430)`.
 Analyze prediction-only local-local and local-global scores, then fit the three
 P95 reliability thresholds from all ten calibration scenes. Write a frozen
 threshold artifact containing metric names, values, contributing sample counts,
@@ -101,7 +104,9 @@ claims.
 
 Window artifacts retain the existing atomic NPZ-then-completion-marker
 protocol. Resume checks validate run ID, scene, window boundaries, and frame
-IDs. Expected workload is 90 calibration windows and 360 holdout windows.
+IDs. The expected workload is 449 windows. Depending on whether
+`scene0150_00` belongs to calibration or holdout, the partition counts are
+89/360 or 90/359, respectively.
 
 Raw window NPZ files remain outside Git. The numeric exporter permits only
 completed CSV/JSON summaries and manifests, rejects high-dimensional arrays,

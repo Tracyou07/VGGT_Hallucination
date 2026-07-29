@@ -1,8 +1,8 @@
 # VGGT ScanNet-50 Local-Global Validation
 
 This branch tests whether prediction-only disagreement between 100-frame local
-inference and 500-frame global inference identifies long-context Camera Pose
-degradation. It does not train or modify VGGT.
+inference and the requested 500-frame global inference identifies long-context
+Camera Pose degradation. It does not train or modify VGGT.
 
 ## Prerequisites
 
@@ -13,7 +13,8 @@ AutoDL must already contain:
 - `VGGT-1B` under `/root/autodl-tmp/ckpt/VGGT-1B`;
 - processed ScanNet scenes under
   `/root/autodl-tmp/datasets/scannetv2/process_scannet`;
-- one complete 50-scene, 500-frame Camera Context source run.
+- one complete 50-scene Camera Context source run: 500 frames per scene, except
+  `scene0150_00`, which must contain exactly its 430 available frames.
 
 The scripts never create an environment, download weights, or select the
 newest result directory. Matplotlib is required only for PNG diagnostics and
@@ -54,8 +55,7 @@ SOURCE_RUN_DIR="$SOURCE_RUN_DIR" SCENE_LIMIT=1 STAGE=all \
   bash scripts/autodl/run_scannet50_local_global.sh
 ```
 
-Run the complete 90-window calibration followed by the frozen-threshold,
-360-window holdout:
+Run complete calibration followed by the frozen-threshold holdout:
 
 ```bash
 SOURCE_RUN_DIR="$SOURCE_RUN_DIR" STAGE=all \
@@ -77,6 +77,11 @@ Each completed run writes PNG diagnostics under `visualizations/`. Holdout
 figures cover split difficulty, per-scene error growth, score-versus-GT
 association, frozen reliability coverage, and scene-bootstrap confidence
 intervals.
+
+Normal scenes produce nine length-100, stride-50 windows.
+`scene0150_00` produces eight, including the tail window `[330, 430)`. The
+formal workload is therefore 449 windows: calibration/holdout counts are
+89/360 or 90/359 according to the frozen split.
 
 ## Export Numeric Evidence
 
