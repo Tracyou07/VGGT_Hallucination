@@ -70,6 +70,7 @@ def collect_run_rows(run_dir: Path) -> dict[str, object]:
     all_overlaps = []
     all_scores = []
     all_validation = []
+    expected_window_count = 0
     for scene in scenes:
         global_artifact = load_global_context(
             source / scene / "frames_500" / "context_diagnostics.npz"
@@ -79,6 +80,7 @@ def collect_run_rows(run_dir: Path) -> dict[str, object]:
             length=window_length,
             stride=window_stride,
         )
+        expected_window_count += len(expected_windows)
         window_records = []
         for directory in sorted((run_dir / scene).glob("window_*")):
             completion = _json_object(directory / "complete.json")
@@ -129,6 +131,7 @@ def collect_run_rows(run_dir: Path) -> dict[str, object]:
         "scores": all_scores,
         "validation": all_validation,
         "window_count": len(list(run_dir.glob("*/window_*"))),
+        "expected_window_count": expected_window_count,
     }
 
 
@@ -183,8 +186,10 @@ def _calibration_analysis(
     scenes: list[str],
     collected: dict[str, object],
 ) -> dict[str, object]:
-    if collected.get("window_count") != 90:
-        raise ValueError("formal calibration requires exactly 90 completed windows")
+    if collected.get("window_count") != collected.get("expected_window_count"):
+        raise ValueError(
+            "formal calibration requires the complete expected window set"
+        )
     score_rows = collected.get("scores")
     validation_rows = collected.get("validation")
     if not isinstance(score_rows, list) or not isinstance(validation_rows, list):
@@ -228,6 +233,7 @@ def _calibration_analysis(
         "partition": "calibration",
         "scenes": scenes,
         "window_count": collected["window_count"],
+        "expected_window_count": collected["expected_window_count"],
         "analysis_complete": True,
         "split_digest": metadata.get("split_digest"),
         "source_run_id": metadata.get("source_run_id"),
@@ -245,8 +251,8 @@ def _holdout_analysis(
     threshold_payload: dict[str, object],
     thresholds_path: Path,
 ) -> dict[str, object]:
-    if collected.get("window_count") != 360:
-        raise ValueError("formal holdout requires exactly 360 completed windows")
+    if collected.get("window_count") != collected.get("expected_window_count"):
+        raise ValueError("formal holdout requires the complete expected window set")
     score_rows = collected.get("scores")
     validation_rows = collected.get("validation")
     if not isinstance(score_rows, list) or not isinstance(validation_rows, list):
@@ -289,6 +295,7 @@ def _holdout_analysis(
         "partition": "holdout",
         "scenes": scenes,
         "window_count": collected["window_count"],
+        "expected_window_count": collected["expected_window_count"],
         "analysis_complete": True,
         "split_digest": metadata.get("split_digest"),
         "source_run_id": metadata.get("source_run_id"),

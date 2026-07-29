@@ -570,6 +570,7 @@ class LocalGlobalAnalysisTest(unittest.TestCase):
             collected = collect_run_rows(run_dir)
 
             self.assertEqual(collected["window_count"], 2)
+            self.assertEqual(collected["expected_window_count"], 2)
             self.assertNotIn("gt", " ".join(collected["scores"][0]))
             self.assertIn("global_translation_error_aligned", collected["validation"][0])
 
@@ -630,7 +631,8 @@ class LocalGlobalAnalysisTest(unittest.TestCase):
                 "overlaps": [],
                 "scores": score_rows,
                 "validation": validation_rows,
-                "window_count": 90,
+                "window_count": 89,
+                "expected_window_count": 89,
             }
             with mock.patch(
                 "pre_experiments.local_global_consistency.analyze.collect_run_rows",
@@ -657,6 +659,17 @@ class LocalGlobalAnalysisTest(unittest.TestCase):
                 completion["threshold_digest"],
                 threshold_payload["threshold_digest"],
             )
+            self.assertEqual(completion["window_count"], 89)
+            self.assertEqual(completion["expected_window_count"], 89)
+
+            collected["window_count"] = 90
+            with mock.patch(
+                "pre_experiments.local_global_consistency.analyze.collect_run_rows",
+                return_value=collected,
+            ):
+                with self.assertRaisesRegex(ValueError, "expected window"):
+                    write_analysis(run_dir, mode="calibration")
+            collected["window_count"] = 89
 
             metadata["protocol_complete"] = False
             (run_dir / "run_metadata.json").write_text(
@@ -788,7 +801,8 @@ class LocalGlobalAnalysisTest(unittest.TestCase):
                 "overlaps": [],
                 "scores": scores,
                 "validation": validation,
-                "window_count": 360,
+                "window_count": 359,
+                "expected_window_count": 359,
             }
             with mock.patch(
                 "pre_experiments.local_global_consistency.analyze.collect_run_rows",
@@ -809,6 +823,8 @@ class LocalGlobalAnalysisTest(unittest.TestCase):
                 completion["threshold_digest"],
                 threshold_payload["threshold_digest"],
             )
+            self.assertEqual(completion["window_count"], 359)
+            self.assertEqual(completion["expected_window_count"], 359)
             for filename in (
                 "holdout_prediction_scores_per_frame.csv",
                 "holdout_gt_validation_per_frame.csv",
@@ -818,6 +834,18 @@ class LocalGlobalAnalysisTest(unittest.TestCase):
                 "holdout_complete.json",
             ):
                 self.assertTrue((run_dir / filename).is_file(), filename)
+
+            collected["window_count"] = 360
+            with mock.patch(
+                "pre_experiments.local_global_consistency.analyze.collect_run_rows",
+                return_value=collected,
+            ):
+                with self.assertRaisesRegex(ValueError, "expected window"):
+                    write_analysis(
+                        run_dir,
+                        mode="holdout",
+                        thresholds_path=thresholds_path,
+                    )
 
     def test_holdout_analysis_rejects_calibration_scene_overlap(self):
         calibration_scenes = [f"calibration{index:02d}" for index in range(10)]
