@@ -1,0 +1,964 @@
+{
+  "calibration_scenes": [
+    "scene0000_00",
+    "scene0013_02",
+    "scene0029_01",
+    "scene0691_00",
+    "scene0084_01",
+    "scene0121_01",
+    "scene0207_01",
+    "scene0280_00",
+    "scene0325_01",
+    "scene0675_00"
+  ],
+  "fixed_observed_scenes": [
+    "scene0000_00",
+    "scene0013_02",
+    "scene0029_01",
+    "scene0691_00"
+  ],
+  "holdout_scenes": [
+    "scene0042_02",
+    "scene0056_00",
+    "scene0071_00",
+    "scene0096_00",
+    "scene0109_00",
+    "scene0136_01",
+    "scene0150_00",
+    "scene0164_01",
+    "scene0177_01",
+    "scene0194_00",
+    "scene0221_01",
+    "scene0238_00",
+    "scene0254_01",
+    "scene0267_00",
+    "scene0294_02",
+    "scene0309_00",
+    "scene0340_01",
+    "scene0353_02",
+    "scene0367_01",
+    "scene0380_02",
+    "scene0395_00",
+    "scene0409_01",
+    "scene0421_02",
+    "scene0435_03",
+    "scene0451_01",
+    "scene0466_01",
+    "scene0477_00",
+    "scene0493_01",
+    "scene0509_01",
+    "scene0525_00",
+    "scene0540_02",
+    "scene0555_00",
+    "scene0571_00",
+    "scene0582_02",
+    "scene0593_00",
+    "scene0606_01",
+    "scene0619_00",
+    "scene0631_01",
+    "scene0648_00",
+    "scene0663_01"
+  ],
+  "new_calibration_scenes": [
+    "scene0084_01",
+    "scene0121_01",
+    "scene0207_01",
+    "scene0280_00",
+    "scene0325_01",
+    "scene0675_00"
+  ],
+  "new_calibration_strata": {
+    "scene0084_01": "medium",
+    "scene0121_01": "medium",
+    "scene0207_01": "hard",
+    "scene0280_00": "hard",
+    "scene0325_01": "easy",
+    "scene0675_00": "easy"
+  },
+  "scene_difficulty": {
+    "scene0042_02": {
+      "difficulty_score": 0.2388888888888889,
+      "features": {
+        "cumulative_rotation_deg": 734.402869303696,
+        "cumulative_translation": 8.945936472212654,
+        "p95_rotation_step_deg": 3.234811945552087,
+        "p95_translation_step": 0.04065866871165707
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.3111111111111111,
+        "cumulative_translation": 0.15555555555555556,
+        "p95_rotation_step_deg": 0.3111111111111111,
+        "p95_translation_step": 0.17777777777777778
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "3d186e9ff73446db977ac14519437f814f7a1588449e66a1741d202d8ba7b430",
+      "stratum": "easy"
+    },
+    "scene0056_00": {
+      "difficulty_score": 0.788888888888889,
+      "features": {
+        "cumulative_rotation_deg": 1294.4416592387988,
+        "cumulative_translation": 22.516723116227723,
+        "p95_rotation_step_deg": 4.7999609830312515,
+        "p95_translation_step": 0.08175749560571788
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.7555555555555555,
+        "cumulative_translation": 0.8888888888888888,
+        "p95_rotation_step_deg": 0.7111111111111111,
+        "p95_translation_step": 0.8
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "e7c83af9727c54fe27cae9c71dcc011b13dc0fbbab34801ff27ee8751cfb2b78",
+      "stratum": "hard"
+    },
+    "scene0071_00": {
+      "difficulty_score": 0.1722222222222222,
+      "features": {
+        "cumulative_rotation_deg": 537.2180822706334,
+        "cumulative_translation": 11.92228439225671,
+        "p95_rotation_step_deg": 2.2986147915202917,
+        "p95_translation_step": 0.047466219265051166
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.044444444444444446,
+        "cumulative_translation": 0.3111111111111111,
+        "p95_rotation_step_deg": 0.044444444444444446,
+        "p95_translation_step": 0.28888888888888886
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "326ea7e9112dc1ed3cc57743ca7f73a26d32fcf5d2e22d16cc7cf39d3708ad42",
+      "stratum": "easy"
+    },
+    "scene0084_01": {
+      "difficulty_score": 0.6277777777777778,
+      "features": {
+        "cumulative_rotation_deg": 1026.116461605791,
+        "cumulative_translation": 17.11812031277739,
+        "p95_rotation_step_deg": 4.229652383049543,
+        "p95_translation_step": 0.06748742928441591
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.5555555555555556,
+        "cumulative_translation": 0.7111111111111111,
+        "p95_rotation_step_deg": 0.5555555555555556,
+        "p95_translation_step": 0.6888888888888889
+      },
+      "selected_for_calibration": true,
+      "selection_hash": "0541ef56b8d1f2e42a7b1de7f115dacb94fd91c646e765d2e76e6694f0a4dab9",
+      "stratum": "medium"
+    },
+    "scene0096_00": {
+      "difficulty_score": 0.4888888888888888,
+      "features": {
+        "cumulative_rotation_deg": 977.7979956428304,
+        "cumulative_translation": 13.349489624959109,
+        "p95_rotation_step_deg": 3.611707822518274,
+        "p95_translation_step": 0.05702120692505954
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.4888888888888889,
+        "cumulative_translation": 0.4888888888888889,
+        "p95_rotation_step_deg": 0.4,
+        "p95_translation_step": 0.5777777777777777
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "3efc4efced498542dcd00e5a752500191612e8ada6fe8f079ba796be31028ff3",
+      "stratum": "medium"
+    },
+    "scene0109_00": {
+      "difficulty_score": 0.35,
+      "features": {
+        "cumulative_rotation_deg": 892.366035298965,
+        "cumulative_translation": 12.48231981861094,
+        "p95_rotation_step_deg": 3.3486608160862223,
+        "p95_translation_step": 0.04824010684544318
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.37777777777777777,
+        "cumulative_translation": 0.37777777777777777,
+        "p95_rotation_step_deg": 0.3333333333333333,
+        "p95_translation_step": 0.3111111111111111
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "ca021bfc91336e8922684962329f5c4d50997277b99bea2b354ad4afbb1b8e2f",
+      "stratum": "easy"
+    },
+    "scene0121_01": {
+      "difficulty_score": 0.3833333333333333,
+      "features": {
+        "cumulative_rotation_deg": 951.1360113283256,
+        "cumulative_translation": 11.44761562009878,
+        "p95_rotation_step_deg": 3.84606090857153,
+        "p95_translation_step": 0.04878093545918126
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.4444444444444444,
+        "cumulative_translation": 0.26666666666666666,
+        "p95_rotation_step_deg": 0.4888888888888889,
+        "p95_translation_step": 0.3333333333333333
+      },
+      "selected_for_calibration": true,
+      "selection_hash": "0229857867d01d47d4d07523a2026ee43b7209003265697bbd93bc9da5910a7b",
+      "stratum": "medium"
+    },
+    "scene0136_01": {
+      "difficulty_score": 0.07222222222222223,
+      "features": {
+        "cumulative_rotation_deg": 560.1159671340786,
+        "cumulative_translation": 6.8853759360787725,
+        "p95_rotation_step_deg": 2.3567753840767223,
+        "p95_translation_step": 0.02845843101856767
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.06666666666666667,
+        "cumulative_translation": 0.06666666666666667,
+        "p95_rotation_step_deg": 0.08888888888888889,
+        "p95_translation_step": 0.06666666666666667
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "a9aa7a77e3b13aaaa70cec64274a2088c96bfaf04f5e9dfd664766c72b1192c0",
+      "stratum": "easy"
+    },
+    "scene0150_00": {
+      "difficulty_score": 0.022222222222222223,
+      "features": {
+        "cumulative_rotation_deg": 265.80032100319136,
+        "cumulative_translation": 6.3379139328351215,
+        "p95_rotation_step_deg": 1.2957678134375097,
+        "p95_translation_step": 0.026778694243477237
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.0,
+        "cumulative_translation": 0.044444444444444446,
+        "p95_rotation_step_deg": 0.0,
+        "p95_translation_step": 0.044444444444444446
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "71caf760b977da70464193715b494290e80c74e8a0562b7556b94692e1abf2de",
+      "stratum": "easy"
+    },
+    "scene0164_01": {
+      "difficulty_score": 0.15555555555555553,
+      "features": {
+        "cumulative_rotation_deg": 718.733152793284,
+        "cumulative_translation": 5.710220381689037,
+        "p95_rotation_step_deg": 3.097398877153302,
+        "p95_translation_step": 0.02657754427793434
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.28888888888888886,
+        "cumulative_translation": 0.022222222222222223,
+        "p95_rotation_step_deg": 0.28888888888888886,
+        "p95_translation_step": 0.022222222222222223
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "4d1a366fbe9f9bb2013fe12d96650eec4cb37ab3676b6b84df3d58afae6b6404",
+      "stratum": "easy"
+    },
+    "scene0177_01": {
+      "difficulty_score": 0.49444444444444446,
+      "features": {
+        "cumulative_rotation_deg": 1006.3429188918444,
+        "cumulative_translation": 13.388973797769673,
+        "p95_rotation_step_deg": 3.5079008554510973,
+        "p95_translation_step": 0.0569905334260246
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.5333333333333333,
+        "cumulative_translation": 0.5333333333333333,
+        "p95_rotation_step_deg": 0.35555555555555557,
+        "p95_translation_step": 0.5555555555555556
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "e70aefb89d3931483803d5681a2bfd84f667e4c888561e59e2865c3cef79794b",
+      "stratum": "medium"
+    },
+    "scene0194_00": {
+      "difficulty_score": 0.5111111111111111,
+      "features": {
+        "cumulative_rotation_deg": 1030.6413727302397,
+        "cumulative_translation": 12.786801590585103,
+        "p95_rotation_step_deg": 4.570881480521668,
+        "p95_translation_step": 0.05310017396792427
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.5777777777777777,
+        "cumulative_translation": 0.4,
+        "p95_rotation_step_deg": 0.6444444444444445,
+        "p95_translation_step": 0.4222222222222222
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "f9392053fbcf9f1e614bc247896a6233f6ef872d8bc4413715e811d932b95455",
+      "stratum": "medium"
+    },
+    "scene0207_01": {
+      "difficulty_score": 0.7888888888888889,
+      "features": {
+        "cumulative_rotation_deg": 1416.729945486493,
+        "cumulative_translation": 18.087036610212117,
+        "p95_rotation_step_deg": 5.565855696146696,
+        "p95_translation_step": 0.06926430048081013
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.8444444444444444,
+        "cumulative_translation": 0.7333333333333333,
+        "p95_rotation_step_deg": 0.8444444444444444,
+        "p95_translation_step": 0.7333333333333333
+      },
+      "selected_for_calibration": true,
+      "selection_hash": "19aa4e96302cf4450d1e3b3c760419145dd40d7de7f781b471ad138417f1881c",
+      "stratum": "hard"
+    },
+    "scene0221_01": {
+      "difficulty_score": 0.4333333333333333,
+      "features": {
+        "cumulative_rotation_deg": 768.0214116469149,
+        "cumulative_translation": 12.998875704450443,
+        "p95_rotation_step_deg": 3.8926508692520243,
+        "p95_translation_step": 0.05397111793244717
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.3333333333333333,
+        "cumulative_translation": 0.4444444444444444,
+        "p95_rotation_step_deg": 0.5111111111111111,
+        "p95_translation_step": 0.4444444444444444
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "1683d76bc948c014dc7e0f4c5d87330e47d82ce69c28ac6a3471c06f6ac794b1",
+      "stratum": "medium"
+    },
+    "scene0238_00": {
+      "difficulty_score": 0.3222222222222222,
+      "features": {
+        "cumulative_rotation_deg": 943.0807339073219,
+        "cumulative_translation": 8.32032257350205,
+        "p95_rotation_step_deg": 4.042966406907067,
+        "p95_translation_step": 0.04202182992177074
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.4,
+        "cumulative_translation": 0.13333333333333333,
+        "p95_rotation_step_deg": 0.5333333333333333,
+        "p95_translation_step": 0.2222222222222222
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "aad6c1033b9ef953f18350640b5916f6081340a12060b759db1eed747a8404ff",
+      "stratum": "easy"
+    },
+    "scene0254_01": {
+      "difficulty_score": 0.35555555555555557,
+      "features": {
+        "cumulative_rotation_deg": 652.6403721739523,
+        "cumulative_translation": 13.798033278338256,
+        "p95_rotation_step_deg": 2.6252238730261213,
+        "p95_translation_step": 0.054706257719797806
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.2,
+        "cumulative_translation": 0.5555555555555556,
+        "p95_rotation_step_deg": 0.2,
+        "p95_translation_step": 0.4666666666666667
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "5936891144f4cc0717a6c2300a7b7d111b76d77377126ca79544bad476d2566d",
+      "stratum": "medium"
+    },
+    "scene0267_00": {
+      "difficulty_score": 0.12222222222222222,
+      "features": {
+        "cumulative_rotation_deg": 564.4106749515647,
+        "cumulative_translation": 7.09401574331474,
+        "p95_rotation_step_deg": 2.7700935306481984,
+        "p95_translation_step": 0.030491091108896345
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.08888888888888889,
+        "cumulative_translation": 0.08888888888888889,
+        "p95_rotation_step_deg": 0.2222222222222222,
+        "p95_translation_step": 0.08888888888888889
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "b120c6907fa319fe21472a25e39e8d0ee6144c5df3676e6e51f6e90832e452bb",
+      "stratum": "easy"
+    },
+    "scene0280_00": {
+      "difficulty_score": 0.9111111111111111,
+      "features": {
+        "cumulative_rotation_deg": 1892.2996281552987,
+        "cumulative_translation": 22.618954360813625,
+        "p95_rotation_step_deg": 6.855862958640274,
+        "p95_translation_step": 0.09728767047914753
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.9333333333333333,
+        "cumulative_translation": 0.9111111111111111,
+        "p95_rotation_step_deg": 0.8888888888888888,
+        "p95_translation_step": 0.9111111111111111
+      },
+      "selected_for_calibration": true,
+      "selection_hash": "13241a815b53c59bfdc9a8f4202bd1771b05d8f4a2b51decda77124f60fd5ea3",
+      "stratum": "hard"
+    },
+    "scene0294_02": {
+      "difficulty_score": 0.9277777777777777,
+      "features": {
+        "cumulative_rotation_deg": 1702.6731199239275,
+        "cumulative_translation": 31.050448839741833,
+        "p95_rotation_step_deg": 6.94460974098328,
+        "p95_translation_step": 0.11560915109102714
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.8888888888888888,
+        "cumulative_translation": 0.9777777777777777,
+        "p95_rotation_step_deg": 0.9111111111111111,
+        "p95_translation_step": 0.9333333333333333
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "f0dff9b030692a6ff0662d203da086a569abeeb8901886ee74cdf71d90fffaf3",
+      "stratum": "hard"
+    },
+    "scene0309_00": {
+      "difficulty_score": 0.49444444444444446,
+      "features": {
+        "cumulative_rotation_deg": 1152.7262664668363,
+        "cumulative_translation": 12.902048103181016,
+        "p95_rotation_step_deg": 4.355459086704771,
+        "p95_translation_step": 0.04939469763860213
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.6222222222222222,
+        "cumulative_translation": 0.4222222222222222,
+        "p95_rotation_step_deg": 0.5777777777777777,
+        "p95_translation_step": 0.35555555555555557
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "3e784a40e8e94bdfbf4b841eda44004b2990ffc51baf7b5f9cc1fb0430463948",
+      "stratum": "medium"
+    },
+    "scene0325_01": {
+      "difficulty_score": 0.18333333333333335,
+      "features": {
+        "cumulative_rotation_deg": 645.9295574762914,
+        "cumulative_translation": 10.467761020722248,
+        "p95_rotation_step_deg": 2.586532598857237,
+        "p95_translation_step": 0.04042149581990131
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.17777777777777778,
+        "cumulative_translation": 0.2222222222222222,
+        "p95_rotation_step_deg": 0.17777777777777778,
+        "p95_translation_step": 0.15555555555555556
+      },
+      "selected_for_calibration": true,
+      "selection_hash": "06b300697cd7ddb78f065991d20026ef149d77eec13b777ddb8dd912a139aaf2",
+      "stratum": "easy"
+    },
+    "scene0340_01": {
+      "difficulty_score": 0.45,
+      "features": {
+        "cumulative_rotation_deg": 888.1167517453123,
+        "cumulative_translation": 13.010222423048464,
+        "p95_rotation_step_deg": 3.7364246747180174,
+        "p95_translation_step": 0.05664143913116791
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.35555555555555557,
+        "cumulative_translation": 0.4666666666666667,
+        "p95_rotation_step_deg": 0.4444444444444444,
+        "p95_translation_step": 0.5333333333333333
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "856b0cd779116a61d0ef7504935858850e59b1d11fa96d2ac57091fb5a0f4e42",
+      "stratum": "medium"
+    },
+    "scene0353_02": {
+      "difficulty_score": 0.7055555555555555,
+      "features": {
+        "cumulative_rotation_deg": 1344.6021645209034,
+        "cumulative_translation": 15.50987669718021,
+        "p95_rotation_step_deg": 4.995609328656033,
+        "p95_translation_step": 0.05972203332315198
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.7777777777777778,
+        "cumulative_translation": 0.6666666666666666,
+        "p95_rotation_step_deg": 0.7555555555555555,
+        "p95_translation_step": 0.6222222222222222
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "8c710f37ee284442de8476a864cc6fd892080c767e1c0151152bc7f2d4cee802",
+      "stratum": "hard"
+    },
+    "scene0367_01": {
+      "difficulty_score": 0.19444444444444442,
+      "features": {
+        "cumulative_rotation_deg": 673.9764518078753,
+        "cumulative_translation": 9.602176453171944,
+        "p95_rotation_step_deg": 2.553372576277808,
+        "p95_translation_step": 0.04176660673313531
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.26666666666666666,
+        "cumulative_translation": 0.17777777777777778,
+        "p95_rotation_step_deg": 0.13333333333333333,
+        "p95_translation_step": 0.2
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "3c6a032123e27517c90884e8baee86a1194f021aa5055a8e237be33172ab1f7e",
+      "stratum": "easy"
+    },
+    "scene0380_02": {
+      "difficulty_score": 0.18333333333333335,
+      "features": {
+        "cumulative_rotation_deg": 639.5622915885256,
+        "cumulative_translation": 9.720998570070348,
+        "p95_rotation_step_deg": 2.9773114715718587,
+        "p95_translation_step": 0.039674703290241885
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.15555555555555556,
+        "cumulative_translation": 0.2,
+        "p95_rotation_step_deg": 0.24444444444444444,
+        "p95_translation_step": 0.13333333333333333
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "a9d3cb3c68700cdb5f0b06432d91dac0d92b984db3026964b1edd0fc5251da82",
+      "stratum": "easy"
+    },
+    "scene0395_00": {
+      "difficulty_score": 0.8333333333333334,
+      "features": {
+        "cumulative_rotation_deg": 1420.9958281871595,
+        "cumulative_translation": 21.237753280359684,
+        "p95_rotation_step_deg": 5.065956784379077,
+        "p95_translation_step": 0.08462378169492324
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.8666666666666667,
+        "cumulative_translation": 0.8444444444444444,
+        "p95_rotation_step_deg": 0.7777777777777778,
+        "p95_translation_step": 0.8444444444444444
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "edcaa1cb7e88c223dc3aa6ef1fadb61e9ce0b62f0cce893191d9ea2cbbac5497",
+      "stratum": "hard"
+    },
+    "scene0409_01": {
+      "difficulty_score": 0.5166666666666667,
+      "features": {
+        "cumulative_rotation_deg": 1035.4046827540246,
+        "cumulative_translation": 13.38349150061979,
+        "p95_rotation_step_deg": 3.821962946524393,
+        "p95_translation_step": 0.055449392416106386
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.6,
+        "cumulative_translation": 0.5111111111111111,
+        "p95_rotation_step_deg": 0.4666666666666667,
+        "p95_translation_step": 0.4888888888888889
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "99af306a24d75805abbf4e209e016a281e5f0dbae9e4e5dff16b947d9cebc9d3",
+      "stratum": "medium"
+    },
+    "scene0421_02": {
+      "difficulty_score": 0.4722222222222222,
+      "features": {
+        "cumulative_rotation_deg": 1198.1868630222875,
+        "cumulative_translation": 10.469067441556069,
+        "p95_rotation_step_deg": 4.653716809971602,
+        "p95_translation_step": 0.04653249076695898
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.7111111111111111,
+        "cumulative_translation": 0.24444444444444444,
+        "p95_rotation_step_deg": 0.6666666666666666,
+        "p95_translation_step": 0.26666666666666666
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "a8828d5ce15c340ff6a0cf559be5fee62e08b5d4be703828ad3ba62384e263e9",
+      "stratum": "medium"
+    },
+    "scene0435_03": {
+      "difficulty_score": 0.7666666666666667,
+      "features": {
+        "cumulative_rotation_deg": 1188.3006879412324,
+        "cumulative_translation": 20.493833406035325,
+        "p95_rotation_step_deg": 4.8842042755994495,
+        "p95_translation_step": 0.08465930979470505
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.6666666666666666,
+        "cumulative_translation": 0.8,
+        "p95_rotation_step_deg": 0.7333333333333333,
+        "p95_translation_step": 0.8666666666666667
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "d19768fb44b72b7ede5041ffa86952ca5c2e9cf067f9f649a854228e16bb2458",
+      "stratum": "hard"
+    },
+    "scene0451_01": {
+      "difficulty_score": 0.7333333333333333,
+      "features": {
+        "cumulative_rotation_deg": 1189.4583744129854,
+        "cumulative_translation": 21.118662789093648,
+        "p95_rotation_step_deg": 4.408311790457319,
+        "p95_translation_step": 0.08398197851414738
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.6888888888888889,
+        "cumulative_translation": 0.8222222222222222,
+        "p95_rotation_step_deg": 0.6,
+        "p95_translation_step": 0.8222222222222222
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "57e483619b22efd05d41bc89026e489741b594f7889c962af8f0d5152756fb8b",
+      "stratum": "hard"
+    },
+    "scene0466_01": {
+      "difficulty_score": 0.19444444444444445,
+      "features": {
+        "cumulative_rotation_deg": 464.5473662368701,
+        "cumulative_translation": 12.111290108723793,
+        "p95_rotation_step_deg": 2.0754023385447757,
+        "p95_translation_step": 0.050638123074761586
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.022222222222222223,
+        "cumulative_translation": 0.3333333333333333,
+        "p95_rotation_step_deg": 0.022222222222222223,
+        "p95_translation_step": 0.4
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "e4f1ee9181b054fe5220333edb7d1dbcd6024be2566365d06e439b0b860d9e9a",
+      "stratum": "easy"
+    },
+    "scene0477_00": {
+      "difficulty_score": 0.9888888888888889,
+      "features": {
+        "cumulative_rotation_deg": 2461.050233817975,
+        "cumulative_translation": 43.01412072234895,
+        "p95_rotation_step_deg": 9.717512566688443,
+        "p95_translation_step": 0.1731286934599768
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.9777777777777777,
+        "cumulative_translation": 1.0,
+        "p95_rotation_step_deg": 0.9777777777777777,
+        "p95_translation_step": 1.0
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "ae55e76ec06e9795325aa47398d9415eb274633a00e9466ab74d48698c7f1932",
+      "stratum": "hard"
+    },
+    "scene0493_01": {
+      "difficulty_score": 0.24444444444444444,
+      "features": {
+        "cumulative_rotation_deg": 654.4779698068337,
+        "cumulative_translation": 12.411023298452644,
+        "p95_rotation_step_deg": 2.55636723812256,
+        "p95_translation_step": 0.04288334589651804
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.2222222222222222,
+        "cumulative_translation": 0.35555555555555557,
+        "p95_rotation_step_deg": 0.15555555555555556,
+        "p95_translation_step": 0.24444444444444444
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "e3c3079fc810d35944dd069867e25ec0c59ac5b1b536063210dfeafc6e9b04a3",
+      "stratum": "easy"
+    },
+    "scene0509_01": {
+      "difficulty_score": 0.06111111111111111,
+      "features": {
+        "cumulative_rotation_deg": 587.3179342614661,
+        "cumulative_translation": 4.709058091459758,
+        "p95_rotation_step_deg": 2.5203873593064547,
+        "p95_translation_step": 0.023159837470744654
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.13333333333333333,
+        "cumulative_translation": 0.0,
+        "p95_rotation_step_deg": 0.1111111111111111,
+        "p95_translation_step": 0.0
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "de0ba525f2ac1cce2ea9025df362d1f263980f4776a435c14dd918d5e7682012",
+      "stratum": "easy"
+    },
+    "scene0525_00": {
+      "difficulty_score": 0.5166666666666667,
+      "features": {
+        "cumulative_rotation_deg": 944.1495735350744,
+        "cumulative_translation": 14.916770035115505,
+        "p95_rotation_step_deg": 3.509737403819316,
+        "p95_translation_step": 0.06154163895362932
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.4222222222222222,
+        "cumulative_translation": 0.6222222222222222,
+        "p95_rotation_step_deg": 0.37777777777777777,
+        "p95_translation_step": 0.6444444444444445
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "d02b8140f22aa38bb0d4b6e33c0e770bbcd6508ab9d5c4afdb14adf642bff620",
+      "stratum": "medium"
+    },
+    "scene0540_02": {
+      "difficulty_score": 0.09999999999999999,
+      "features": {
+        "cumulative_rotation_deg": 584.0414693822979,
+        "cumulative_translation": 7.546135310831959,
+        "p95_rotation_step_deg": 2.345964521314768,
+        "p95_translation_step": 0.035147185930699466
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.1111111111111111,
+        "cumulative_translation": 0.1111111111111111,
+        "p95_rotation_step_deg": 0.06666666666666667,
+        "p95_translation_step": 0.1111111111111111
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "c1ff4f6994d782e48836c982dd759fb870101343cc3dc35c2f901ebb9d5b4ea5",
+      "stratum": "easy"
+    },
+    "scene0555_00": {
+      "difficulty_score": 0.7000000000000001,
+      "features": {
+        "cumulative_rotation_deg": 1169.0740848608493,
+        "cumulative_translation": 20.32278870318565,
+        "p95_rotation_step_deg": 4.548831134638832,
+        "p95_translation_step": 0.07567560639513214
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.6444444444444445,
+        "cumulative_translation": 0.7777777777777778,
+        "p95_rotation_step_deg": 0.6222222222222222,
+        "p95_translation_step": 0.7555555555555555
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "866977eb0d8a4ccb88f93f3600be19a634fb9a69b76b31d74f856c7f470216f1",
+      "stratum": "hard"
+    },
+    "scene0571_00": {
+      "difficulty_score": 0.7611111111111112,
+      "features": {
+        "cumulative_rotation_deg": 1407.1913925978101,
+        "cumulative_translation": 15.292932450465162,
+        "p95_rotation_step_deg": 6.133944724303705,
+        "p95_translation_step": 0.06847058342288011
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.8222222222222222,
+        "cumulative_translation": 0.6444444444444445,
+        "p95_rotation_step_deg": 0.8666666666666667,
+        "p95_translation_step": 0.7111111111111111
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "b2f122e2c5a48190c7c4e9d940cd6075f077efb11cf9df8b8d97c43c72aedadc",
+      "stratum": "hard"
+    },
+    "scene0582_02": {
+      "difficulty_score": 0.5277777777777777,
+      "features": {
+        "cumulative_rotation_deg": 992.6824238198764,
+        "cumulative_translation": 14.319352646952458,
+        "p95_rotation_step_deg": 3.6882212058170705,
+        "p95_translation_step": 0.05880964075048094
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.5111111111111111,
+        "cumulative_translation": 0.5777777777777777,
+        "p95_rotation_step_deg": 0.4222222222222222,
+        "p95_translation_step": 0.6
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "9ddef27478a17277cc601c1b1bf2e2397f4241e8b60d41b588df4df79a96e640",
+      "stratum": "medium"
+    },
+    "scene0593_00": {
+      "difficulty_score": 0.8999999999999999,
+      "features": {
+        "cumulative_rotation_deg": 1722.669840870224,
+        "cumulative_translation": 21.467855112072744,
+        "p95_rotation_step_deg": 7.107146723008217,
+        "p95_translation_step": 0.0875122508610868
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.9111111111111111,
+        "cumulative_translation": 0.8666666666666667,
+        "p95_rotation_step_deg": 0.9333333333333333,
+        "p95_translation_step": 0.8888888888888888
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "6cbe846e572a7e018e57438679a97501ba847f70441442907e4c336bff9f6b91",
+      "stratum": "hard"
+    },
+    "scene0606_01": {
+      "difficulty_score": 0.788888888888889,
+      "features": {
+        "cumulative_rotation_deg": 1346.4672601780462,
+        "cumulative_translation": 18.446264900200738,
+        "p95_rotation_step_deg": 5.326181065167574,
+        "p95_translation_step": 0.07648669303334658
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.8,
+        "cumulative_translation": 0.7555555555555555,
+        "p95_rotation_step_deg": 0.8222222222222222,
+        "p95_translation_step": 0.7777777777777778
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "d049a063d10ffeb2640c0b487d827ee3cdadcb0e5be6f9d5b57a06174a33a4f5",
+      "stratum": "hard"
+    },
+    "scene0619_00": {
+      "difficulty_score": 0.6833333333333333,
+      "features": {
+        "cumulative_rotation_deg": 1210.1088535239942,
+        "cumulative_translation": 16.088436910791437,
+        "p95_rotation_step_deg": 5.073182762157068,
+        "p95_translation_step": 0.05663076275771028
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.7333333333333333,
+        "cumulative_translation": 0.6888888888888889,
+        "p95_rotation_step_deg": 0.8,
+        "p95_translation_step": 0.5111111111111111
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "a6bdae6e530143734fbc5a91bff9d7eb96335ebdc7cdbeef318401a6bdaf07c0",
+      "stratum": "medium"
+    },
+    "scene0631_01": {
+      "difficulty_score": 0.6055555555555556,
+      "features": {
+        "cumulative_rotation_deg": 966.5485662762344,
+        "cumulative_translation": 14.39331561908324,
+        "p95_rotation_step_deg": 4.764966451393295,
+        "p95_translation_step": 0.06407610627011771
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.4666666666666667,
+        "cumulative_translation": 0.6,
+        "p95_rotation_step_deg": 0.6888888888888889,
+        "p95_translation_step": 0.6666666666666666
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "5b6346ec770ef0f1e18e0229cbca663d63d33819b3d880674738d9f43214e5fb",
+      "stratum": "medium"
+    },
+    "scene0648_00": {
+      "difficulty_score": 0.9777777777777777,
+      "features": {
+        "cumulative_rotation_deg": 3020.8661050764904,
+        "cumulative_translation": 24.87556923735645,
+        "p95_rotation_step_deg": 11.651538665438048,
+        "p95_translation_step": 0.12248717477000001
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 1.0,
+        "cumulative_translation": 0.9333333333333333,
+        "p95_rotation_step_deg": 1.0,
+        "p95_translation_step": 0.9777777777777777
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "9fc32ea755472312827fbdbf3d297d5eae8a46337e582e0655f5d8a3a2d22367",
+      "stratum": "hard"
+    },
+    "scene0663_01": {
+      "difficulty_score": 0.9555555555555556,
+      "features": {
+        "cumulative_rotation_deg": 2417.6034570990596,
+        "cumulative_translation": 29.20065454248791,
+        "p95_rotation_step_deg": 9.602586799452297,
+        "p95_translation_step": 0.12033326031054357
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.9555555555555556,
+        "cumulative_translation": 0.9555555555555556,
+        "p95_rotation_step_deg": 0.9555555555555556,
+        "p95_translation_step": 0.9555555555555556
+      },
+      "selected_for_calibration": false,
+      "selection_hash": "8e17e16e607940e9de0c5aa538e899e1ba0aedabe6b7d7d7e72e6769c41fa3da",
+      "stratum": "hard"
+    },
+    "scene0675_00": {
+      "difficulty_score": 0.29444444444444445,
+      "features": {
+        "cumulative_rotation_deg": 665.0425597100626,
+        "cumulative_translation": 11.633443498546303,
+        "p95_rotation_step_deg": 3.039385263580991,
+        "p95_translation_step": 0.049738100355758645
+      },
+      "percentile_ranks": {
+        "cumulative_rotation_deg": 0.24444444444444444,
+        "cumulative_translation": 0.28888888888888886,
+        "p95_rotation_step_deg": 0.26666666666666666,
+        "p95_translation_step": 0.37777777777777777
+      },
+      "selected_for_calibration": true,
+      "selection_hash": "1f768673163b120886174e36f9f945264a3fe36bef6f2567350a3df71a235dfc",
+      "stratum": "easy"
+    }
+  },
+  "scene_order": [
+    "scene0000_00",
+    "scene0013_02",
+    "scene0029_01",
+    "scene0042_02",
+    "scene0056_00",
+    "scene0071_00",
+    "scene0084_01",
+    "scene0096_00",
+    "scene0109_00",
+    "scene0121_01",
+    "scene0136_01",
+    "scene0150_00",
+    "scene0164_01",
+    "scene0177_01",
+    "scene0194_00",
+    "scene0207_01",
+    "scene0221_01",
+    "scene0238_00",
+    "scene0254_01",
+    "scene0267_00",
+    "scene0280_00",
+    "scene0294_02",
+    "scene0309_00",
+    "scene0325_01",
+    "scene0340_01",
+    "scene0353_02",
+    "scene0367_01",
+    "scene0380_02",
+    "scene0395_00",
+    "scene0409_01",
+    "scene0421_02",
+    "scene0435_03",
+    "scene0451_01",
+    "scene0466_01",
+    "scene0477_00",
+    "scene0493_01",
+    "scene0509_01",
+    "scene0525_00",
+    "scene0540_02",
+    "scene0555_00",
+    "scene0571_00",
+    "scene0582_02",
+    "scene0593_00",
+    "scene0606_01",
+    "scene0619_00",
+    "scene0631_01",
+    "scene0648_00",
+    "scene0663_01",
+    "scene0675_00",
+    "scene0691_00"
+  ],
+  "schema_version": 1,
+  "seed": 33,
+  "source_run_id": "d33d98b_309a9a586242",
+  "split_digest": "69c283245c4f220965e6fde3b96192de298e292eb8ca625c94851fe8932cdb8a"
+}
