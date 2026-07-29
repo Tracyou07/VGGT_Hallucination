@@ -158,6 +158,7 @@ skyseg.onnx
 !/results/local_global_consistency/**/
 !/results/local_global_consistency/**/*.json
 !/results/local_global_consistency/**/*.csv
+!/results/local_global_consistency/**/README.md
 
 # pixi environments
 .pixi
