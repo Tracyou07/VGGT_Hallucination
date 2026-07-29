@@ -14,6 +14,7 @@ import numpy as np
 from pre_experiments.common.contracts import atomic_write_json
 from pre_experiments.common.scannet import load_scene_frames, uniform_frame_ids
 from pre_experiments.local_global_consistency.context_source import (
+    expected_context_frame_count,
     load_context_frame_ids,
     validate_context_source_metadata,
 )
@@ -254,8 +255,14 @@ def _build_from_paths(
         frame_ids = load_context_frame_ids(
             source_run_dir / scene / "frames_500" / "context_diagnostics.npz"
         )
+        expected_count = expected_context_frame_count(scene)
+        if len(frame_ids) != expected_count:
+            raise ValueError(
+                f"context source requires {expected_count} frames for {scene}, "
+                f"found {len(frame_ids)}"
+            )
         _, poses_by_id, valid_ids = load_scene_frames(data_dir, scene)
-        expected_ids = uniform_frame_ids(valid_ids, 500)
+        expected_ids = uniform_frame_ids(valid_ids, expected_count)
         if not np.array_equal(frame_ids, np.asarray(expected_ids, dtype=np.int64)):
             raise ValueError(f"context frame IDs do not match raw ScanNet inputs: {scene}")
         trajectories[scene] = np.stack([poses_by_id[int(value)] for value in frame_ids])

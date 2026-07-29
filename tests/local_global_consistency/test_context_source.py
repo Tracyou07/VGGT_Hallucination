@@ -7,6 +7,7 @@ from unittest import mock
 import numpy as np
 
 from pre_experiments.local_global_consistency.context_source import (
+    expected_context_frame_count,
     load_context_frame_ids,
     validate_context_source,
 )
@@ -72,11 +73,13 @@ class ContextSourceContractTest(unittest.TestCase):
             "scene0013_02",
             "scene0029_01",
             "scene0691_00",
-        ] + [f"scene{index:04d}_00" for index in range(100, 146)]
+            "scene0150_00",
+        ] + [f"scene{index:04d}_00" for index in range(100, 145)]
         trajectories = {}
         for scene_index, scene in enumerate(self.scenes):
-            poses = np.repeat(np.eye(4)[None], 500, axis=0)
-            poses[:, 0, 3] = np.arange(500) * (scene_index + 1)
+            count = 430 if scene == "scene0150_00" else 500
+            poses = np.repeat(np.eye(4)[None], count, axis=0)
+            poses[:, 0, 3] = np.arange(count) * (scene_index + 1)
             trajectories[scene] = poses
         self.trajectories = trajectories
         self.split = build_split_manifest(
@@ -84,6 +87,10 @@ class ContextSourceContractTest(unittest.TestCase):
             trajectories,
             source_run_id="source-run",
         )
+
+    def test_expected_context_frame_count_has_one_exact_exception(self):
+        self.assertEqual(expected_context_frame_count("scene0150_00"), 430)
+        self.assertEqual(expected_context_frame_count("scene0000_00"), 500)
 
     def _write_source(self, root: Path) -> Path:
         source = root / "source"
@@ -106,16 +113,17 @@ class ContextSourceContractTest(unittest.TestCase):
             directory = source / scene / "frames_500"
             directory.mkdir(parents=True)
             poses = self.trajectories[scene]
+            count = len(poses)
             np.savez_compressed(
                 directory / "context_diagnostics.npz",
-                frame_ids=np.arange(500, dtype=np.int64),
-                normalized_camera_tokens=np.ones((500, 2)),
+                frame_ids=np.arange(count, dtype=np.int64),
+                normalized_camera_tokens=np.ones((count, 2)),
                 pred_c2w_raw=poses,
                 pred_c2w_aligned=poses,
                 gt_c2w_raw=poses,
-                translation_error_aligned=np.zeros(500),
-                rotation_error_deg_aligned=np.zeros(500),
-                delta_norm=np.zeros(500),
+                translation_error_aligned=np.zeros(count),
+                rotation_error_deg_aligned=np.zeros(count),
+                delta_norm=np.zeros(count),
                 sim3_scale=np.array(1.0),
                 sim3_rotation=np.eye(3),
                 sim3_translation=np.zeros(3),
@@ -124,9 +132,10 @@ class ContextSourceContractTest(unittest.TestCase):
 
     def _scene_frames(self, _data_dir, scene):
         poses = self.trajectories[scene]
-        image_by_id = {index: Path(f"{index}.jpg") for index in range(500)}
-        poses_by_id = {index: poses[index] for index in range(500)}
-        return image_by_id, poses_by_id, list(range(500))
+        count = len(poses)
+        image_by_id = {index: Path(f"{index}.jpg") for index in range(count)}
+        poses_by_id = {index: poses[index] for index in range(count)}
+        return image_by_id, poses_by_id, list(range(count))
 
     def test_validate_context_source_requires_exact_protocol_and_raw_inputs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -143,6 +152,42 @@ class ContextSourceContractTest(unittest.TestCase):
         self.assertEqual(result["source_run_id"], "source-run")
         self.assertEqual(result["scenes"], self.scenes)
         self.assertEqual(len(result["frame_ids_by_scene"]), 50)
+        self.assertEqual(len(result["frame_ids_by_scene"]["scene0150_00"]), 430)
+
+    def test_validate_context_source_rejects_wrong_exception_or_short_normal_scene(self):
+        cases = (
+            ("scene0150_00", 429),
+            ("scene0150_00", 431),
+            ("scene0100_00", 430),
+        )
+        for scene, count in cases:
+            with self.subTest(scene=scene, count=count):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    source = self._write_source(root)
+                    artifact = (
+                        source / scene / "frames_500" / "context_diagnostics.npz"
+                    )
+                    with np.load(artifact, allow_pickle=False) as archive:
+                        arrays = {name: archive[name] for name in archive.files}
+                    for name, value in list(arrays.items()):
+                        if np.asarray(value).ndim > 0 and len(value) in (430, 500):
+                            if count <= len(value):
+                                arrays[name] = value[:count]
+                            else:
+                                arrays[name] = np.concatenate(
+                                    [value, value[-1:]], axis=0
+                                )
+                    arrays["frame_ids"] = np.arange(count, dtype=np.int64)
+                    np.savez_compressed(artifact, **arrays)
+                    with mock.patch(
+                        "pre_experiments.local_global_consistency.context_source.load_scene_frames",
+                        side_effect=self._scene_frames,
+                    ):
+                        with self.assertRaisesRegex(ValueError, "frame IDs|frames"):
+                            validate_context_source(
+                                source, self.split, root / "processed"
+                            )
 
     def test_validate_context_source_rejects_protocol_or_scene_set_changes(self):
         changes = {

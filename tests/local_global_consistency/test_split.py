@@ -3,11 +3,13 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
 from pre_experiments.local_global_consistency.split import (
     FIXED_OBSERVED_SCENES,
+    _build_from_paths,
     build_split_manifest,
     load_split_manifest,
     main,
@@ -49,12 +51,46 @@ class MotionFeatureTest(unittest.TestCase):
 
 class SplitManifestTest(unittest.TestCase):
     def setUp(self):
-        candidates = [f"scene{index:04d}_00" for index in range(100, 146)]
+        candidates = ["scene0150_00"] + [
+            f"scene{index:04d}_00" for index in range(100, 145)
+        ]
         self.scenes = list(FIXED_OBSERVED_SCENES) + candidates
         self.trajectories = {
             scene: _trajectory(float(index + 1) / 10.0)
             for index, scene in enumerate(self.scenes)
         }
+
+    def test_path_builder_uses_scene0150_exception_without_prediction_data(self):
+        def frame_ids(path):
+            count = 430 if "scene0150_00" in path.parts else 500
+            return np.arange(count, dtype=np.int64)
+
+        def scene_frames(_data_dir, scene):
+            count = 430 if scene == "scene0150_00" else 500
+            poses = np.repeat(np.eye(4)[None], count, axis=0)
+            poses[:, 0, 3] = np.arange(count)
+            return (
+                {index: Path(f"{index}.jpg") for index in range(count)},
+                {index: poses[index] for index in range(count)},
+                list(range(count)),
+            )
+
+        with mock.patch(
+            "pre_experiments.local_global_consistency.split.validate_context_source_metadata",
+            return_value={"run_id": "source-run"},
+        ), mock.patch(
+            "pre_experiments.local_global_consistency.split.load_context_frame_ids",
+            side_effect=frame_ids,
+        ), mock.patch(
+            "pre_experiments.local_global_consistency.split.load_scene_frames",
+            side_effect=scene_frames,
+        ):
+            manifest = _build_from_paths(
+                Path("/processed"), Path("/source"), self.scenes, seed=33
+            )
+
+        self.assertEqual(manifest["source_run_id"], "source-run")
+        self.assertEqual(len(manifest["calibration_scenes"]), 10)
 
     def test_builds_deterministic_leakage_controlled_ten_forty_split(self):
         first = build_split_manifest(

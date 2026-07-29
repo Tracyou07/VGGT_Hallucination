@@ -19,6 +19,13 @@ EXPECTED_CONTEXT_PROTOCOL = {
     "preprocess_mode": "pad",
     "save_context_diagnostics": True,
 }
+DEFAULT_CONTEXT_FRAME_COUNT = 500
+CONTEXT_FRAME_COUNT_EXCEPTIONS = {"scene0150_00": 430}
+
+
+def expected_context_frame_count(scene: str) -> int:
+    """Return the exact selected-frame count allowed for a ScanNet-50 scene."""
+    return CONTEXT_FRAME_COUNT_EXCEPTIONS.get(scene, DEFAULT_CONTEXT_FRAME_COUNT)
 
 
 def load_context_frame_ids(path: Path) -> np.ndarray:
@@ -110,8 +117,16 @@ def validate_context_source(
     for scene in scenes:
         artifact_path = source / scene / "frames_500" / "context_diagnostics.npz"
         frame_ids = load_context_frame_ids(artifact_path)
+        expected_count = expected_context_frame_count(scene)
+        if len(frame_ids) != expected_count:
+            raise ValueError(
+                f"context source requires {expected_count} frames for {scene}, "
+                f"found {len(frame_ids)}"
+            )
         _, poses_by_id, valid_ids = load_scene_frames(data_dir, scene)
-        expected_ids = np.asarray(uniform_frame_ids(valid_ids, 500), dtype=np.int64)
+        expected_ids = np.asarray(
+            uniform_frame_ids(valid_ids, expected_count), dtype=np.int64
+        )
         if not np.array_equal(frame_ids, expected_ids):
             raise ValueError(f"context frame IDs do not match processed ScanNet: {scene}")
         global_artifact = load_global_context(artifact_path)
