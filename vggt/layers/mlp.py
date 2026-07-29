@@ -32,9 +32,15 @@ class Mlp(nn.Module):
         self.drop = nn.Dropout(drop)
 
     def forward(self, x: Tensor) -> Tensor:
+        return self.forward_head(self.forward_features(x))
+
+    def forward_features(self, x: Tensor) -> Tensor:
         x = self.fc1(x)
         x = self.act(x)
         x = self.drop(x)
+        return x
+
+    def forward_head(self, x: Tensor) -> Tensor:
         x = self.fc2(x)
         x = self.drop(x)
         return x

@@ -31,7 +31,8 @@ class CameraHeadTraceTest(unittest.TestCase):
             torch.testing.assert_close(actual, expected)
         self.assertEqual(trace["delta_norm"].shape, (3, 2, 3))
         self.assertEqual(trace["normalized_camera_tokens"].shape, (2, 3, 32))
-        self.assertEqual(trace["pose_tokens_modulated_list"], [])
+        self.assertEqual(trace["trunk_output_list"], [])
+        self.assertEqual(trace["pose_branch_hidden_list"], [])
 
     def test_full_trace_matches_pose_delta_norms(self):
         with torch.no_grad():
@@ -45,7 +46,8 @@ class CameraHeadTraceTest(unittest.TestCase):
         self.assertEqual(len(poses), 2)
         self.assertEqual(len(trace["raw_pose_enc_list"]), 2)
         self.assertEqual(len(trace["pose_delta_list"]), 2)
-        self.assertEqual(len(trace["pose_tokens_modulated_list"]), 2)
+        self.assertEqual(len(trace["trunk_output_list"]), 2)
+        self.assertEqual(len(trace["pose_branch_hidden_list"]), 2)
         expected = torch.stack(
             [delta.float().norm(dim=-1) for delta in trace["pose_delta_list"]]
         )
