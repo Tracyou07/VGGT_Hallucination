@@ -36,6 +36,17 @@ def save_scene_statistics(path: Path, statistics: dict[str, object]) -> None:
             [statistics["matched_observation_count"]], dtype=np.int64
         ),
     }
+    boundary = statistics["boundary_drift"]
+    if not isinstance(boundary, dict):
+        raise ValueError("statistics must contain boundary_drift")
+    for stratum in ("edge", "interior"):
+        arrays[f"{stratum}_observation_count"] = np.asarray(
+            [statistics["boundary_counts"][stratum]], dtype=np.int64
+        )
+        for group in ("translation", "rotation", "fov"):
+            arrays[f"{stratum}_{group}_drift"] = np.asarray(
+                boundary[stratum][group], dtype=np.float64
+            )
     atomic_save_npz(path, arrays)
 
 
@@ -49,6 +60,14 @@ def load_scene_statistics(path: Path, scene: str) -> dict[str, object]:
             "rotation_specificity",
             "fov_specificity",
             "matched_observation_count",
+            "edge_translation_drift",
+            "edge_rotation_drift",
+            "edge_fov_drift",
+            "interior_translation_drift",
+            "interior_rotation_drift",
+            "interior_fov_drift",
+            "edge_observation_count",
+            "interior_observation_count",
         }
         if set(archive.files) != required:
             raise ValueError(f"invalid scene statistics members: {path}")
@@ -64,6 +83,17 @@ def load_scene_statistics(path: Path, scene: str) -> dict[str, object]:
             "translation": arrays["translation_specificity"],
             "rotation": arrays["rotation_specificity"],
             "fov": arrays["fov_specificity"],
+        },
+        "boundary_drift": {
+            stratum: {
+                group: arrays[f"{stratum}_{group}_drift"]
+                for group in ("translation", "rotation", "fov")
+            }
+            for stratum in ("edge", "interior")
+        },
+        "boundary_counts": {
+            stratum: int(arrays[f"{stratum}_observation_count"][0])
+            for stratum in ("edge", "interior")
         },
         "matched_observation_count": int(arrays["matched_observation_count"][0]),
     }

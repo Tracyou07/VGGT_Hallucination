@@ -86,6 +86,7 @@ def write_numeric_summary(
     rows: list[dict[str, object]],
     *,
     partition: str,
+    scene_statistics: list[dict[str, object]] | None = None,
 ) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     fieldnames = ["scene", "group", "set", *METRICS]
@@ -94,24 +95,119 @@ def write_numeric_summary(
         writer.writeheader()
         writer.writerows(rows)
 
+    partition_scores: dict[str, np.ndarray] = {}
+    edge_scores: dict[str, np.ndarray] = {}
+    interior_scores: dict[str, np.ndarray] = {}
+    if scene_statistics:
+        for group in ("translation", "rotation", "fov"):
+            partition_scores[group] = np.mean(
+                np.stack(
+                    [
+                        np.asarray(scene["drift"][group])
+                        * np.asarray(scene["specificity"][group])[None, :]
+                        for scene in scene_statistics
+                    ]
+                ),
+                axis=0,
+            )
+            for target, stratum in (
+                (edge_scores, "edge"),
+                (interior_scores, "interior"),
+            ):
+                target[group] = np.mean(
+                    np.stack(
+                        [
+                            np.asarray(scene["boundary_drift"][stratum][group])
+                            * np.asarray(scene["specificity"][group])[None, :]
+                            for scene in scene_statistics
+                        ]
+                    ),
+                    axis=0,
+                )
+
     unit_rows = []
+    ranking_overlap: dict[str, dict[str, object]] = {}
     scores = frozen.get("scores", {})
     if isinstance(scores, dict):
         for group, entries in scores.items():
+            selected_pairs = {
+                (int(item["iteration"]), int(item["unit"]))
+                for item in frozen["selected"][group]
+            }
+            control_pairs = {
+                (int(item["iteration"]), int(item["unit"]))
+                for item in frozen["controls"][group]
+            }
+            partition_rank = {}
+            if group in partition_scores:
+                candidates = [
+                    (float(partition_scores[group][iteration, unit]), iteration, unit)
+                    for iteration in range(partition_scores[group].shape[0])
+                    for unit in range(partition_scores[group].shape[1])
+                ]
+                candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
+                partition_rank = {
+                    (iteration, unit): rank
+                    for rank, (_, iteration, unit) in enumerate(candidates, start=1)
+                }
+                top = {
+                    (iteration, unit)
+                    for _, iteration, unit in candidates[: len(selected_pairs)]
+                }
+                ranking_overlap[group] = {
+                    "top_k": len(selected_pairs),
+                    "overlap_count": len(top.intersection(selected_pairs)),
+                    "overlap_fraction": (
+                        len(top.intersection(selected_pairs)) / len(selected_pairs)
+                        if selected_pairs
+                        else 0.0
+                    ),
+                }
             for rank, item in enumerate(entries, start=1):
+                pair = (int(item["iteration"]), int(item["unit"]))
                 unit_rows.append(
                     {
                         "group": group,
-                        "rank": rank,
+                        "calibration_rank": rank,
                         "iteration": item["iteration"],
                         "unit": item["unit"],
                         "calibration_score": item["score"],
+                        "partition_rank": partition_rank.get(pair, ""),
+                        "partition_score": (
+                            float(partition_scores[group][pair])
+                            if group in partition_scores
+                            else ""
+                        ),
+                        "edge_score": (
+                            float(edge_scores[group][pair])
+                            if group in edge_scores
+                            else ""
+                        ),
+                        "interior_score": (
+                            float(interior_scores[group][pair])
+                            if group in interior_scores
+                            else ""
+                        ),
+                        "selected": pair in selected_pairs,
+                        "control": pair in control_pairs,
                     }
                 )
     with (run_dir / "per_unit.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=("group", "rank", "iteration", "unit", "calibration_score"),
+            fieldnames=(
+                "group",
+                "calibration_rank",
+                "iteration",
+                "unit",
+                "calibration_score",
+                "partition_rank",
+                "partition_score",
+                "edge_score",
+                "interior_score",
+                "selected",
+                "control",
+            ),
         )
         writer.writeheader()
         writer.writerows(unit_rows)
@@ -142,6 +238,7 @@ def write_numeric_summary(
             "bootstrap_unit": "scene",
             "bootstrap_samples": 10000,
             "bootstrap_seed": 33,
+            "frozen_top_k_overlap": ranking_overlap,
             "aggregates": aggregates,
         },
     )

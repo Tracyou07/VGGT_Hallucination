@@ -159,6 +159,11 @@ skyseg.onnx
 !/results/local_global_consistency/**/*.json
 !/results/local_global_consistency/**/*.csv
 !/results/local_global_consistency/**/README.md
+!/results/camera_hidden_state_attribution/
+/results/camera_hidden_state_attribution/**
+!/results/camera_hidden_state_attribution/**/
+!/results/camera_hidden_state_attribution/**/*.json
+!/results/camera_hidden_state_attribution/**/*.csv
 
 # pixi environments
 .pixi

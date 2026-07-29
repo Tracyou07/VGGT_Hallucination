@@ -2,14 +2,13 @@
 
 ## Project Structure & Module Organization
 
-`vggt/` contains the frozen baseline model plus camera-trace observability in
-the Camera Head and model forward path. `pre_experiments/common/` contains
-shared checkpoint, pose, ScanNet, and metadata helpers.
-`pre_experiments/local_global_consistency/` owns the Round 2A window runner,
-prediction-only scoring, aligned validation, and analysis.
-`scripts/autodl/scannet/` contains `.sens` extraction support; the active shell
-entries are `prepare_scannet50.sh` and `run_local_global_consistency.sh`.
-Focused CPU tests remain under `tests/local_global_consistency/`.
+`vggt/` contains the frozen baseline plus opt-in Camera Head hidden tracing and
+ablation. `pre_experiments/camera_hidden_state_attribution/` owns token replay,
+unit ranking, intervention metrics, and numeric aggregation. It consumes frozen
+artifacts from `pre_experiments/local_global_consistency/`; do not duplicate
+that inference pipeline. The AutoDL entry point is
+`scripts/autodl/run_camera_hidden_state_attribution.sh`. Focused CPU tests live
+under `tests/camera_hidden_state_attribution/`.
 
 The four committed `frames_500/context_diagnostics.npz` files under
 `results/camera_context/911b598_f4577f584448/` are frozen Round 2 inputs, not
@@ -20,10 +19,12 @@ an active Round 1.5 result tree. Do not add other files there.
 - `pip install -e .` installs the checkout into the existing environment.
 - `SCANNET_TOS_ACCEPTED=1 DOWNLOAD_GT_PLY=1 bash
   scripts/autodl/prepare_scannet50.sh` prepares the official ScanNet-50 data.
-- `SCENE_LIMIT=1 bash scripts/autodl/run_local_global_consistency.sh` runs a
-  one-scene GPU smoke test.
-- `bash scripts/autodl/run_local_global_consistency.sh` runs the fixed
-  four-scene, 500-frame, 100/50-window protocol.
+- `STAGE=smoke bash scripts/autodl/run_camera_hidden_state_attribution.sh`
+  replays one calibration scene.
+- `STAGE=all bash scripts/autodl/run_camera_hidden_state_attribution.sh` runs
+  smoke, calibration, holdout, and numeric export in order.
+- `python -m unittest discover -s tests/camera_hidden_state_attribution -v`
+  runs attribution CPU tests.
 - `python -m unittest discover -s tests/local_global_consistency -v` runs CPU
   tests.
 - `python scripts/autodl/local_global_consistency/export_numeric_results.py
@@ -39,10 +40,11 @@ and coordinate conventions at module boundaries. Shell scripts use
 ## Testing and Metric Rules
 
 Use `unittest` and name tests `test_<behavior>`. Unit tests must not require
-CUDA, checkpoints, network access, or ScanNet credentials. Any metric
-containing predictions uses aligned prediction data for conclusions. GT is
-always raw. Round 2 detection scores must remain prediction-only; GT appears
-only in separately named validation outputs.
+CUDA, checkpoints, network access, or ScanNet credentials. Unit identity is
+`(iteration, hidden_index)`. Calibration selects units; holdout must never
+refit them. Any error metric containing predictions uses aligned prediction
+data. GT is always raw. Ranking remains prediction-only; GT appears only in
+separately named validation outputs.
 
 ## Reproduction and Commit Rules
 

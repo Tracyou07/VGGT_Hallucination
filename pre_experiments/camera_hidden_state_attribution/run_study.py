@@ -125,6 +125,8 @@ def collect_scene_statistics(
     id_to_index = {int(frame_id): index for index, frame_id in enumerate(global_ids)}
     matched_global = []
     matched_local = []
+    boundary_global = {"edge": [], "interior": []}
+    boundary_local = {"edge": [], "interior": []}
     for window_index, local in enumerate(local_artifacts):
         local_replay = replay_tokens(
             camera_head, local["normalized_camera_tokens"], device
@@ -144,6 +146,19 @@ def collect_scene_statistics(
             raise ValueError(f"local frame ID is absent from global context: {scene}") from error
         matched_global.append(global_replay["hidden"][:, indices])
         matched_local.append(local_replay["hidden"])
+        positions = np.arange(len(indices))
+        distance = np.minimum(positions, len(indices) - 1 - positions)
+        for stratum, selector in (
+            ("edge", distance < 10),
+            ("interior", distance >= 25),
+        ):
+            if selector.any():
+                boundary_global[stratum].append(
+                    global_replay["hidden"][:, np.asarray(indices)[selector]]
+                )
+                boundary_local[stratum].append(
+                    local_replay["hidden"][:, selector]
+                )
     if not matched_local:
         raise ValueError(f"no local windows found for scene statistics: {scene}")
     global_hidden = np.concatenate(matched_global, axis=1)
@@ -151,10 +166,30 @@ def collect_scene_statistics(
     weight = (
         camera_head.pose_branch.fc2.weight.detach().float().cpu().numpy()
     )
+    boundary_drift = {}
+    boundary_counts = {}
+    for stratum in ("edge", "interior"):
+        if boundary_global[stratum]:
+            stratum_global = np.concatenate(boundary_global[stratum], axis=1)
+            stratum_local = np.concatenate(boundary_local[stratum], axis=1)
+            boundary_drift[stratum] = contribution_drift(
+                stratum_global, stratum_local, weight
+            )
+            boundary_counts[stratum] = int(stratum_global.shape[1])
+        else:
+            boundary_drift[stratum] = {
+                group: np.zeros_like(values)
+                for group, values in contribution_drift(
+                    global_hidden, local_hidden, weight
+                ).items()
+            }
+            boundary_counts[stratum] = 0
     return {
         "scene": scene,
         "drift": contribution_drift(global_hidden, local_hidden, weight),
         "specificity": group_specificity(weight),
+        "boundary_drift": boundary_drift,
+        "boundary_counts": boundary_counts,
         "matched_observation_count": int(global_hidden.shape[1]),
     }
 
@@ -244,6 +279,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ckpt-dir", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, default=AUTODL_TMP / "camera_hidden_state_attribution")
     parser.add_argument("--frozen-units", type=Path)
+    parser.add_argument("--run-dir-file", type=Path)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--scene-limit", type=int, default=0)
     parser.add_argument("--replay-tolerance", type=float, default=5e-3)
@@ -351,7 +387,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                 {"scene": scene, "rows": rows},
             )
         write_numeric_summary(
-            run_dir, frozen, intervention_rows, partition=partition
+            run_dir,
+            frozen,
+            intervention_rows,
+            partition=partition,
+            scene_statistics=scene_statistics,
         )
     atomic_write_json(
         run_dir / "run_metadata.json",
@@ -378,6 +418,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             "frozen_digest": frozen.get("frozen_digest") if frozen else None,
         },
     )
+    if args.run_dir_file is not None:
+        args.run_dir_file.resolve().parent.mkdir(parents=True, exist_ok=True)
+        args.run_dir_file.resolve().write_text(f"{run_dir}\n", encoding="utf-8")
     print(f"[done] run={run_dir}")
 
 
