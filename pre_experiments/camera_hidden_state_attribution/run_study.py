@@ -270,6 +270,29 @@ def _local_artifacts(local_run: Path, scene: str) -> list[dict[str, np.ndarray]]
     return [load_window_diagnostics(path) for path in paths]
 
 
+def _validate_local_run(
+    local_run: Path,
+    *,
+    partition: str,
+    split_digest: str,
+) -> None:
+    try:
+        metadata = json.loads(
+            (local_run / "run_metadata.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"invalid local run metadata: {local_run}") from error
+    if (
+        not isinstance(metadata, dict)
+        or metadata.get("study_name") != "local_global_consistency"
+        or metadata.get("partition") != partition
+        or metadata.get("split_digest") != split_digest
+    ):
+        raise ValueError(
+            f"local run provenance does not match {partition}/{split_digest}"
+        )
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", choices=("smoke", "calibration", "holdout"), required=True)
@@ -295,6 +318,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     split = load_split_manifest(args.split_manifest.resolve(), _scene_list())
     partition = "calibration" if args.stage in {"smoke", "calibration"} else "holdout"
+    _validate_local_run(
+        args.local_run_dir.resolve(),
+        partition=partition,
+        split_digest=str(split["split_digest"]),
+    )
     scenes = list(split[f"{partition}_scenes"])
     if args.stage == "smoke":
         scenes = scenes[:1]
@@ -304,6 +332,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         "stage": args.stage,
         "source_run_dir": args.source_run_dir.resolve().as_posix(),
         "local_run_dir": args.local_run_dir.resolve().as_posix(),
+        "checkpoint_dir": args.ckpt_dir.resolve().as_posix(),
+        "device": args.device,
         "split_digest": split["split_digest"],
         "scenes": scenes,
         "replay_tolerance": args.replay_tolerance,

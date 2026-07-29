@@ -1,9 +1,13 @@
 import unittest
+import json
+from pathlib import Path
+import tempfile
 
 import numpy as np
 import torch
 
 from pre_experiments.camera_hidden_state_attribution.run_study import (
+    _validate_local_run,
     collect_scene_statistics,
     replay_tokens,
 )
@@ -106,6 +110,27 @@ class ReplayStudyTest(unittest.TestCase):
                 torch.device("cpu"),
                 scene="scene",
             )
+
+    def test_local_run_provenance_is_partition_and_split_bound(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "run_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "study_name": "local_global_consistency",
+                        "partition": "calibration",
+                        "split_digest": "split",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            _validate_local_run(
+                root, partition="calibration", split_digest="split"
+            )
+            with self.assertRaisesRegex(ValueError, "provenance"):
+                _validate_local_run(
+                    root, partition="holdout", split_digest="split"
+                )
 
 
 if __name__ == "__main__":
