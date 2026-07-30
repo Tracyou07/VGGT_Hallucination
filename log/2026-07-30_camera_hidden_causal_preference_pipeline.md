@@ -55,4 +55,4 @@ claims are accepted.
 
 The full interpretation, protocol boundary, and reproducible visualization
 command are recorded in
-`doc/2026-07-30_Camera_Hidden_Causal_Tracing_Findings.md`.
+`2026-07-30_Camera_Hidden_Causal_Tracing_Findings.md`.
