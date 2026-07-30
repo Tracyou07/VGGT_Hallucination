@@ -33,7 +33,26 @@ pose-delta basis dimensions. Raw per-scene causal-effect artifacts stay under
 
 ## Current Status
 
-CPU tests validate tensor isolation, finite-difference projection, direct
-checks, frozen-scale reuse, provenance, and export rejection. No real VGGT
-checkpoint/ScanNet causal atlas has been produced yet, so this entry records an
-implemented experiment rather than a research conclusion.
+The formal ScanNet-50 run is complete:
+
+- Calibration: `9368808_99c8a9ed393c`, 10 scenes.
+- Holdout: `9368808_1d91735181c4`, 40 scenes.
+- Both runs report `protocol_complete=true` and `analysis_complete=true`.
+- Calibration-holdout causal top-64 overlap is 61/64 for translation, 62/64
+  for rotation, and 59/64 for FoV.
+- Every causal top-64 position is in the first Camera Head refinement.
+
+The causal atlas was joined with the completed context-drift attribution by
+`(iteration, unit)`. Calibration overlap is 41/64 for translation, 23/64 for
+rotation, and 12/64 for FoV. After freezing those calibration intersections,
+39/41, 23/23, and 11/12 positions respectively remain in both corresponding
+holdout top-64 lists.
+
+Translation and FoV direct projection checks pass at low relative error.
+Rotation direct checks expose a small-angle numerical problem and must be
+repeated with a robust rotation metric before rotation-specific intervention
+claims are accepted.
+
+The full interpretation, protocol boundary, and reproducible visualization
+command are recorded in
+`doc/2026-07-30_Camera_Hidden_Causal_Tracing_Findings.md`.
