@@ -62,11 +62,14 @@ class CommonContractTest(unittest.TestCase):
             "results/camera_context/run/scene0000_00/frames_500/context_diagnostics.npz",
             "results/local_global_consistency/run/prediction_scores_per_frame.csv",
             "results/local_global_consistency/run/local_global_summary.json",
+            "results/camera_hidden_causal_preference/run/per_position.csv",
+            "results/camera_hidden_causal_preference/run/summary.json",
         ):
             self.assertFalse(is_ignored(path), path)
         for path in (
             "results/unpublished/output.json",
             "results/local_global_consistency/run/window_diagnostics.npz",
+            "results/camera_hidden_causal_preference/run/scene0000_00/causal_unit_effects.npz",
         ):
             self.assertTrue(is_ignored(path), path)
 
