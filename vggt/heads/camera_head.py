@@ -87,6 +87,8 @@ class CameraHead(nn.Module):
         return_trace: bool = False,
         trace_pose_tokens: bool = False,
         hidden_ablation_mask: torch.Tensor | None = None,
+        hidden_additive_perturbation: torch.Tensor | None = None,
+        pose_delta_additive_perturbation: torch.Tensor | None = None,
     ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
         """
         Forward pass to predict camera parameters.
@@ -99,6 +101,11 @@ class CameraHead(nn.Module):
                 summary statistics. Defaults to False.
             trace_pose_tokens (bool, optional): Include high-dimensional modulated
                 pose tokens in the trace. Requires return_trace=True.
+            hidden_additive_perturbation (torch.Tensor, optional): Batch-specific
+                post-GELU hidden additions with shape [iteration, batch, hidden].
+            pose_delta_additive_perturbation (torch.Tensor, optional):
+                Batch-specific pose-delta additions with shape
+                [iteration, batch, 9].
 
         Returns:
             list or tuple: Predicted camera encodings from each iteration, optionally
@@ -116,6 +123,8 @@ class CameraHead(nn.Module):
             return_trace=return_trace,
             trace_pose_tokens=trace_pose_tokens,
             hidden_ablation_mask=hidden_ablation_mask,
+            hidden_additive_perturbation=hidden_additive_perturbation,
+            pose_delta_additive_perturbation=pose_delta_additive_perturbation,
         )
 
     def decode_pose_tokens(
@@ -125,6 +134,8 @@ class CameraHead(nn.Module):
         return_trace: bool = False,
         trace_pose_tokens: bool = False,
         hidden_ablation_mask: torch.Tensor | None = None,
+        hidden_additive_perturbation: torch.Tensor | None = None,
+        pose_delta_additive_perturbation: torch.Tensor | None = None,
     ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
         """Decode normalized camera tokens with iterative pose refinement."""
         if normalized_pose_tokens.ndim != 3:
@@ -143,6 +154,17 @@ class CameraHead(nn.Module):
                 raise ValueError(
                     f"hidden_ablation_mask must be boolean with shape {expected}"
                 )
+        batch_size = normalized_pose_tokens.shape[0]
+        _validate_additive_perturbation(
+            "hidden_additive_perturbation",
+            hidden_additive_perturbation,
+            (num_iterations, batch_size, hidden_dim),
+        )
+        _validate_additive_perturbation(
+            "pose_delta_additive_perturbation",
+            pose_delta_additive_perturbation,
+            (num_iterations, batch_size, self.target_dim),
+        )
 
         return self.trunk_fn(
             normalized_pose_tokens,
@@ -150,6 +172,8 @@ class CameraHead(nn.Module):
             return_trace=return_trace,
             trace_pose_tokens=trace_pose_tokens,
             hidden_ablation_mask=hidden_ablation_mask,
+            hidden_additive_perturbation=hidden_additive_perturbation,
+            pose_delta_additive_perturbation=pose_delta_additive_perturbation,
         )
 
     def trunk_fn(
@@ -159,6 +183,8 @@ class CameraHead(nn.Module):
         return_trace: bool = False,
         trace_pose_tokens: bool = False,
         hidden_ablation_mask: torch.Tensor | None = None,
+        hidden_additive_perturbation: torch.Tensor | None = None,
+        pose_delta_additive_perturbation: torch.Tensor | None = None,
     ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
         """
         Iteratively refine camera pose predictions.
@@ -168,6 +194,10 @@ class CameraHead(nn.Module):
             num_iterations (int): Number of refinement iterations.
             return_trace (bool): Return raw per-iteration state when True.
             trace_pose_tokens (bool): Retain modulated pose tokens when True.
+            hidden_additive_perturbation (torch.Tensor, optional): Hidden
+                additions with shape [iteration, batch, hidden].
+            pose_delta_additive_perturbation (torch.Tensor, optional):
+                Pose-delta additions with shape [iteration, batch, 9].
 
         Returns:
             list or tuple: Activated camera encodings, optionally paired with a trace.
@@ -207,7 +237,23 @@ class CameraHead(nn.Module):
                     device=pose_branch_hidden.device
                 )
                 pose_branch_hidden = pose_branch_hidden.masked_fill(mask, 0)
+            if hidden_additive_perturbation is not None:
+                hidden_addition = hidden_additive_perturbation[iteration].to(
+                    device=pose_branch_hidden.device,
+                    dtype=pose_branch_hidden.dtype,
+                )
+                pose_branch_hidden = (
+                    pose_branch_hidden + hidden_addition[:, None, :]
+                )
             pred_pose_enc_delta = self.pose_branch.forward_head(pose_branch_hidden)
+            if pose_delta_additive_perturbation is not None:
+                delta_addition = pose_delta_additive_perturbation[iteration].to(
+                    device=pred_pose_enc_delta.device,
+                    dtype=pred_pose_enc_delta.dtype,
+                )
+                pred_pose_enc_delta = (
+                    pred_pose_enc_delta + delta_addition[:, None, :]
+                )
 
             if pred_pose_enc is None:
                 pred_pose_enc = pred_pose_enc_delta
@@ -248,6 +294,24 @@ class CameraHead(nn.Module):
             "pose_branch_hidden_list": pose_branch_hidden_list or [],
         }
         return pred_pose_enc_list, trace
+
+
+def _validate_additive_perturbation(
+    name: str,
+    perturbation: torch.Tensor | None,
+    expected_shape: tuple[int, int, int],
+) -> None:
+    if perturbation is None:
+        return
+    if (
+        not perturbation.is_floating_point()
+        or tuple(perturbation.shape) != expected_shape
+        or not bool(torch.isfinite(perturbation).all())
+    ):
+        raise ValueError(
+            f"{name} must be finite floating-point data with shape "
+            f"{expected_shape}"
+        )
 
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
