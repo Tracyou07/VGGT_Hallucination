@@ -97,3 +97,34 @@ within each scene. Each predicted trajectory is aligned independently before
 error is computed against raw GT. Per-scene NPZ files remain under
 `/root/autodl-tmp`; the exporter publishes only strict numeric CSV/JSON
 artifacts.
+
+## Scene-Adaptive Alpha
+
+This pre-experiment tests whether prediction-only consistency can select
+`alpha` per scene before an AdaLN-style refiner is trained. It uses scene
+medians of global-local token cosine, global-local pose translation, and
+local-local pose translation. Calibration derives oracle labels only from the
+candidate curves `0.01`, `0.02`, and `0.05`, reports leave-one-scene-out
+performance, and freezes a ridge selector. The selector contains no GT labels.
+Holdout predicts one alpha per scene, then evaluates the 41 selected units and
+all five controls at that same alpha.
+
+```bash
+conda activate vggt
+export CALIBRATION_SCORE_RUN_DIR=/root/autodl-tmp/local_global_consistency/scannet50/runs/calibration/3d5de75_c5c5ae0e55fe
+export HOLDOUT_SCORE_RUN_DIR=/root/autodl-tmp/local_global_consistency/scannet50/runs/holdout/3d5de75_35564d765bb5
+export REPLACEMENT_CALIBRATION_DIR="$(cat /root/autodl-tmp/camera_hidden_replacement/state/calibration_run.txt)"
+export FIXED_REPLACEMENT_HOLDOUT_DIR=/root/autodl-tmp/camera_hidden_replacement/results/ae2bfc8_64df3fe10532
+export SOURCE_RUN_DIR=/root/autodl-tmp/camera_context/results/d33d98b_309a9a586242
+export HOLDOUT_LOCAL_RUN_DIR=/root/autodl-tmp/local_global_consistency/scannet50/runs/holdout/3d5de75_35564d765bb5
+export SPLIT_MANIFEST="$PWD/configs/scannet50_local_global_split.json"
+export CKPT_DIR=/root/autodl-tmp/ckpt/VGGT-1B
+
+STAGE=calibration bash scripts/autodl/run_camera_hidden_adaptive_alpha.sh
+STAGE=holdout bash scripts/autodl/run_camera_hidden_adaptive_alpha.sh
+STAGE=export bash scripts/autodl/run_camera_hidden_adaptive_alpha.sh
+```
+
+Calibration is CPU-only. Holdout requires the GPU because it replays Camera
+Head once per predicted scene alpha. GT is used only for aligned evaluation
+after alpha assignment has been frozen.
