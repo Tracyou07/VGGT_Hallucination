@@ -314,7 +314,7 @@ Run:
 Run:
 `git diff -- AGENTS.md vggt/heads/camera_head.py pre_experiments scripts tests doc`
 
-- [ ] **Step 4: Commit and push**
+- [x] **Step 4: Commit and push**
 
 ```bash
 git add AGENTS.md vggt/heads/camera_head.py \
