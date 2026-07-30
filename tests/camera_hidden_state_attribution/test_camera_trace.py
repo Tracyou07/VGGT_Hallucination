@@ -143,6 +143,77 @@ class HiddenTraceTest(unittest.TestCase):
                         **kwargs,
                     )
 
+    def test_hidden_replacement_overwrites_only_selected_units(self):
+        normalized = self.head.token_norm(self.tokens[-1][:, :, 0])
+        with torch.no_grad():
+            expected, expected_trace = self.head.decode_pose_tokens(
+                normalized,
+                num_iterations=2,
+                return_trace=True,
+                trace_pose_tokens=True,
+            )
+        replacement = torch.stack(
+            expected_trace["pose_branch_hidden_list"]
+        ).clone()
+        replacement[0, 0, :, 3] += torch.linspace(0.1, 0.5, 5)
+        mask = torch.zeros(2, 16, dtype=torch.bool)
+        mask[0, 3] = True
+
+        with torch.no_grad():
+            actual, actual_trace = self.head.decode_pose_tokens(
+                normalized,
+                num_iterations=2,
+                return_trace=True,
+                trace_pose_tokens=True,
+                hidden_replacement_values=replacement,
+                hidden_replacement_mask=mask,
+            )
+
+        torch.testing.assert_close(
+            actual_trace["pose_branch_hidden_list"][0][..., 3],
+            replacement[0, ..., 3],
+        )
+        torch.testing.assert_close(
+            actual_trace["pose_branch_hidden_list"][0][..., :3],
+            expected_trace["pose_branch_hidden_list"][0][..., :3],
+        )
+        self.assertFalse(torch.equal(actual[-1], expected[-1]))
+
+    def test_hidden_replacement_requires_matching_values_and_mask(self):
+        normalized = self.head.token_norm(self.tokens[-1][:, :, 0])
+        valid_values = torch.zeros(2, 1, 5, 16)
+        valid_mask = torch.zeros(2, 16, dtype=torch.bool)
+        invalid_cases = (
+            (
+                "provided together",
+                {"hidden_replacement_values": valid_values},
+            ),
+            (
+                "hidden_replacement_values",
+                {
+                    "hidden_replacement_values": torch.zeros(2, 1, 4, 16),
+                    "hidden_replacement_mask": valid_mask,
+                },
+            ),
+            (
+                "hidden_replacement_mask",
+                {
+                    "hidden_replacement_values": valid_values,
+                    "hidden_replacement_mask": torch.zeros(
+                        2, 15, dtype=torch.bool
+                    ),
+                },
+            ),
+        )
+        for message, kwargs in invalid_cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    self.head.decode_pose_tokens(
+                        normalized,
+                        num_iterations=2,
+                        **kwargs,
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

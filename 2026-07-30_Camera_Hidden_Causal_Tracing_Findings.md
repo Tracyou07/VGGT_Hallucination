@@ -16,7 +16,7 @@ flowchart LR
     A[Short vs. long context] --> B[Hidden contribution drift]
     B --> C[End-to-end final-output effect]
     C --> D[Calibration-frozen candidate mediators]
-    D --> E[Pending local-to-global replacement]
+    D --> E[Short-to-long hidden replacement]
     E --> F[Aligned prediction vs. raw GT]
 ```
 
@@ -79,10 +79,17 @@ small. The current evidence is consistent with a float32
 `trace -> arccos` numerical floor, but rotation magnitude remains unverified
 until a robust SO(3) or normalized-quaternion direct check is rerun.
 
-The next causal step is a calibration-frozen local-hidden-to-global-hidden
-replacement. Any metric containing predictions must use aligned predictions;
-GT must remain raw. Holdout must report the frozen intervention without
-reselecting units.
+The short-to-long replacement pipeline is implemented but has not produced
+formal results yet. It freezes the 41 translation candidates on calibration,
+constructs five disjoint iteration-matched random controls, and overwrites the
+long-context post-GELU hidden with the most-interior matched short-window
+hidden. Holdout cannot reselect units. Every condition aligns its prediction
+independently before comparison with raw GT.
+
+The primary result will be the scene-paired aligned translation-error change
+for selected replacement versus the long baseline and versus the mean frozen
+control. An output shift without lower GT error proves control but not
+correction; lower holdout error supports a training-free correction path.
 
 ## Provenance
 

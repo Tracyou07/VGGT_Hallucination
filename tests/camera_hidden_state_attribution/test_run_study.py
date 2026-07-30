@@ -36,6 +36,28 @@ class ReplayStudyTest(unittest.TestCase):
         self.assertEqual(replay["pose_enc"].shape, (6, 9))
         self.assertEqual(replay["pred_c2w_raw"].shape, (6, 4, 4))
 
+    def test_compact_replay_skips_high_dimensional_trace(self):
+        full = replay_tokens(
+            self.head,
+            self.global_tokens,
+            torch.device("cpu"),
+        )
+        compact = replay_tokens(
+            self.head,
+            self.global_tokens,
+            torch.device("cpu"),
+            trace_hidden=False,
+        )
+        self.assertEqual(
+            set(compact),
+            {"pose_enc", "pred_c2w_raw"},
+        )
+        np.testing.assert_allclose(
+            compact["pred_c2w_raw"],
+            full["pred_c2w_raw"],
+        )
+        np.testing.assert_allclose(compact["pose_enc"], full["pose_enc"])
+
     def test_statistics_match_frame_ids_and_ignore_gt_values(self):
         global_replay = replay_tokens(
             self.head, self.global_tokens, torch.device("cpu")

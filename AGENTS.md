@@ -8,9 +8,11 @@ ablation, and perturbation hooks.
 ranking, causal preference projection, interventions, and aggregation. It
 consumes frozen `local_global_consistency` artifacts; do not duplicate that
 inference pipeline. AutoDL entry points are
-`run_camera_hidden_state_attribution.sh` and
-`run_camera_hidden_causal_preference.sh` under `scripts/autodl/`. Focused CPU
-tests live under `tests/camera_hidden_state_attribution/`.
+`run_camera_hidden_state_attribution.sh`,
+`run_camera_hidden_causal_preference.sh`, and
+`run_camera_hidden_replacement.sh` under `scripts/autodl/`. The replacement
+stage does not rerun the Aggregator. Focused CPU tests live under
+`tests/camera_hidden_state_attribution/`.
 
 The four committed `frames_500/context_diagnostics.npz` files under
 `results/camera_context/911b598_f4577f584448/` are frozen Round 2 inputs, not
@@ -27,6 +29,9 @@ an active Round 1.5 result tree. Do not add other files there.
   smoke, calibration, holdout, and numeric export in order.
 - `STAGE=smoke bash scripts/autodl/run_camera_hidden_causal_preference.sh`
   checks causal replay; use `STAGE=all` for its formal protocol.
+- `STAGE=smoke bash scripts/autodl/run_camera_hidden_replacement.sh` checks
+  frame-matched short-to-long replacement; use `STAGE=all` for calibration,
+  untouched holdout, and numeric export.
 - `python -m unittest discover -s tests/camera_hidden_state_attribution -v`
   runs attribution CPU tests.
 - `python -m unittest discover -s tests/local_global_consistency -v` runs CPU
@@ -56,5 +61,5 @@ only in separately named validation outputs.
 Assume the remote machine already has the `vggt` Conda environment and VGGT
 checkpoint. Do not restore environment-creation or weight-download scripts.
 Never commit datasets, checkpoints, images, PLY files, raw window NPZ outputs,
-or per-scene causal-effect NPZ files. Use strict numeric exporters and keep
-commits independently testable.
+per-scene causal-effect NPZ files, or replacement-diagnostic NPZ files. Use
+strict numeric exporters and keep commits independently testable.

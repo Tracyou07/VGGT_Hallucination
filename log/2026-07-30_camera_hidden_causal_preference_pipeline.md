@@ -56,3 +56,17 @@ claims are accepted.
 The full interpretation, protocol boundary, and reproducible visualization
 command are recorded in
 `2026-07-30_Camera_Hidden_Causal_Tracing_Findings.md`.
+
+## Short-to-Long Replacement Implementation
+
+- Added a frame-specific Camera Head pose-hidden replacement hook after
+  `pose_branch.forward_features` and before the shared `fc2` decoder.
+- Froze the calibration intersection between translation context-drift Top-64
+  and causal-effect Top-64: 41 positions, all in refinement iteration 0.
+- Added five disjoint random control sets outside both source Top-64 sets,
+  matched to 41 iteration-0 replacements.
+- Replayed short windows and selected the most interior hidden observation for
+  each global frame, preserving the existing tie-breaking rule.
+- Added resumable scene artifacts, scene-paired aligned translation analysis,
+  strict numeric export, and an AutoDL smoke/calibration/holdout entry point.
+- The pipeline is implemented and CPU-tested; formal GPU results are pending.

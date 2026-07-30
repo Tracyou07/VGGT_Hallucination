@@ -47,19 +47,39 @@ def replay_tokens(
     device: torch.device,
     *,
     hidden_ablation_mask: torch.Tensor | None = None,
+    hidden_replacement_values: np.ndarray | None = None,
+    hidden_replacement_mask: np.ndarray | None = None,
+    trace_hidden: bool = True,
 ) -> dict[str, np.ndarray]:
     tokens = np.asarray(normalized_tokens, dtype=np.float32)
     if tokens.ndim != 2 or len(tokens) < 2 or not np.isfinite(tokens).all():
         raise ValueError("normalized tokens must be finite with shape [S, hidden]")
     tensor = torch.from_numpy(tokens).unsqueeze(0).to(device)
+    replacement_values_tensor = None
+    replacement_mask_tensor = None
+    if hidden_replacement_values is not None:
+        replacement_values_tensor = torch.from_numpy(
+            np.asarray(hidden_replacement_values, dtype=np.float32)
+        ).unsqueeze(1).to(device)
+    if hidden_replacement_mask is not None:
+        replacement_mask_tensor = torch.from_numpy(
+            np.asarray(hidden_replacement_mask, dtype=bool)
+        ).to(device)
     with torch.no_grad():
-        poses, trace = camera_head.decode_pose_tokens(
+        output = camera_head.decode_pose_tokens(
             tensor,
             num_iterations=4,
-            return_trace=True,
-            trace_pose_tokens=True,
+            return_trace=trace_hidden,
+            trace_pose_tokens=trace_hidden,
             hidden_ablation_mask=hidden_ablation_mask,
+            hidden_replacement_values=replacement_values_tensor,
+            hidden_replacement_mask=replacement_mask_tensor,
         )
+    if trace_hidden:
+        poses, trace = output
+    else:
+        poses = output
+        trace = None
     pose_enc = poses[-1]
     extrinsic, _ = pose_encoding_to_extri_intri(
         pose_enc, build_intrinsics=False
@@ -67,19 +87,25 @@ def replay_tokens(
     pred_w2c = to_homogeneous(
         extrinsic[0].detach().float().cpu().numpy()
     )
-    return {
-        "hidden": torch.stack(trace["pose_branch_hidden_list"])[
-            :, 0
-        ].detach().float().cpu().numpy(),
-        "trunk": torch.stack(trace["trunk_output_list"])[
-            :, 0
-        ].detach().float().cpu().numpy(),
-        "pose_delta": torch.stack(trace["pose_delta_list"])[
-            :, 0
-        ].detach().float().cpu().numpy(),
+    result = {
         "pose_enc": pose_enc[0].detach().float().cpu().numpy(),
         "pred_c2w_raw": np.linalg.inv(pred_w2c),
     }
+    if trace is not None:
+        result.update(
+            {
+                "hidden": torch.stack(trace["pose_branch_hidden_list"])[
+                    :, 0
+                ].detach().float().cpu().numpy(),
+                "trunk": torch.stack(trace["trunk_output_list"])[
+                    :, 0
+                ].detach().float().cpu().numpy(),
+                "pose_delta": torch.stack(trace["pose_delta_list"])[
+                    :, 0
+                ].detach().float().cpu().numpy(),
+            }
+        )
+    return result
 
 
 def _verify_replay(

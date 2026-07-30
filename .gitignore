@@ -169,6 +169,11 @@ skyseg.onnx
 !/results/camera_hidden_causal_preference/**/
 !/results/camera_hidden_causal_preference/**/*.json
 !/results/camera_hidden_causal_preference/**/*.csv
+!/results/camera_hidden_replacement/
+/results/camera_hidden_replacement/**
+!/results/camera_hidden_replacement/**/
+!/results/camera_hidden_replacement/**/*.json
+!/results/camera_hidden_replacement/**/*.csv
 
 # pixi environments
 .pixi

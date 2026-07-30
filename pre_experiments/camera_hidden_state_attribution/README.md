@@ -61,3 +61,30 @@ Causal scene NPZ files also remain under `/root/autodl-tmp`. Its exporter
 publishes only `per_position.csv`, `direct_checks.csv`,
 `frozen_causal_normalization.json`, `summary.json`, and authenticated run
 metadata.
+
+## Short-to-Long Hidden Replacement
+
+This stage freezes the translation intersection between the calibration
+context-drift Top-64 and causal-effect Top-64. It replaces those long-context
+post-GELU pose-branch hidden values with the matched short-window values.
+Overlapping short windows use the most interior observation, with the earlier
+window breaking ties. Five disjoint random sets outside both source Top-64
+sets are matched by refinement iteration and replacement count.
+
+```bash
+conda activate vggt
+export SOURCE_RUN_DIR=/root/autodl-tmp/camera_context/results/d33d98b_309a9a586242
+export CALIBRATION_LOCAL_RUN_DIR=/root/autodl-tmp/local_global_consistency/scannet50/runs/calibration/3d5de75_c5c5ae0e55fe
+export HOLDOUT_LOCAL_RUN_DIR=/root/autodl-tmp/local_global_consistency/scannet50/runs/holdout/3d5de75_35564d765bb5
+export ATTRIBUTION_CALIBRATION_DIR=/root/autodl-tmp/camera_hidden_state_attribution/results/bba0cdf_28eadd33cbf8
+export CAUSAL_CALIBRATION_DIR=/root/autodl-tmp/camera_hidden_causal_preference/results/9368808_99c8a9ed393c
+export SPLIT_MANIFEST="$PWD/configs/scannet50_local_global_split.json"
+export CKPT_DIR=/root/autodl-tmp/ckpt/VGGT-1B
+STAGE=smoke bash scripts/autodl/run_camera_hidden_replacement.sh
+STAGE=all bash scripts/autodl/run_camera_hidden_replacement.sh
+```
+
+The formal holdout reports baseline, selected replacement, and five frozen
+controls. Each predicted trajectory is aligned independently before error is
+computed against raw GT. Per-scene NPZ files remain under `/root/autodl-tmp`;
+the exporter publishes only strict numeric CSV/JSON artifacts.

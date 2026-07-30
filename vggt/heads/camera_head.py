@@ -89,6 +89,8 @@ class CameraHead(nn.Module):
         hidden_ablation_mask: torch.Tensor | None = None,
         hidden_additive_perturbation: torch.Tensor | None = None,
         pose_delta_additive_perturbation: torch.Tensor | None = None,
+        hidden_replacement_values: torch.Tensor | None = None,
+        hidden_replacement_mask: torch.Tensor | None = None,
     ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
         """
         Forward pass to predict camera parameters.
@@ -106,6 +108,11 @@ class CameraHead(nn.Module):
             pose_delta_additive_perturbation (torch.Tensor, optional):
                 Batch-specific pose-delta additions with shape
                 [iteration, batch, 9].
+            hidden_replacement_values (torch.Tensor, optional): Frame-specific
+                post-GELU replacement values with shape
+                [iteration, batch, frame, hidden].
+            hidden_replacement_mask (torch.Tensor, optional): Boolean unit
+                selector with shape [iteration, hidden].
 
         Returns:
             list or tuple: Predicted camera encodings from each iteration, optionally
@@ -125,6 +132,8 @@ class CameraHead(nn.Module):
             hidden_ablation_mask=hidden_ablation_mask,
             hidden_additive_perturbation=hidden_additive_perturbation,
             pose_delta_additive_perturbation=pose_delta_additive_perturbation,
+            hidden_replacement_values=hidden_replacement_values,
+            hidden_replacement_mask=hidden_replacement_mask,
         )
 
     def decode_pose_tokens(
@@ -136,6 +145,8 @@ class CameraHead(nn.Module):
         hidden_ablation_mask: torch.Tensor | None = None,
         hidden_additive_perturbation: torch.Tensor | None = None,
         pose_delta_additive_perturbation: torch.Tensor | None = None,
+        hidden_replacement_values: torch.Tensor | None = None,
+        hidden_replacement_mask: torch.Tensor | None = None,
     ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
         """Decode normalized camera tokens with iterative pose refinement."""
         if normalized_pose_tokens.ndim != 3:
@@ -165,6 +176,17 @@ class CameraHead(nn.Module):
             pose_delta_additive_perturbation,
             (num_iterations, batch_size, self.target_dim),
         )
+        _validate_hidden_replacement(
+            hidden_replacement_values,
+            hidden_replacement_mask,
+            expected_values=(
+                num_iterations,
+                batch_size,
+                normalized_pose_tokens.shape[1],
+                hidden_dim,
+            ),
+            expected_mask=(num_iterations, hidden_dim),
+        )
 
         return self.trunk_fn(
             normalized_pose_tokens,
@@ -174,6 +196,8 @@ class CameraHead(nn.Module):
             hidden_ablation_mask=hidden_ablation_mask,
             hidden_additive_perturbation=hidden_additive_perturbation,
             pose_delta_additive_perturbation=pose_delta_additive_perturbation,
+            hidden_replacement_values=hidden_replacement_values,
+            hidden_replacement_mask=hidden_replacement_mask,
         )
 
     def trunk_fn(
@@ -185,6 +209,8 @@ class CameraHead(nn.Module):
         hidden_ablation_mask: torch.Tensor | None = None,
         hidden_additive_perturbation: torch.Tensor | None = None,
         pose_delta_additive_perturbation: torch.Tensor | None = None,
+        hidden_replacement_values: torch.Tensor | None = None,
+        hidden_replacement_mask: torch.Tensor | None = None,
     ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
         """
         Iteratively refine camera pose predictions.
@@ -198,6 +224,11 @@ class CameraHead(nn.Module):
                 additions with shape [iteration, batch, hidden].
             pose_delta_additive_perturbation (torch.Tensor, optional):
                 Pose-delta additions with shape [iteration, batch, 9].
+            hidden_replacement_values (torch.Tensor, optional): Frame-specific
+                post-GELU replacement values with shape
+                [iteration, batch, frame, hidden].
+            hidden_replacement_mask (torch.Tensor, optional): Boolean unit
+                selector with shape [iteration, hidden].
 
         Returns:
             list or tuple: Activated camera encodings, optionally paired with a trace.
@@ -237,6 +268,20 @@ class CameraHead(nn.Module):
                     device=pose_branch_hidden.device
                 )
                 pose_branch_hidden = pose_branch_hidden.masked_fill(mask, 0)
+            if hidden_replacement_values is not None:
+                assert hidden_replacement_mask is not None
+                replacement = hidden_replacement_values[iteration].to(
+                    device=pose_branch_hidden.device,
+                    dtype=pose_branch_hidden.dtype,
+                )
+                replacement_mask = hidden_replacement_mask[iteration].to(
+                    device=pose_branch_hidden.device
+                )[None, None, :]
+                pose_branch_hidden = torch.where(
+                    replacement_mask,
+                    replacement,
+                    pose_branch_hidden,
+                )
             if hidden_additive_perturbation is not None:
                 hidden_addition = hidden_additive_perturbation[iteration].to(
                     device=pose_branch_hidden.device,
@@ -311,6 +356,37 @@ def _validate_additive_perturbation(
         raise ValueError(
             f"{name} must be finite floating-point data with shape "
             f"{expected_shape}"
+        )
+
+
+def _validate_hidden_replacement(
+    values: torch.Tensor | None,
+    mask: torch.Tensor | None,
+    *,
+    expected_values: tuple[int, int, int, int],
+    expected_mask: tuple[int, int],
+) -> None:
+    if (values is None) != (mask is None):
+        raise ValueError(
+            "hidden_replacement_values and hidden_replacement_mask "
+            "must be provided together"
+        )
+    if values is None:
+        return
+    assert mask is not None
+    if (
+        not values.is_floating_point()
+        or tuple(values.shape) != expected_values
+        or not bool(torch.isfinite(values).all())
+    ):
+        raise ValueError(
+            "hidden_replacement_values must be finite floating-point data "
+            f"with shape {expected_values}"
+        )
+    if mask.dtype != torch.bool or tuple(mask.shape) != expected_mask:
+        raise ValueError(
+            "hidden_replacement_mask must be boolean with shape "
+            f"{expected_mask}"
         )
 
 
