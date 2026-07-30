@@ -79,17 +79,21 @@ small. The current evidence is consistent with a float32
 `trace -> arccos` numerical floor, but rotation magnitude remains unverified
 until a robust SO(3) or normalized-quaternion direct check is rerun.
 
-The short-to-long replacement pipeline is implemented but has not produced
-formal results yet. It freezes the 41 translation candidates on calibration,
-constructs five disjoint iteration-matched random controls, and overwrites the
-long-context post-GELU hidden with the most-interior matched short-window
-hidden. Holdout cannot reselect units. Every condition aligns its prediction
-independently before comparison with raw GT.
+Full replacement (`alpha=1`) failed on all 40 holdout scenes. Mean aligned
+translation error increased from `0.0881` to `0.4158`, ATE RMSE increased from
+`0.0995` to `0.4626`, and mean aligned rotation error increased from `3.98` to
+`13.20` degrees. The selected-set translation delta was `+0.3277` with 95% CI
+`[+0.2512, +0.4053]`; the matched random-control mean delta was `+0.0003`.
+Only 6.56% of frames improved. Similar seam-near and seam-away damage rules
+out window boundaries as the primary explanation.
 
-The primary result will be the scene-paired aligned translation-error change
-for selected replacement versus the long baseline and versus the mean frozen
-control. An output shift without lower GT error proves control but not
-correction; lower holdout error supports a training-free correction path.
+This establishes that the selected units are high leverage, but the
+short-context values are not valid absolute targets in the long-context
+state. The next test interpolates rather than overwrites:
+`h_new = h_long + alpha * (h_short - h_long)`. Calibration evaluates
+`0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1.0`, freezes the alpha with the lowest
+scene-mean aligned translation error delta, and holdout runs only that alpha
+plus one fixed matched control.
 
 ## Provenance
 
@@ -97,6 +101,7 @@ correction; lower holdout error supports a training-free correction path.
 - Context attribution holdout: `bba0cdf_09e64725a56d`
 - Causal atlas calibration: `9368808_99c8a9ed393c`
 - Causal atlas holdout: `9368808_1d91735181c4`
+- Hard replacement holdout: `9b8e1a8_7f0e42d86025`
 - ScanNet split digest:
   `69c283245c4f220965e6fde3b96192de298e292eb8ca625c94851fe8932cdb8a`
 

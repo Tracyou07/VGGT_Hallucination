@@ -23,6 +23,7 @@ from pre_experiments.camera_hidden_state_attribution.artifacts import (
     canonical_digest,
 )
 from pre_experiments.camera_hidden_state_attribution.replacement_analyze import (
+    select_calibration_alpha,
     write_replacement_numeric_summary,
 )
 from pre_experiments.camera_hidden_state_attribution.replacement_artifacts import (
@@ -46,6 +47,7 @@ from pre_experiments.local_global_consistency.split import load_split_manifest
 
 ROOT = Path(__file__).resolve().parents[2]
 AUTODL_TMP = Path("/root/autodl-tmp")
+DEFAULT_ALPHAS = (0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1.0)
 
 
 def _aligned_metrics(
@@ -84,6 +86,7 @@ def run_scene_replacement(
     device: torch.device,
     *,
     scene: str,
+    alphas: Sequence[float] = (1.0,),
     replay_tolerance: float = 5e-3,
 ) -> dict[str, object]:
     """Run baseline, selected replacement, and frozen control replacements."""
@@ -161,23 +164,48 @@ def run_scene_replacement(
     if short_hidden.shape != baseline["hidden"].shape:
         raise ValueError("assembled short hidden does not match long hidden")
 
+    alpha_values = tuple(float(alpha) for alpha in alphas)
+    if (
+        not alpha_values
+        or any(
+            not np.isfinite(alpha) or not 0.0 < alpha <= 1.0
+            for alpha in alpha_values
+        )
+        or tuple(sorted(set(alpha_values))) != alpha_values
+    ):
+        raise ValueError("alphas must be unique, increasing, and in (0, 1]")
+
     control_sets = frozen.get("control_sets")
     if not isinstance(control_sets, Sequence):
         raise ValueError("frozen replacement controls are missing")
-    condition_names = ["baseline", "selected"] + [
-        str(control["name"])
-        for control in control_sets
-        if isinstance(control, Mapping)
-    ]
-    if len(condition_names) != 2 + len(control_sets):
+    if not control_sets or not isinstance(control_sets[0], Mapping):
         raise ValueError("invalid frozen replacement control")
+    control_name = str(control_sets[0].get("name", ""))
+    if not control_name:
+        raise ValueError("invalid frozen replacement control")
+    conditions = [("baseline", "baseline", 0.0, None)]
+    for alpha in alpha_values:
+        label = _alpha_label(alpha)
+        conditions.extend(
+            (
+                (f"selected_a{label}", "selected", alpha, "selected"),
+                (
+                    f"{control_name}_a{label}",
+                    "control",
+                    alpha,
+                    control_name,
+                ),
+            )
+        )
+    condition_names = [condition[0] for condition in conditions]
 
     replays = [baseline]
     masks = [np.zeros((iterations, hidden_dim), dtype=bool)]
-    for condition in condition_names[1:]:
+    for _, _, alpha, set_name in conditions[1:]:
+        assert set_name is not None
         mask = replacement_mask(
             frozen,
-            condition,
+            set_name,
             iterations=iterations,
             hidden_dim=hidden_dim,
         )
@@ -189,6 +217,7 @@ def run_scene_replacement(
                 device,
                 hidden_replacement_values=short_hidden,
                 hidden_replacement_mask=mask,
+                hidden_replacement_alpha=alpha,
                 trace_hidden=False,
             )
         )
@@ -200,7 +229,8 @@ def run_scene_replacement(
     rows = []
     translation_errors = []
     rotation_errors = []
-    for condition, replay, mask in zip(condition_names, replays, masks):
+    for condition_spec, replay, mask in zip(conditions, replays, masks):
+        condition, family, alpha, _ = condition_spec
         metrics, translation, rotation = _aligned_metrics(
             replay["pred_c2w_raw"],
             global_gt,
@@ -222,6 +252,8 @@ def run_scene_replacement(
             {
                 "scene": scene,
                 "condition": condition,
+                "condition_family": family,
+                "alpha": alpha,
                 "replacement_count": int(mask.sum()),
                 **metrics,
                 "aligned_translation_error_delta": (
@@ -241,6 +273,13 @@ def run_scene_replacement(
     return {
         "scene": scene,
         "condition_names": np.asarray(condition_names),
+        "condition_family": np.asarray(
+            [condition[1] for condition in conditions]
+        ),
+        "condition_alpha": np.asarray(
+            [condition[2] for condition in conditions],
+            dtype=np.float64,
+        ),
         "replacement_count": np.asarray(
             [int(mask.sum()) for mask in masks],
             dtype=np.int64,
@@ -259,6 +298,10 @@ def run_scene_replacement(
         "rotation_error_deg_aligned": np.stack(rotation_errors),
         "rows": rows,
     }
+
+
+def _alpha_label(alpha: float) -> str:
+    return f"{alpha:.8g}".replace(".", "p")
 
 
 def _json_object(path: Path) -> dict[str, object]:
@@ -356,6 +399,7 @@ def _validate_frozen_replacement(
     *,
     split_digest: str,
     calibration_scenes: Sequence[str],
+    require_selected_alpha: bool = False,
 ) -> dict[str, object]:
     try:
         value = json.loads(json.dumps(frozen))
@@ -381,8 +425,60 @@ def _validate_frozen_replacement(
         or value.get("control_repeats") != len(controls)
     ):
         raise ValueError("frozen replacement provenance mismatch")
+    if require_selected_alpha:
+        try:
+            selected_alpha = float(value["selected_alpha"])
+            alpha_grid = tuple(float(alpha) for alpha in value["alpha_grid"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                "frozen replacement alpha provenance mismatch"
+            ) from error
+        if (
+            not np.isfinite(selected_alpha)
+            or not 0.0 < selected_alpha <= 1.0
+            or selected_alpha not in alpha_grid
+            or tuple(sorted(set(alpha_grid))) != alpha_grid
+            or not value.get("alpha_selection_metric")
+        ):
+            raise ValueError("frozen replacement alpha provenance mismatch")
     value["frozen_digest"] = digest
     return value
+
+
+def _finalize_alpha_selection(
+    frozen: Mapping[str, object],
+    selection: Mapping[str, object],
+    *,
+    alpha_grid: Sequence[float],
+) -> dict[str, object]:
+    """Attach calibration-only alpha selection and refresh provenance."""
+    value = json.loads(json.dumps(frozen))
+    value.pop("frozen_digest", None)
+    value["alpha_grid"] = [float(alpha) for alpha in alpha_grid]
+    value.update(selection)
+    value["frozen_digest"] = canonical_digest(value)
+    return value
+
+
+def _parse_alphas(value: str) -> tuple[float, ...]:
+    try:
+        alphas = tuple(float(item.strip()) for item in value.split(","))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "--alphas must be a comma-separated numeric grid"
+        ) from error
+    if (
+        not alphas
+        or any(
+            not np.isfinite(alpha) or not 0.0 < alpha <= 1.0
+            for alpha in alphas
+        )
+        or tuple(sorted(set(alphas))) != alphas
+    ):
+        raise argparse.ArgumentTypeError(
+            "--alphas must be unique, increasing, and in (0, 1]"
+        )
+    return alphas
 
 
 def _scene_list() -> list[str]:
@@ -446,6 +542,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=33)
     parser.add_argument("--scene-limit", type=int, default=0)
     parser.add_argument("--replay-tolerance", type=float, default=5e-3)
+    parser.add_argument(
+        "--alphas",
+        type=_parse_alphas,
+        default=DEFAULT_ALPHAS,
+        help="comma-separated calibration interpolation grid",
+    )
     args = parser.parse_args(argv)
     if args.stage == "holdout":
         if args.frozen_replacement is None:
@@ -496,7 +598,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             calibration_scenes=[
                 str(scene) for scene in split["calibration_scenes"]
             ],
+            require_selected_alpha=True,
         )
+        run_alphas = (float(frozen["selected_alpha"]),)
     else:
         assert args.attribution_calibration_dir is not None
         assert args.causal_calibration_dir is not None
@@ -511,6 +615,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             control_repeats=args.control_repeats,
             seed=args.seed,
         )
+        run_alphas = args.alphas
 
     invocation = {
         "stage": args.stage,
@@ -523,7 +628,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         "scenes": scenes,
         "device": args.device,
         "replay_tolerance": args.replay_tolerance,
-        "frozen_digest": frozen["frozen_digest"],
+        "unit_frozen_digest": frozen["frozen_digest"],
+        "alphas": run_alphas,
     }
     commit = read_git_commit(ROOT)
     run_id = f"{commit[:7]}_{canonical_digest(invocation)[:12]}"
@@ -553,6 +659,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 frozen,
                 device,
                 scene=scene,
+                alphas=run_alphas,
                 replay_tolerance=args.replay_tolerance,
             )
             save_replacement_scene(artifact_path, result)
@@ -563,18 +670,32 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "scene": scene,
                     "condition_names": result["condition_names"].tolist(),
                     "selected_count": frozen["selected_count"],
-                    "frozen_digest": frozen["frozen_digest"],
+                    "unit_frozen_digest": invocation[
+                        "unit_frozen_digest"
+                    ],
                 },
             )
         results.append(result)
         print(f"[scene {scene_index}/{len(scenes)}] {scene}", flush=True)
 
-    write_replacement_numeric_summary(
+    summary = write_replacement_numeric_summary(
         run_dir,
         results,
         frozen,
         partition=partition,
     )
+    if args.stage != "holdout":
+        frozen = _finalize_alpha_selection(
+            frozen,
+            select_calibration_alpha(summary),
+            alpha_grid=run_alphas,
+        )
+        summary = write_replacement_numeric_summary(
+            run_dir,
+            results,
+            frozen,
+            partition=partition,
+        )
     protocol_complete = (
         args.stage in {"calibration", "holdout"}
         and scenes == all_scenes
@@ -593,9 +714,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "calibration-frozen attribution/causal top-k intersection"
             ),
             "replacement_policy": (
-                "long Camera Head pose hidden overwritten by the most-interior "
-                "matched short-window hidden"
+                "long Camera Head pose hidden interpolated toward the "
+                "most-interior matched short-window hidden"
             ),
+            "selected_alpha": frozen["selected_alpha"],
             "metric_policy": (
                 "each prediction aligned independently; GT remains raw"
             ),

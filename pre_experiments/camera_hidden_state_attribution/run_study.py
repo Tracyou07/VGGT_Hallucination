@@ -49,6 +49,7 @@ def replay_tokens(
     hidden_ablation_mask: torch.Tensor | None = None,
     hidden_replacement_values: np.ndarray | None = None,
     hidden_replacement_mask: np.ndarray | None = None,
+    hidden_replacement_alpha: float = 1.0,
     trace_hidden: bool = True,
 ) -> dict[str, np.ndarray]:
     tokens = np.asarray(normalized_tokens, dtype=np.float32)
@@ -74,6 +75,7 @@ def replay_tokens(
             hidden_ablation_mask=hidden_ablation_mask,
             hidden_replacement_values=replacement_values_tensor,
             hidden_replacement_mask=replacement_mask_tensor,
+            hidden_replacement_alpha=hidden_replacement_alpha,
         )
     if trace_hidden:
         poses, trace = output

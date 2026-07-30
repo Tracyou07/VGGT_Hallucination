@@ -214,6 +214,65 @@ class HiddenTraceTest(unittest.TestCase):
                         **kwargs,
                     )
 
+    def test_hidden_replacement_alpha_interpolates_from_current_hidden(self):
+        normalized = self.head.token_norm(self.tokens[-1][:, :, 0])
+        with torch.no_grad():
+            expected, expected_trace = self.head.decode_pose_tokens(
+                normalized,
+                num_iterations=2,
+                return_trace=True,
+                trace_pose_tokens=True,
+            )
+        replacement = torch.stack(
+            expected_trace["pose_branch_hidden_list"]
+        ).clone()
+        replacement[0, 0, :, 3] += 0.8
+        mask = torch.zeros(2, 16, dtype=torch.bool)
+        mask[0, 3] = True
+
+        with torch.no_grad():
+            zero = self.head.decode_pose_tokens(
+                normalized,
+                num_iterations=2,
+                hidden_replacement_values=replacement,
+                hidden_replacement_mask=mask,
+                hidden_replacement_alpha=0.0,
+            )
+            half, half_trace = self.head.decode_pose_tokens(
+                normalized,
+                num_iterations=2,
+                return_trace=True,
+                trace_pose_tokens=True,
+                hidden_replacement_values=replacement,
+                hidden_replacement_mask=mask,
+                hidden_replacement_alpha=0.5,
+            )
+
+        torch.testing.assert_close(zero[-1], expected[-1])
+        torch.testing.assert_close(
+            half_trace["pose_branch_hidden_list"][0][..., 3],
+            expected_trace["pose_branch_hidden_list"][0][..., 3] + 0.4,
+        )
+        self.assertFalse(torch.equal(half[-1], expected[-1]))
+
+    def test_hidden_replacement_alpha_rejects_invalid_values(self):
+        normalized = self.head.token_norm(self.tokens[-1][:, :, 0])
+        replacement = torch.zeros(2, 1, 5, 16)
+        mask = torch.zeros(2, 16, dtype=torch.bool)
+        for alpha in (-0.01, 1.01, float("nan")):
+            with self.subTest(alpha=alpha):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "hidden_replacement_alpha",
+                ):
+                    self.head.decode_pose_tokens(
+                        normalized,
+                        num_iterations=2,
+                        hidden_replacement_values=replacement,
+                        hidden_replacement_mask=mask,
+                        hidden_replacement_alpha=alpha,
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

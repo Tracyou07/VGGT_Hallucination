@@ -15,6 +15,7 @@ PUBLISH_ROOT="${PUBLISH_ROOT:-$ROOT/results/camera_hidden_replacement}"
 STATE_DIR="${STATE_DIR:-$AUTODL_TMP/camera_hidden_replacement/state}"
 STAGE="${STAGE:-all}"
 DEVICE="${DEVICE:-cuda}"
+ALPHAS="${ALPHAS:-0.01,0.02,0.05,0.1,0.25,0.5,1.0}"
 
 [[ -d "$SOURCE_RUN_DIR" ]] || { echo "missing SOURCE_RUN_DIR=$SOURCE_RUN_DIR" >&2; exit 2; }
 [[ -d "$CALIBRATION_LOCAL_RUN_DIR" ]] || { echo "missing CALIBRATION_LOCAL_RUN_DIR=$CALIBRATION_LOCAL_RUN_DIR" >&2; exit 2; }
@@ -44,6 +45,7 @@ run_smoke() {
     --local-run-dir "$CALIBRATION_LOCAL_RUN_DIR" \
     --attribution-calibration-dir "$ATTRIBUTION_CALIBRATION_DIR" \
     --causal-calibration-dir "$CAUSAL_CALIBRATION_DIR" \
+    --alphas "$ALPHAS" \
     --run-dir-file "$STATE_DIR/smoke_run.txt" \
     "${common_args[@]}"
 }
@@ -54,6 +56,7 @@ run_calibration() {
     --local-run-dir "$CALIBRATION_LOCAL_RUN_DIR" \
     --attribution-calibration-dir "$ATTRIBUTION_CALIBRATION_DIR" \
     --causal-calibration-dir "$CAUSAL_CALIBRATION_DIR" \
+    --alphas "$ALPHAS" \
     --run-dir-file "$STATE_DIR/calibration_run.txt" \
     "${common_args[@]}"
 }

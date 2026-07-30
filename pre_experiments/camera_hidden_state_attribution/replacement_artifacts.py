@@ -14,6 +14,8 @@ from pre_experiments.local_global_consistency.artifacts import (
 
 REPLACEMENT_SCENE_ARRAYS = (
     "condition_names",
+    "condition_family",
+    "condition_alpha",
     "replacement_count",
     "frame_ids",
     "selected_window_index",
@@ -42,6 +44,27 @@ def _validated_arrays(
     ):
         raise ValueError("condition_names must start with baseline and selected")
     condition_count = len(names)
+    families = np.asarray(result["condition_family"])
+    if (
+        families.ndim != 1
+        or families.dtype.kind not in "US"
+        or families.shape != (condition_count,)
+        or families[0] != "baseline"
+        or not set(families.tolist()).issubset(
+            {"baseline", "selected", "control"}
+        )
+    ):
+        raise ValueError("condition_family has invalid values")
+    alphas = np.asarray(result["condition_alpha"], dtype=np.float64)
+    if (
+        alphas.shape != (condition_count,)
+        or not np.isfinite(alphas).all()
+        or alphas[0] != 0.0
+        or np.any(alphas < 0)
+        or np.any(alphas > 1)
+        or np.any(alphas[1:] <= 0)
+    ):
+        raise ValueError("condition_alpha has invalid values")
 
     replacement_count = np.asarray(result["replacement_count"])
     if (
@@ -96,6 +119,8 @@ def _validated_arrays(
 
     return {
         "condition_names": names.astype(str),
+        "condition_family": families.astype(str),
+        "condition_alpha": alphas,
         "replacement_count": replacement_count.astype(np.int64),
         "frame_ids": frame_ids.astype(np.int64),
         **{

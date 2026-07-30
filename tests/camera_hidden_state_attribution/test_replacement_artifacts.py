@@ -16,6 +16,10 @@ class HiddenReplacementArtifactTest(unittest.TestCase):
             "condition_names": np.array(
                 ["baseline", "selected", "control_00"]
             ),
+            "condition_family": np.array(
+                ["baseline", "selected", "control"]
+            ),
+            "condition_alpha": np.array([0.0, 0.25, 0.25]),
             "replacement_count": np.array([0, 2, 2]),
             "frame_ids": np.arange(4),
             "selected_window_index": np.array([0, 0, 1, 1]),
@@ -36,6 +40,10 @@ class HiddenReplacementArtifactTest(unittest.TestCase):
             result["condition_names"],
         )
         np.testing.assert_allclose(
+            loaded["condition_alpha"],
+            result["condition_alpha"],
+        )
+        np.testing.assert_allclose(
             loaded["pred_c2w_raw"],
             result["pred_c2w_raw"],
         )
@@ -43,6 +51,8 @@ class HiddenReplacementArtifactTest(unittest.TestCase):
     def test_rejects_nonfinite_or_wrong_members(self):
         result = {
             "condition_names": np.array(["baseline", "selected"]),
+            "condition_family": np.array(["baseline", "selected"]),
+            "condition_alpha": np.array([0.0, 0.25]),
             "replacement_count": np.array([0, 1]),
             "frame_ids": np.arange(2),
             "selected_window_index": np.array([0, 0]),

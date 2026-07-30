@@ -65,11 +65,12 @@ metadata.
 ## Short-to-Long Hidden Replacement
 
 This stage freezes the translation intersection between the calibration
-context-drift Top-64 and causal-effect Top-64. It replaces those long-context
-post-GELU pose-branch hidden values with the matched short-window values.
+context-drift Top-64 and causal-effect Top-64. It interpolates those
+long-context post-GELU pose-branch values toward matched short-window values:
+`h_new = h_long + alpha * (h_short - h_long)`.
 Overlapping short windows use the most interior observation, with the earlier
-window breaking ties. Five disjoint random sets outside both source Top-64
-sets are matched by refinement iteration and replacement count.
+window breaking ties. A fixed random set outside both source Top-64 sets is
+matched by refinement iteration and replacement count.
 
 ```bash
 conda activate vggt
@@ -80,11 +81,14 @@ export ATTRIBUTION_CALIBRATION_DIR=/root/autodl-tmp/camera_hidden_state_attribut
 export CAUSAL_CALIBRATION_DIR=/root/autodl-tmp/camera_hidden_causal_preference/results/9368808_99c8a9ed393c
 export SPLIT_MANIFEST="$PWD/configs/scannet50_local_global_split.json"
 export CKPT_DIR=/root/autodl-tmp/ckpt/VGGT-1B
+export ALPHAS=0.01,0.02,0.05,0.1,0.25,0.5,1.0
 STAGE=smoke bash scripts/autodl/run_camera_hidden_replacement.sh
 STAGE=all bash scripts/autodl/run_camera_hidden_replacement.sh
 ```
 
-The formal holdout reports baseline, selected replacement, and five frozen
-controls. Each predicted trajectory is aligned independently before error is
-computed against raw GT. Per-scene NPZ files remain under `/root/autodl-tmp`;
-the exporter publishes only strict numeric CSV/JSON artifacts.
+Calibration evaluates the full alpha grid for the selected and fixed-control
+units, then freezes the alpha with the lowest scene-mean aligned translation
+error delta. Holdout evaluates only that alpha. Each predicted trajectory is
+aligned independently before error is computed against raw GT. Per-scene NPZ
+files remain under `/root/autodl-tmp`; the exporter publishes only strict
+numeric CSV/JSON artifacts.

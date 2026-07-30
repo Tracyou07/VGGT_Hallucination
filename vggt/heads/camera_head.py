@@ -91,6 +91,7 @@ class CameraHead(nn.Module):
         pose_delta_additive_perturbation: torch.Tensor | None = None,
         hidden_replacement_values: torch.Tensor | None = None,
         hidden_replacement_mask: torch.Tensor | None = None,
+        hidden_replacement_alpha: float = 1.0,
     ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
         """
         Forward pass to predict camera parameters.
@@ -113,6 +114,8 @@ class CameraHead(nn.Module):
                 [iteration, batch, frame, hidden].
             hidden_replacement_mask (torch.Tensor, optional): Boolean unit
                 selector with shape [iteration, hidden].
+            hidden_replacement_alpha (float): Interpolation fraction from the
+                current long hidden to replacement values. Defaults to 1.
 
         Returns:
             list or tuple: Predicted camera encodings from each iteration, optionally
@@ -134,6 +137,7 @@ class CameraHead(nn.Module):
             pose_delta_additive_perturbation=pose_delta_additive_perturbation,
             hidden_replacement_values=hidden_replacement_values,
             hidden_replacement_mask=hidden_replacement_mask,
+            hidden_replacement_alpha=hidden_replacement_alpha,
         )
 
     def decode_pose_tokens(
@@ -147,6 +151,7 @@ class CameraHead(nn.Module):
         pose_delta_additive_perturbation: torch.Tensor | None = None,
         hidden_replacement_values: torch.Tensor | None = None,
         hidden_replacement_mask: torch.Tensor | None = None,
+        hidden_replacement_alpha: float = 1.0,
     ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
         """Decode normalized camera tokens with iterative pose refinement."""
         if normalized_pose_tokens.ndim != 3:
@@ -187,6 +192,15 @@ class CameraHead(nn.Module):
             ),
             expected_mask=(num_iterations, hidden_dim),
         )
+        if (
+            isinstance(hidden_replacement_alpha, bool)
+            or not isinstance(hidden_replacement_alpha, (int, float))
+            or not math.isfinite(float(hidden_replacement_alpha))
+            or not 0.0 <= float(hidden_replacement_alpha) <= 1.0
+        ):
+            raise ValueError(
+                "hidden_replacement_alpha must be finite and between 0 and 1"
+            )
 
         return self.trunk_fn(
             normalized_pose_tokens,
@@ -198,6 +212,7 @@ class CameraHead(nn.Module):
             pose_delta_additive_perturbation=pose_delta_additive_perturbation,
             hidden_replacement_values=hidden_replacement_values,
             hidden_replacement_mask=hidden_replacement_mask,
+            hidden_replacement_alpha=float(hidden_replacement_alpha),
         )
 
     def trunk_fn(
@@ -211,6 +226,7 @@ class CameraHead(nn.Module):
         pose_delta_additive_perturbation: torch.Tensor | None = None,
         hidden_replacement_values: torch.Tensor | None = None,
         hidden_replacement_mask: torch.Tensor | None = None,
+        hidden_replacement_alpha: float = 1.0,
     ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
         """
         Iteratively refine camera pose predictions.
@@ -229,6 +245,8 @@ class CameraHead(nn.Module):
                 [iteration, batch, frame, hidden].
             hidden_replacement_mask (torch.Tensor, optional): Boolean unit
                 selector with shape [iteration, hidden].
+            hidden_replacement_alpha (float): Interpolation fraction from the
+                current hidden to replacement values.
 
         Returns:
             list or tuple: Activated camera encodings, optionally paired with a trace.
@@ -277,9 +295,14 @@ class CameraHead(nn.Module):
                 replacement_mask = hidden_replacement_mask[iteration].to(
                     device=pose_branch_hidden.device
                 )[None, None, :]
+                interpolated = torch.lerp(
+                    pose_branch_hidden,
+                    replacement,
+                    hidden_replacement_alpha,
+                )
                 pose_branch_hidden = torch.where(
                     replacement_mask,
-                    replacement,
+                    interpolated,
                     pose_branch_hidden,
                 )
             if hidden_additive_perturbation is not None:

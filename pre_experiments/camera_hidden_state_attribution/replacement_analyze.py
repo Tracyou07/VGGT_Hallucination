@@ -47,7 +47,7 @@ def _estimate(values: Sequence[float], *, seed: int = 33) -> dict[str, float]:
 def summarize_replacement_rows(
     rows: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
-    """Build the scene-paired primary translation test."""
+    """Build scene-paired selected/control tests for every alpha."""
     by_scene: dict[str, list[Mapping[str, object]]] = defaultdict(list)
     for row in rows:
         scene = str(row.get("scene", ""))
@@ -57,42 +57,81 @@ def summarize_replacement_rows(
     if not by_scene:
         raise ValueError("at least one replacement row is required")
 
-    selected_deltas = []
-    control_deltas = []
-    selected_minus_control = []
-    for scene, scene_rows in sorted(by_scene.items()):
-        selected = [
-            row for row in scene_rows if row.get("condition") == "selected"
-        ]
-        controls = [
-            row
-            for row in scene_rows
-            if str(row.get("condition", "")).startswith("control_")
-        ]
-        baseline = [
-            row for row in scene_rows if row.get("condition") == "baseline"
-        ]
-        if len(selected) != 1 or len(baseline) != 1 or not controls:
-            raise ValueError(f"incomplete replacement conditions for {scene}")
-        selected_delta = float(
-            selected[0]["aligned_translation_error_delta"]
-        )
-        control_delta = float(
-            np.mean(
-                [
-                    float(row["aligned_translation_error_delta"])
-                    for row in controls
-                ]
+    alphas = sorted(
+        {
+            float(row["alpha"])
+            for row in rows
+            if row.get("condition_family") == "selected"
+        }
+    )
+    if not alphas or any(
+        not np.isfinite(alpha) or not 0.0 < alpha <= 1.0
+        for alpha in alphas
+    ):
+        raise ValueError("replacement rows contain no valid alpha")
+    alpha_tests = []
+    for alpha in alphas:
+        selected_deltas = []
+        control_deltas = []
+        selected_minus_control = []
+        for scene, scene_rows in sorted(by_scene.items()):
+            baseline = [
+                row
+                for row in scene_rows
+                if row.get("condition_family") == "baseline"
+            ]
+            selected = [
+                row
+                for row in scene_rows
+                if row.get("condition_family") == "selected"
+                and float(row["alpha"]) == alpha
+            ]
+            controls = [
+                row
+                for row in scene_rows
+                if row.get("condition_family") == "control"
+                and float(row["alpha"]) == alpha
+            ]
+            if len(baseline) != 1 or len(selected) != 1 or not controls:
+                raise ValueError(
+                    f"incomplete alpha={alpha} conditions for {scene}"
+                )
+            selected_delta = float(
+                selected[0]["aligned_translation_error_delta"]
             )
+            control_delta = float(
+                np.mean(
+                    [
+                        float(row["aligned_translation_error_delta"])
+                        for row in controls
+                    ]
+                )
+            )
+            if not np.isfinite(selected_delta) or not np.isfinite(
+                control_delta
+            ):
+                raise ValueError("replacement deltas must be finite")
+            selected_deltas.append(selected_delta)
+            control_deltas.append(control_delta)
+            selected_minus_control.append(selected_delta - control_delta)
+        selected_array = np.asarray(selected_deltas)
+        comparison_array = np.asarray(selected_minus_control)
+        alpha_tests.append(
+            {
+                "alpha": alpha,
+                "selected_delta": _estimate(selected_deltas),
+                "control_mean_delta": _estimate(control_deltas),
+                "selected_minus_control": _estimate(
+                    selected_minus_control
+                ),
+                "selected_improved_scene_fraction": float(
+                    np.mean(selected_array < 0)
+                ),
+                "selected_beat_control_scene_fraction": float(
+                    np.mean(comparison_array < 0)
+                ),
+            }
         )
-        if not np.isfinite(selected_delta) or not np.isfinite(control_delta):
-            raise ValueError("replacement deltas must be finite")
-        selected_deltas.append(selected_delta)
-        control_deltas.append(control_delta)
-        selected_minus_control.append(selected_delta - control_delta)
-
-    selected_array = np.asarray(selected_deltas)
-    comparison_array = np.asarray(selected_minus_control)
     condition_aggregates = []
     conditions = sorted(
         {str(row["condition"]) for row in rows},
@@ -122,18 +161,37 @@ def summarize_replacement_rows(
         "bootstrap_unit": "scene",
         "bootstrap_samples": 10000,
         "bootstrap_seed": 33,
-        "primary_translation_test": {
-            "selected_delta": _estimate(selected_deltas),
-            "control_mean_delta": _estimate(control_deltas),
-            "selected_minus_control": _estimate(selected_minus_control),
-            "selected_improved_scene_fraction": float(
-                np.mean(selected_array < 0)
-            ),
-            "selected_beat_control_scene_fraction": float(
-                np.mean(comparison_array < 0)
-            ),
-        },
+        "alpha_tests": alpha_tests,
         "condition_aggregates": condition_aggregates,
+    }
+
+
+def select_calibration_alpha(
+    summary: Mapping[str, object],
+) -> dict[str, float | str]:
+    """Freeze the alpha with the lowest calibration translation delta."""
+    tests = summary.get("alpha_tests")
+    if not isinstance(tests, Sequence) or not tests:
+        raise ValueError("calibration summary has no alpha tests")
+    candidates = []
+    for item in tests:
+        if not isinstance(item, Mapping):
+            raise ValueError("invalid calibration alpha test")
+        try:
+            alpha = float(item["alpha"])
+            estimate = float(item["selected_delta"]["estimate"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("invalid calibration alpha test") from error
+        if not np.isfinite(alpha) or not np.isfinite(estimate):
+            raise ValueError("invalid calibration alpha test")
+        candidates.append((estimate, alpha))
+    estimate, alpha = min(candidates, key=lambda item: (item[0], item[1]))
+    return {
+        "selected_alpha": alpha,
+        "alpha_selection_metric": (
+            "minimum_scene_mean_aligned_translation_error_delta"
+        ),
+        "calibration_selected_delta": estimate,
     }
 
 
@@ -143,6 +201,8 @@ def build_replacement_rows(
     """Convert one strict scene artifact into scene and frame CSV rows."""
     scene = str(result.get("scene", ""))
     names = np.asarray(result["condition_names"]).astype(str)
+    families = np.asarray(result["condition_family"]).astype(str)
+    alphas = np.asarray(result["condition_alpha"], dtype=np.float64)
     counts = np.asarray(result["replacement_count"], dtype=np.int64)
     frame_ids = np.asarray(result["frame_ids"], dtype=np.int64)
     predictions = np.asarray(result["pred_c2w_raw"], dtype=np.float64)
@@ -195,6 +255,8 @@ def build_replacement_rows(
             {
                 "scene": scene,
                 "condition": condition,
+                "condition_family": families[index],
+                "alpha": float(alphas[index]),
                 "replacement_count": int(counts[index]),
                 **metrics,
                 "aligned_translation_error_delta": (
@@ -213,6 +275,8 @@ def build_replacement_rows(
                 {
                     "scene": scene,
                     "condition": condition,
+                    "condition_family": families[index],
+                    "alpha": float(alphas[index]),
                     "frame_id": int(frame_id),
                     "sequence_index": frame_index,
                     "selected_local_window_index": int(
@@ -262,6 +326,8 @@ def write_replacement_numeric_summary(
             fieldnames=(
                 "scene",
                 "condition",
+                "condition_family",
+                "alpha",
                 "replacement_count",
                 *SCENE_METRICS,
             ),
@@ -278,6 +344,8 @@ def write_replacement_numeric_summary(
             fieldnames=(
                 "scene",
                 "condition",
+                "condition_family",
+                "alpha",
                 "frame_id",
                 "sequence_index",
                 "selected_local_window_index",

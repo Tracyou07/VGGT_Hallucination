@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from pre_experiments.camera_hidden_state_attribution.run_replacement import (
+    _finalize_alpha_selection,
     _freeze_from_calibration_dirs,
     _validate_frozen_replacement,
     parse_args,
@@ -85,14 +86,23 @@ class HiddenReplacementRunnerTest(unittest.TestCase):
             frozen,
             self.device,
             scene="scene",
+            alphas=(0.25, 1.0),
         )
 
         self.assertEqual(
             [row["condition"] for row in result["rows"]],
-            ["baseline", "selected", "control_00"],
+            [
+                "baseline",
+                "selected_a0p25",
+                "control_00_a0p25",
+                "selected_a1",
+                "control_00_a1",
+            ],
         )
         selected = result["rows"][1]
         self.assertEqual(selected["replacement_count"], 1)
+        self.assertEqual(selected["condition_family"], "selected")
+        self.assertEqual(selected["alpha"], 0.25)
         self.assertGreater(
             selected["camera_center_displacement_mean"],
             0.0,
@@ -102,7 +112,11 @@ class HiddenReplacementRunnerTest(unittest.TestCase):
         )
         self.assertEqual(
             result["pred_c2w_raw"].shape,
-            (3, 6, 4, 4),
+            (5, 6, 4, 4),
+        )
+        np.testing.assert_allclose(
+            result["condition_alpha"],
+            np.array([0.0, 0.25, 0.25, 1.0, 1.0]),
         )
         np.testing.assert_array_equal(
             result["selected_window_index"],
@@ -124,6 +138,34 @@ class HiddenReplacementRunnerTest(unittest.TestCase):
             parse_args(["--stage", "calibration", *common])
         with self.assertRaises(SystemExit):
             parse_args(["--stage", "holdout", *common])
+        args = parse_args(
+            [
+                "--stage",
+                "calibration",
+                "--attribution-calibration-dir",
+                "attribution",
+                "--causal-calibration-dir",
+                "causal",
+                "--alphas",
+                "0.01,0.1,1",
+                *common,
+            ]
+        )
+        self.assertEqual(args.alphas, (0.01, 0.1, 1.0))
+        with self.assertRaises(SystemExit):
+            parse_args(
+                [
+                    "--stage",
+                    "calibration",
+                    "--attribution-calibration-dir",
+                    "attribution",
+                    "--causal-calibration-dir",
+                    "causal",
+                    "--alphas",
+                    "0.1,0.1",
+                    *common,
+                ]
+            )
 
     def test_freeze_reads_authenticated_calibration_numeric_runs(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -220,9 +262,25 @@ class HiddenReplacementRunnerTest(unittest.TestCase):
                 split_digest="split",
                 calibration_scenes=["scene"],
             )
+            finalized = _finalize_alpha_selection(
+                validated,
+                {
+                    "selected_alpha": 0.1,
+                    "alpha_selection_metric": "metric",
+                    "calibration_selected_delta": -0.02,
+                },
+                alpha_grid=(0.01, 0.1, 1.0),
+            )
+            validated_final = _validate_frozen_replacement(
+                finalized,
+                split_digest="split",
+                calibration_scenes=["scene"],
+                require_selected_alpha=True,
+            )
 
         self.assertEqual(validated["source_runs"]["attribution"], "attribution")
         self.assertEqual(validated["source_runs"]["causal"], "causal")
+        self.assertEqual(validated_final["selected_alpha"], 0.1)
         tampered = dict(validated)
         tampered["selected_count"] = 999
         with self.assertRaisesRegex(ValueError, "provenance"):

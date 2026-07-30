@@ -69,4 +69,11 @@ command are recorded in
   each global frame, preserving the existing tie-breaking rule.
 - Added resumable scene artifacts, scene-paired aligned translation analysis,
   strict numeric export, and an AutoDL smoke/calibration/holdout entry point.
-- The pipeline is implemented and CPU-tested; formal GPU results are pending.
+- Full replacement on the 40-scene holdout increased mean aligned translation
+  error by `+0.3277` and improved no scene. Random controls were near zero, so
+  the candidate units are high leverage but short hidden values are not valid
+  absolute long-context targets.
+- Added an interpolation sweep over
+  `0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1.0`. Calibration freezes the best alpha
+  by scene-mean aligned translation delta; holdout evaluates only the frozen
+  alpha and one fixed matched control. GPU results are pending.
