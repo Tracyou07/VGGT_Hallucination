@@ -14,7 +14,7 @@ class HiddenReplacementArtifactTest(unittest.TestCase):
     def test_round_trip_uses_strict_numeric_members(self):
         result = {
             "condition_names": np.array(
-                ["baseline", "selected", "control_00"]
+                ["baseline", "selected_a0p25", "control_00_a0p25"]
             ),
             "condition_family": np.array(
                 ["baseline", "selected", "control"]

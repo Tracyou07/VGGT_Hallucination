@@ -39,10 +39,11 @@ def _validated_arrays(
         or names.dtype.kind not in "US"
         or len(names) < 2
         or names[0] != "baseline"
-        or names[1] != "selected"
         or len(np.unique(names)) != len(names)
     ):
-        raise ValueError("condition_names must start with baseline and selected")
+        raise ValueError(
+            "condition_names must start with a unique baseline"
+        )
     condition_count = len(names)
     families = np.asarray(result["condition_family"])
     if (
@@ -50,6 +51,8 @@ def _validated_arrays(
         or families.dtype.kind not in "US"
         or families.shape != (condition_count,)
         or families[0] != "baseline"
+        or np.count_nonzero(families == "baseline") != 1
+        or np.count_nonzero(families == "selected") < 1
         or not set(families.tolist()).issubset(
             {"baseline", "selected", "control"}
         )
