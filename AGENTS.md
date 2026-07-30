@@ -2,64 +2,48 @@
 
 ## Project Structure & Module Organization
 
-`vggt/` contains the frozen baseline plus opt-in Camera Head hidden tracing,
-ablation, and perturbation hooks.
-`pre_experiments/camera_hidden_state_attribution/` owns token replay, unit
-ranking, causal preference projection, interventions, and aggregation. It
-consumes frozen `local_global_consistency` artifacts; do not duplicate that
-inference pipeline. AutoDL entry points are
-`run_camera_hidden_state_attribution.sh`,
-`run_camera_hidden_causal_preference.sh`, and
-`run_camera_hidden_replacement.sh` under `scripts/autodl/`. The replacement
-stage does not rerun the Aggregator. Focused CPU tests live under
-`tests/camera_hidden_state_attribution/`.
+`vggt/` contains the frozen model and opt-in Camera Head tracing hooks.
+`pre_experiments/common/` provides shared artifact, model-loading, ScanNet, and
+pose utilities. `pre_experiments/camera_hidden_state_attribution/` and
+`pre_experiments/local_global_consistency/` are retained infrastructure for
+hidden replay, context windows, alignment, and split validation. New work must
+live under `pre_experiments/camera_refiner_data_construction/`, with matching
+CPU tests in `tests/camera_refiner_data_construction/` and AutoDL entry points
+under `scripts/autodl/camera_refiner_data_construction/`.
 
-The four committed `frames_500/context_diagnostics.npz` files under
-`results/camera_context/911b598_f4577f584448/` are frozen Round 2 inputs, not
-an active Round 1.5 result tree. Do not add other files there.
+Keep design documents in `doc/`. Store immutable scene lists and split
+manifests in `configs/`. Do not commit generated `results/` contents.
 
 ## Build, Test, and Development Commands
 
-- `pip install -e .` installs the checkout into the existing environment.
-- `SCANNET_TOS_ACCEPTED=1 DOWNLOAD_GT_PLY=1 bash
-  scripts/autodl/prepare_scannet50.sh` prepares the official ScanNet-50 data.
-- `STAGE=smoke bash scripts/autodl/run_camera_hidden_state_attribution.sh`
-  replays one calibration scene.
-- `STAGE=all bash scripts/autodl/run_camera_hidden_state_attribution.sh` runs
-  smoke, calibration, holdout, and numeric export in order.
-- `STAGE=smoke bash scripts/autodl/run_camera_hidden_causal_preference.sh`
-  checks causal replay; use `STAGE=all` for its formal protocol.
-- `STAGE=smoke bash scripts/autodl/run_camera_hidden_replacement.sh` checks
-  frame-matched short-to-long replacement; use `STAGE=all` for calibration,
-  untouched holdout, and numeric export.
-- `python -m unittest discover -s tests/camera_hidden_state_attribution -v`
-  runs attribution CPU tests.
-- `python -m unittest discover -s tests/local_global_consistency -v` runs CPU
-  tests.
-- `python scripts/autodl/local_global_consistency/export_numeric_results.py
-  --source /absolute/run` publishes completed scalar CSV/JSON outputs.
+- `pip install -e .` installs the checkout in the existing environment.
+- `python -m pytest -q` runs the complete CPU test suite.
+- `python -m compileall -q pre_experiments vggt` validates Python imports and
+  syntax.
+- `SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet50.sh` prepares
+  the authorized ScanNet scenes while reusing completed downloads.
 
 ## Coding Style & Naming Conventions
 
 Use Python 3.10+, four-space indentation, `snake_case` functions and variables,
-and `CamelCase` classes. Preserve upstream VGGT APIs. Document tensor shapes
-and coordinate conventions at module boundaries. Shell scripts use
-`set -euo pipefail` and quoted paths.
+and `CamelCase` classes. Add type hints at public boundaries. Document tensor
+shapes, frame identity, refinement iteration, and coordinate conventions.
+Shell scripts use `set -euo pipefail` and quote all paths.
 
 ## Testing and Metric Rules
 
-Use `unittest` and name tests `test_<behavior>`. Unit tests must not require
-CUDA, checkpoints, network access, or ScanNet credentials. Unit identity is
-`(iteration, hidden_index)`; never pool refinement iterations. Calibration
-selects units and fits causal normalization; holdout must never refit either.
-Any error metric containing predictions uses aligned prediction data. GT is
-always raw. Ranking and causal preference remain prediction-only; GT appears
-only in separately named validation outputs.
+Name tests `test_<behavior>` and keep unit tests independent of CUDA,
+checkpoints, network access, and ScanNet credentials. Test window tails,
+overlap tie-breaking, split leakage, artifact provenance, and non-finite
+inputs explicitly.
 
-## Reproduction and Commit Rules
+Any metric containing a prediction must use the aligned prediction. Ground
+truth always remains raw; never align or replace GT. Calibration may select
+scales and mixtures. Holdout must consume a frozen policy without refitting.
 
-Assume the remote machine already has the `vggt` Conda environment and VGGT
-checkpoint. Do not restore environment-creation or weight-download scripts.
-Never commit datasets, checkpoints, images, PLY files, raw window NPZ outputs,
-per-scene causal-effect NPZ files, or replacement-diagnostic NPZ files. Use
-strict numeric exporters and keep commits independently testable.
+## Commit & Pull Request Guidelines
+
+Use short imperative commits such as `Add multiscale hidden manifest`.
+Keep generated tensors and figures out of Git. Pull requests must state the
+tested command, data split, source commit, checkpoint provenance, and whether
+the change affects calibration or untouched holdout evaluation.

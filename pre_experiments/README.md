@@ -1,12 +1,16 @@
-# Round 2 Method Pre-experiment
+# Camera Refiner Data Construction
 
-`study_type: method_pre_experiment`
+This package area contains reusable infrastructure inherited from the completed
+local-global and hidden-attribution studies. New multiscale extraction,
+Camera Head replay, dataset schema, and export code belongs in
+`camera_refiner_data_construction/`.
 
-`common/` contains the minimal shared runtime used by
-`local_global_consistency/`. Retired Round 1, Round 1.5, and Round 1.6
-implementations are intentionally excluded from this worktree.
+Metric contract:
 
-Metrics containing predictions use aligned values for primary conclusions;
-raw values and recovered scale are diagnostics. Pure GT baselines use raw data.
-Round 2 detection scores are prediction-only. GT may be used only by separately
-named validation outputs and is always kept raw.
+- predictions are aligned before any prediction-versus-GT metric;
+- GT remains raw;
+- calibration selects candidates;
+- holdout evaluates a frozen decision and never refits it.
+
+Historical result publication and experiment launchers are intentionally not
+part of this worktree.

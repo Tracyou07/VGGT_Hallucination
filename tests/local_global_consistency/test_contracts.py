@@ -38,7 +38,7 @@ class CommonContractTest(unittest.TestCase):
         self.assertIn("load_window_diagnostics", called_names)
         self.assertIn("load_window_diagnostics", artifact_imports)
 
-    def test_git_only_tracks_published_numeric_result_types(self):
+    def test_git_ignores_generated_results_but_tracks_reproducibility_inputs(self):
         repo_root = Path(__file__).resolve().parents[2]
 
         def is_ignored(path: str) -> bool:
@@ -64,14 +64,16 @@ class CommonContractTest(unittest.TestCase):
             "results/local_global_consistency/run/local_global_summary.json",
             "results/camera_hidden_causal_preference/run/per_position.csv",
             "results/camera_hidden_causal_preference/run/summary.json",
-        ):
-            self.assertFalse(is_ignored(path), path)
-        for path in (
             "results/unpublished/output.json",
             "results/local_global_consistency/run/window_diagnostics.npz",
             "results/camera_hidden_causal_preference/run/scene0000_00/causal_unit_effects.npz",
         ):
             self.assertTrue(is_ignored(path), path)
+        for path in (
+            "configs/scannet50_local_global_split.json",
+            "doc/2026-07-30_Camera_Refiner_Data_Construction_Design.md",
+        ):
+            self.assertFalse(is_ignored(path), path)
 
     def test_atomic_json_replaces_temporary_file(self):
         with tempfile.TemporaryDirectory() as tmp:
