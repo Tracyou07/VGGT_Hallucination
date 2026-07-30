@@ -69,8 +69,8 @@ context-drift Top-64 and causal-effect Top-64. It interpolates those
 long-context post-GELU pose-branch values toward matched short-window values:
 `h_new = h_long + alpha * (h_short - h_long)`.
 Overlapping short windows use the most interior observation, with the earlier
-window breaking ties. A fixed random set outside both source Top-64 sets is
-matched by refinement iteration and replacement count.
+window breaking ties. Five frozen random sets outside both source Top-64 sets
+are matched by refinement iteration and replacement count.
 
 ```bash
 conda activate vggt
@@ -86,9 +86,14 @@ STAGE=smoke bash scripts/autodl/run_camera_hidden_replacement.sh
 STAGE=all bash scripts/autodl/run_camera_hidden_replacement.sh
 ```
 
-Calibration evaluates the full alpha grid for the selected and fixed-control
-units, then freezes the alpha with the lowest scene-mean aligned translation
-error delta. Holdout evaluates only that alpha. Each predicted trajectory is
-aligned independently before error is computed against raw GT. Per-scene NPZ
-files remain under `/root/autodl-tmp`; the exporter publishes only strict
-numeric CSV/JSON artifacts.
+Smoke and calibration evaluate the full alpha grid using `control_00`, then
+freeze the alpha with the lowest scene-mean aligned translation error delta.
+Holdout evaluates only that alpha using every control set recorded in the
+frozen manifest (`control_00` through `control_04`). Run identity includes the
+evaluated control names, so an older single-control holdout cannot be reused.
+The summary reports `configured_control_repeats` separately from
+`evaluated_control_repeats`; multi-control comparisons first average controls
+within each scene. Each predicted trajectory is aligned independently before
+error is computed against raw GT. Per-scene NPZ files remain under
+`/root/autodl-tmp`; the exporter publishes only strict numeric CSV/JSON
+artifacts.

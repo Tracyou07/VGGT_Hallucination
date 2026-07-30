@@ -87,6 +87,7 @@ def run_scene_replacement(
     *,
     scene: str,
     alphas: Sequence[float] = (1.0,),
+    control_names: Sequence[str] | None = None,
     replay_tolerance: float = 5e-3,
 ) -> dict[str, object]:
     """Run baseline, selected replacement, and frozen control replacements."""
@@ -178,24 +179,46 @@ def run_scene_replacement(
     control_sets = frozen.get("control_sets")
     if not isinstance(control_sets, Sequence):
         raise ValueError("frozen replacement controls are missing")
-    if not control_sets or not isinstance(control_sets[0], Mapping):
+    if not control_sets or any(
+        not isinstance(control, Mapping) for control in control_sets
+    ):
         raise ValueError("invalid frozen replacement control")
-    control_name = str(control_sets[0].get("name", ""))
-    if not control_name:
+    available_control_names = tuple(
+        str(control.get("name", "")) for control in control_sets
+    )
+    if (
+        any(not name for name in available_control_names)
+        or len(set(available_control_names)) != len(available_control_names)
+    ):
         raise ValueError("invalid frozen replacement control")
+    requested_control_names = (
+        (available_control_names[0],)
+        if control_names is None
+        else tuple(str(name) for name in control_names)
+    )
+    if (
+        not requested_control_names
+        or len(set(requested_control_names)) != len(requested_control_names)
+        or any(
+            name not in available_control_names
+            for name in requested_control_names
+        )
+    ):
+        raise ValueError("requested replacement controls are invalid")
     conditions = [("baseline", "baseline", 0.0, None)]
     for alpha in alpha_values:
         label = _alpha_label(alpha)
+        conditions.append(
+            (f"selected_a{label}", "selected", alpha, "selected")
+        )
         conditions.extend(
             (
-                (f"selected_a{label}", "selected", alpha, "selected"),
-                (
-                    f"{control_name}_a{label}",
-                    "control",
-                    alpha,
-                    control_name,
-                ),
+                f"{control_name}_a{label}",
+                "control",
+                alpha,
+                control_name,
             )
+            for control_name in requested_control_names
         )
     condition_names = [condition[0] for condition in conditions]
 
@@ -481,6 +504,30 @@ def _parse_alphas(value: str) -> tuple[float, ...]:
     return alphas
 
 
+def _control_names_for_stage(
+    frozen: Mapping[str, object],
+    stage: str,
+) -> tuple[str, ...]:
+    """Use one control for selection and every frozen control for holdout."""
+    if stage not in {"smoke", "calibration", "holdout"}:
+        raise ValueError(f"unsupported replacement stage: {stage}")
+    control_sets = frozen.get("control_sets")
+    if not isinstance(control_sets, Sequence) or not control_sets:
+        raise ValueError("frozen replacement controls are missing")
+    names = tuple(
+        str(control.get("name", ""))
+        for control in control_sets
+        if isinstance(control, Mapping)
+    )
+    if (
+        len(names) != len(control_sets)
+        or any(not name for name in names)
+        or len(set(names)) != len(names)
+    ):
+        raise ValueError("invalid frozen replacement controls")
+    return names if stage == "holdout" else names[:1]
+
+
 def _scene_list() -> list[str]:
     return [
         line.strip()
@@ -617,6 +664,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         run_alphas = args.alphas
 
+    control_names = _control_names_for_stage(frozen, args.stage)
     invocation = {
         "stage": args.stage,
         "partition": partition,
@@ -630,6 +678,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "replay_tolerance": args.replay_tolerance,
         "unit_frozen_digest": frozen["frozen_digest"],
         "alphas": run_alphas,
+        "control_names": control_names,
     }
     commit = read_git_commit(ROOT)
     run_id = f"{commit[:7]}_{canonical_digest(invocation)[:12]}"
@@ -660,6 +709,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 device,
                 scene=scene,
                 alphas=run_alphas,
+                control_names=control_names,
                 replay_tolerance=args.replay_tolerance,
             )
             save_replacement_scene(artifact_path, result)

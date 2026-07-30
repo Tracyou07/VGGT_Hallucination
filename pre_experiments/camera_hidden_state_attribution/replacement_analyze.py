@@ -70,6 +70,7 @@ def summarize_replacement_rows(
     ):
         raise ValueError("replacement rows contain no valid alpha")
     alpha_tests = []
+    evaluated_control_counts = set()
     for alpha in alphas:
         selected_deltas = []
         control_deltas = []
@@ -96,6 +97,12 @@ def summarize_replacement_rows(
                 raise ValueError(
                     f"incomplete alpha={alpha} conditions for {scene}"
                 )
+            control_names = [str(row["condition"]) for row in controls]
+            if len(set(control_names)) != len(control_names):
+                raise ValueError(
+                    f"duplicate alpha={alpha} controls for {scene}"
+                )
+            evaluated_control_counts.add(len(controls))
             selected_delta = float(
                 selected[0]["aligned_translation_error_delta"]
             )
@@ -132,6 +139,9 @@ def summarize_replacement_rows(
                 ),
             }
         )
+    if len(evaluated_control_counts) != 1:
+        raise ValueError("replacement control count differs across scenes")
+    evaluated_control_repeats = evaluated_control_counts.pop()
     condition_aggregates = []
     conditions = sorted(
         {str(row["condition"]) for row in rows},
@@ -161,6 +171,7 @@ def summarize_replacement_rows(
         "bootstrap_unit": "scene",
         "bootstrap_samples": 10000,
         "bootstrap_seed": 33,
+        "evaluated_control_repeats": evaluated_control_repeats,
         "alpha_tests": alpha_tests,
         "condition_aggregates": condition_aggregates,
     }
@@ -361,7 +372,7 @@ def write_replacement_numeric_summary(
         "partition": partition,
         "frozen_digest": frozen["frozen_digest"],
         "selected_count": frozen["selected_count"],
-        "control_repeats": frozen["control_repeats"],
+        "configured_control_repeats": frozen["control_repeats"],
         **summarize_replacement_rows(scene_rows),
     }
     atomic_write_json(run_dir / "summary.json", summary)

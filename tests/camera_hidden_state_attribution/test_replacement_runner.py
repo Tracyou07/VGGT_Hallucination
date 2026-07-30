@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from pre_experiments.camera_hidden_state_attribution.run_replacement import (
+    _control_names_for_stage,
     _finalize_alpha_selection,
     _freeze_from_calibration_dirs,
     _validate_frozen_replacement,
@@ -75,7 +76,11 @@ class HiddenReplacementRunnerTest(unittest.TestCase):
                 {
                     "name": "control_00",
                     "positions": [{"iteration": 0, "unit": 1}],
-                }
+                },
+                {
+                    "name": "control_01",
+                    "positions": [{"iteration": 0, "unit": 2}],
+                },
             ],
         }
 
@@ -87,6 +92,7 @@ class HiddenReplacementRunnerTest(unittest.TestCase):
             self.device,
             scene="scene",
             alphas=(0.25, 1.0),
+            control_names=("control_00", "control_01"),
         )
 
         self.assertEqual(
@@ -95,8 +101,10 @@ class HiddenReplacementRunnerTest(unittest.TestCase):
                 "baseline",
                 "selected_a0p25",
                 "control_00_a0p25",
+                "control_01_a0p25",
                 "selected_a1",
                 "control_00_a1",
+                "control_01_a1",
             ],
         )
         selected = result["rows"][1]
@@ -112,11 +120,11 @@ class HiddenReplacementRunnerTest(unittest.TestCase):
         )
         self.assertEqual(
             result["pred_c2w_raw"].shape,
-            (5, 6, 4, 4),
+            (7, 6, 4, 4),
         )
         np.testing.assert_allclose(
             result["condition_alpha"],
-            np.array([0.0, 0.25, 0.25, 1.0, 1.0]),
+            np.array([0.0, 0.25, 0.25, 0.25, 1.0, 1.0, 1.0]),
         )
         np.testing.assert_array_equal(
             result["selected_window_index"],
@@ -166,6 +174,29 @@ class HiddenReplacementRunnerTest(unittest.TestCase):
                     *common,
                 ]
             )
+
+    def test_stage_control_policy_uses_one_for_calibration_and_all_for_holdout(
+        self,
+    ):
+        frozen = {
+            "control_sets": [
+                {"name": "control_00", "positions": []},
+                {"name": "control_01", "positions": []},
+            ]
+        }
+
+        self.assertEqual(
+            _control_names_for_stage(frozen, "smoke"),
+            ("control_00",),
+        )
+        self.assertEqual(
+            _control_names_for_stage(frozen, "calibration"),
+            ("control_00",),
+        )
+        self.assertEqual(
+            _control_names_for_stage(frozen, "holdout"),
+            ("control_00", "control_01"),
+        )
 
     def test_freeze_reads_authenticated_calibration_numeric_runs(self):
         with tempfile.TemporaryDirectory() as temporary:
