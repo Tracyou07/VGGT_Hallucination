@@ -14,9 +14,9 @@ Camera Head. It does not rerun image preprocessing or the Aggregator.
 
 ```bash
 conda activate vggt
-export SOURCE_RUN_DIR=/root/autodl-tmp/camera_context/results/<run>
-export CALIBRATION_LOCAL_RUN_DIR=/root/autodl-tmp/local_global_consistency/results/<calibration>
-export HOLDOUT_LOCAL_RUN_DIR=/root/autodl-tmp/local_global_consistency/results/<holdout>
+export SOURCE_RUN_DIR=/root/autodl-tmp/results/camera_context/results/RUN_ID
+export CALIBRATION_LOCAL_RUN_DIR=/root/autodl-tmp/results/local_global_consistency/results/CALIBRATION_RUN_ID
+export HOLDOUT_LOCAL_RUN_DIR=/root/autodl-tmp/results/local_global_consistency/results/HOLDOUT_RUN_ID
 export SPLIT_MANIFEST="$PWD/configs/scannet50_local_global_split.json"
 export CKPT_DIR=/root/autodl-tmp/ckpt/VGGT-1B
 STAGE=all bash scripts/autodl/run_camera_hidden_state_attribution.sh
@@ -37,7 +37,7 @@ projection.
 
 ```bash
 conda activate vggt
-export SOURCE_RUN_DIR=/root/autodl-tmp/camera_context/results/<run>
+export SOURCE_RUN_DIR=/root/autodl-tmp/results/camera_context/results/RUN_ID
 export SPLIT_MANIFEST="$PWD/configs/scannet50_local_global_split.json"
 export CKPT_DIR=/root/autodl-tmp/ckpt/VGGT-1B
 STAGE=smoke bash scripts/autodl/run_camera_hidden_causal_preference.sh
@@ -74,11 +74,11 @@ are matched by refinement iteration and replacement count.
 
 ```bash
 conda activate vggt
-export SOURCE_RUN_DIR=/root/autodl-tmp/camera_context/results/d33d98b_309a9a586242
-export CALIBRATION_LOCAL_RUN_DIR=/root/autodl-tmp/local_global_consistency/scannet50/runs/calibration/3d5de75_c5c5ae0e55fe
-export HOLDOUT_LOCAL_RUN_DIR=/root/autodl-tmp/local_global_consistency/scannet50/runs/holdout/3d5de75_35564d765bb5
-export ATTRIBUTION_CALIBRATION_DIR=/root/autodl-tmp/camera_hidden_state_attribution/results/bba0cdf_28eadd33cbf8
-export CAUSAL_CALIBRATION_DIR=/root/autodl-tmp/camera_hidden_causal_preference/results/9368808_99c8a9ed393c
+export SOURCE_RUN_DIR=/root/autodl-tmp/results/camera_context/results/d33d98b_309a9a586242
+export CALIBRATION_LOCAL_RUN_DIR=/root/autodl-tmp/results/local_global_consistency/scannet50/runs/calibration/3d5de75_c5c5ae0e55fe
+export HOLDOUT_LOCAL_RUN_DIR=/root/autodl-tmp/results/local_global_consistency/scannet50/runs/holdout/3d5de75_35564d765bb5
+export ATTRIBUTION_CALIBRATION_DIR=/root/autodl-tmp/results/camera_hidden_state_attribution/results/bba0cdf_28eadd33cbf8
+export CAUSAL_CALIBRATION_DIR=/root/autodl-tmp/results/camera_hidden_causal_preference/results/9368808_99c8a9ed393c
 export SPLIT_MANIFEST="$PWD/configs/scannet50_local_global_split.json"
 export CKPT_DIR=/root/autodl-tmp/ckpt/VGGT-1B
 export ALPHAS=0.01,0.02,0.05,0.1,0.25,0.5,1.0
@@ -111,12 +111,12 @@ all five controls at that same alpha.
 
 ```bash
 conda activate vggt
-export CALIBRATION_SCORE_RUN_DIR=/root/autodl-tmp/local_global_consistency/scannet50/runs/calibration/3d5de75_c5c5ae0e55fe
-export HOLDOUT_SCORE_RUN_DIR=/root/autodl-tmp/local_global_consistency/scannet50/runs/holdout/3d5de75_35564d765bb5
-export REPLACEMENT_CALIBRATION_DIR="$(cat /root/autodl-tmp/camera_hidden_replacement/state/calibration_run.txt)"
-export FIXED_REPLACEMENT_HOLDOUT_DIR=/root/autodl-tmp/camera_hidden_replacement/results/ae2bfc8_64df3fe10532
-export SOURCE_RUN_DIR=/root/autodl-tmp/camera_context/results/d33d98b_309a9a586242
-export HOLDOUT_LOCAL_RUN_DIR=/root/autodl-tmp/local_global_consistency/scannet50/runs/holdout/3d5de75_35564d765bb5
+export CALIBRATION_SCORE_RUN_DIR=/root/autodl-tmp/results/local_global_consistency/scannet50/runs/calibration/3d5de75_c5c5ae0e55fe
+export HOLDOUT_SCORE_RUN_DIR=/root/autodl-tmp/results/local_global_consistency/scannet50/runs/holdout/3d5de75_35564d765bb5
+export REPLACEMENT_CALIBRATION_DIR="$(cat /root/autodl-tmp/results/camera_hidden_replacement/state/calibration_run.txt)"
+export FIXED_REPLACEMENT_HOLDOUT_DIR=/root/autodl-tmp/results/camera_hidden_replacement/results/ae2bfc8_64df3fe10532
+export SOURCE_RUN_DIR=/root/autodl-tmp/results/camera_context/results/d33d98b_309a9a586242
+export HOLDOUT_LOCAL_RUN_DIR=/root/autodl-tmp/results/local_global_consistency/scannet50/runs/holdout/3d5de75_35564d765bb5
 export SPLIT_MANIFEST="$PWD/configs/scannet50_local_global_split.json"
 export CKPT_DIR=/root/autodl-tmp/ckpt/VGGT-1B
 

@@ -28,7 +28,7 @@ before running any new local-window inference:
 ```bash
 conda activate vggt
 cd /root/autodl-tmp/VGGT_Hallucination
-export SOURCE_RUN_DIR=/root/autodl-tmp/camera_context/results/<run_id>
+export SOURCE_RUN_DIR=/root/autodl-tmp/results/camera_context/results/RUN_ID
 
 python -m pre_experiments.local_global_consistency.split \
   --data-dir /root/autodl-tmp/datasets/scannetv2/process_scannet \
@@ -64,7 +64,7 @@ SOURCE_RUN_DIR="$SOURCE_RUN_DIR" STAGE=all \
 
 Rerun the same command to resume completed windows. Stable pointers and logs
 are written under
-`/root/autodl-tmp/local_global_consistency/scannet50/{pointers,logs}/`.
+`/root/autodl-tmp/results/local_global_consistency/scannet50/{pointers,logs}/`.
 For separate jobs, run `STAGE=calibration`, then:
 
 ```bash

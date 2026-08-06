@@ -3,14 +3,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 AUTODL_TMP="${AUTODL_TMP:-/root/autodl-tmp}"
+RESULTS_ROOT="${RESULTS_ROOT:-$AUTODL_TMP/results}"
 SOURCE_RUN_DIR="${SOURCE_RUN_DIR:?set SOURCE_RUN_DIR to the global camera-context run}"
 CALIBRATION_LOCAL_RUN_DIR="${CALIBRATION_LOCAL_RUN_DIR:?set CALIBRATION_LOCAL_RUN_DIR}"
 HOLDOUT_LOCAL_RUN_DIR="${HOLDOUT_LOCAL_RUN_DIR:?set HOLDOUT_LOCAL_RUN_DIR}"
 SPLIT_MANIFEST="${SPLIT_MANIFEST:?set SPLIT_MANIFEST}"
 CKPT_DIR="${CKPT_DIR:-$AUTODL_TMP/ckpt/VGGT-1B}"
-OUT_DIR="${OUT_DIR:-$AUTODL_TMP/camera_hidden_state_attribution/results}"
+OUT_DIR="${OUT_DIR:-$RESULTS_ROOT/camera_hidden_state_attribution/results}"
 PUBLISH_ROOT="${PUBLISH_ROOT:-$ROOT/results/camera_hidden_state_attribution}"
-STATE_DIR="${STATE_DIR:-$AUTODL_TMP/camera_hidden_state_attribution/state}"
+STATE_DIR="${STATE_DIR:-$RESULTS_ROOT/camera_hidden_state_attribution/state}"
 STAGE="${STAGE:-all}"
 DEVICE="${DEVICE:-cuda}"
 
