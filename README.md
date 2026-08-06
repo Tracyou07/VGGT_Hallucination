@@ -18,7 +18,7 @@ Default external paths are:
 
 - ScanNet: `/root/autodl-tmp/datasets/scannetv2`
 - VGGT-1B: `/root/autodl-tmp/ckpt/VGGT-1B`
-- Results: `/root/autodl-tmp/camera_context/results`
+- Results: `/root/autodl-tmp/results/camera_context/results`
 - Conda environment: `vggt`
 
 The context runner delegates GPU inference to the shared camera-iteration
@@ -33,7 +33,7 @@ For a smoke run:
 
 ```bash
 SCENE_LIMIT=1 FRAME_COUNTS="25 50" \
-  RESULT_DIR=/root/autodl-tmp/camera_context/smoke \
+  RESULT_DIR=/root/autodl-tmp/results/camera_context/smoke \
   bash scripts/autodl/run_camera_context.sh
 ```
 
@@ -44,7 +44,7 @@ Published Round 1.5 numeric artifacts live under
 
 ```bash
 python -m pre_experiments.camera_context.analyze \
-  --run-dir /root/autodl-tmp/camera_context/results/<run_id>
+  --run-dir /root/autodl-tmp/results/camera_context/results/RUN_ID
 python -m unittest discover -s tests
 ```
 
