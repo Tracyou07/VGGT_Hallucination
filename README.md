@@ -40,8 +40,9 @@ installs packages or downloads assets.
 
 ```bash
 cd /root/autodl-tmp/VGGT_Hallucination
-export SOURCE_RUN_DIR=/root/autodl-tmp/camera_context/results/d33d98b_309a9a586242
-REPLACEMENT_CALIBRATION_RUN="$(< /root/autodl-tmp/camera_hidden_replacement/state/calibration_run.txt)"
+export RESULTS_ROOT=/root/autodl-tmp/results
+export SOURCE_RUN_DIR="$RESULTS_ROOT/camera_context/results/d33d98b_309a9a586242"
+REPLACEMENT_CALIBRATION_RUN="$(< "$RESULTS_ROOT/camera_hidden_replacement/state/calibration_run.txt")"
 export FROZEN_UNITS="$REPLACEMENT_CALIBRATION_RUN/frozen_replacement.json"
 
 test -d "$SOURCE_RUN_DIR"
@@ -50,7 +51,7 @@ test -f "$FROZEN_UNITS"
 bash scripts/autodl/camera_refiner_data_construction/run_multiscale_study.sh smoke
 bash scripts/autodl/camera_refiner_data_construction/run_multiscale_study.sh calibration
 
-CALIBRATION_RUN="$(< /root/autodl-tmp/camera_refiner_data_construction/pointers/calibration/multiscale.txt)"
+CALIBRATION_RUN="$(< "$RESULTS_ROOT/camera_refiner_data_construction/pointers/calibration/multiscale.txt")"
 export FROZEN_POLICY="$CALIBRATION_RUN/frozen_candidate_policy.json"
 bash scripts/autodl/camera_refiner_data_construction/run_multiscale_study.sh holdout
 ```
@@ -60,7 +61,7 @@ mixtures in addition to pure scales. Keep the same value when resuming. Each
 stage first creates exact `100/50`, `200/100`, and `300/150` local-window runs,
 then replays frame-matched hidden candidates. Re-running a command resumes the
 same immutable run through pointer files under
-`/root/autodl-tmp/camera_refiner_data_construction/pointers/`.
+`/root/autodl-tmp/results/camera_refiner_data_construction/pointers/`.
 
 Calibration writes `candidate_summary.{csv,json}` and, only when all robustness
 gates pass, `frozen_candidate_policy.json`. Holdout accepts exactly that one

@@ -12,9 +12,42 @@ AUTODL = ROOT / "scripts" / "autodl" / "camera_refiner_data_construction"
 RUNNER = AUTODL / "run_multiscale_study.sh"
 VALIDATOR = AUTODL / "validate_dataset.py"
 README = ROOT / "README.md"
+REFINER_RUNNER = (
+    ROOT
+    / "pre_experiments"
+    / "camera_refiner_data_construction"
+    / "run_study.py"
+)
+LOCAL_GLOBAL_RUNNER = (
+    ROOT / "pre_experiments" / "local_global_consistency" / "run_study.py"
+)
 
 
 class AutoDLEntryPointTest(unittest.TestCase):
+    def test_all_output_defaults_use_the_canonical_results_root(self):
+        shell = RUNNER.read_text(encoding="utf-8")
+        refiner = REFINER_RUNNER.read_text(encoding="utf-8")
+        local_global = LOCAL_GLOBAL_RUNNER.read_text(encoding="utf-8")
+        readme = README.read_text(encoding="utf-8")
+        self.assertIn(
+            'RESULTS_ROOT="${RESULTS_ROOT:-$AUTODL_TMP/results}"',
+            shell,
+        )
+        self.assertIn(
+            'WORK_ROOT="${WORK_ROOT:-$RESULTS_ROOT/camera_refiner_data_construction}"',
+            shell,
+        )
+        self.assertIn('os.environ.get("RESULTS_ROOT"', refiner)
+        self.assertIn('os.environ.get("RESULTS_ROOT"', local_global)
+        for legacy in (
+            "$AUTODL_TMP/camera_refiner_data_construction",
+            'AUTODL_TMP / "camera_refiner_data_construction" / "results"',
+            'AUTODL_TMP / "local_global_consistency" / "results"',
+            "/root/autodl-tmp/camera_context/results",
+            "/root/autodl-tmp/camera_hidden_replacement/state",
+        ):
+            self.assertNotIn(legacy, "\n".join((shell, refiner, local_global, readme)))
+
     def test_readme_commands_use_resolvable_paths_not_shell_placeholders(self):
         content = README.read_text(encoding="utf-8")
         self.assertNotIn("results/<run_id>", content)

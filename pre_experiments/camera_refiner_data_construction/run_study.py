@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Mapping, Sequence
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -55,7 +56,10 @@ from pre_experiments.local_global_consistency.split import load_split_manifest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AUTODL_TMP = Path("/root/autodl-tmp")
+AUTODL_TMP = Path(os.environ.get("AUTODL_TMP", "/root/autodl-tmp"))
+RESULTS_ROOT = Path(
+    os.environ.get("RESULTS_ROOT", str(AUTODL_TMP / "results"))
+)
 
 
 def _json_object(path: Path) -> dict[str, object]:
@@ -422,7 +426,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=AUTODL_TMP / "camera_refiner_data_construction" / "results",
+        default=RESULTS_ROOT / "camera_refiner_data_construction" / "results",
     )
     parser.add_argument("--run-dir-file", type=Path)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
