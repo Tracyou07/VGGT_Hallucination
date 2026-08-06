@@ -6,6 +6,7 @@ import argparse
 from collections.abc import Mapping, Sequence
 import csv
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -46,7 +47,10 @@ from pre_experiments.local_global_consistency.split import load_split_manifest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AUTODL_TMP = Path("/root/autodl-tmp")
+AUTODL_TMP = Path(os.environ.get("AUTODL_TMP", "/root/autodl-tmp"))
+RESULTS_ROOT = Path(
+    os.environ.get("RESULTS_ROOT", str(AUTODL_TMP / "results"))
+)
 DEFAULT_ALPHAS = (0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1.0)
 
 
@@ -576,7 +580,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=AUTODL_TMP / "camera_hidden_replacement" / "results",
+        default=RESULTS_ROOT / "camera_hidden_replacement" / "results",
     )
     parser.add_argument("--run-dir-file", type=Path)
     parser.add_argument(
