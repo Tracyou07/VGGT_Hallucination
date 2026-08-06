@@ -6,6 +6,7 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import sys
@@ -40,9 +41,13 @@ from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 
 ROOT = Path(__file__).resolve().parents[2]
+AUTODL_TMP = Path(os.environ.get("AUTODL_TMP", "/root/autodl-tmp"))
+RESULTS_ROOT = Path(
+    os.environ.get("RESULTS_ROOT", str(AUTODL_TMP / "results"))
+)
 DEFAULT_SOURCE = ROOT / "results" / "camera_context" / "911b598_f4577f584448"
-DEFAULT_CHECKPOINT = Path("/root/autodl-tmp/ckpt/VGGT-1B")
-DEFAULT_OUTPUT = Path("/root/autodl-tmp/camera_head_amplification/results")
+DEFAULT_CHECKPOINT = AUTODL_TMP / "ckpt" / "VGGT-1B"
+DEFAULT_OUTPUT = RESULTS_ROOT / "camera_head_amplification" / "results"
 CONTEXT_MEMBERS = {
     "frame_ids",
     "normalized_camera_tokens",
