@@ -14,10 +14,10 @@ Camera Head. It does not rerun image preprocessing or the Aggregator.
 
 ```bash
 conda activate vggt
-export SOURCE_RUN_DIR=/root/autodl-tmp/camera_context/results/<run>
-export CALIBRATION_LOCAL_RUN_DIR=/root/autodl-tmp/local_global_consistency/results/<calibration>
-export HOLDOUT_LOCAL_RUN_DIR=/root/autodl-tmp/local_global_consistency/results/<holdout>
-export SPLIT_MANIFEST=/root/autodl-tmp/local_global_consistency/scannet50_split.json
+export SOURCE_RUN_DIR=/root/autodl-tmp/results/camera_context/results/RUN_ID
+export CALIBRATION_LOCAL_RUN_DIR=/root/autodl-tmp/results/local_global_consistency/results/CALIBRATION_RUN_ID
+export HOLDOUT_LOCAL_RUN_DIR=/root/autodl-tmp/results/local_global_consistency/results/HOLDOUT_RUN_ID
+export SPLIT_MANIFEST=/root/autodl-tmp/results/local_global_consistency/scannet50_split.json
 export CKPT_DIR=/root/autodl-tmp/ckpt/VGGT-1B
 STAGE=all bash scripts/autodl/run_camera_hidden_state_attribution.sh
 ```
