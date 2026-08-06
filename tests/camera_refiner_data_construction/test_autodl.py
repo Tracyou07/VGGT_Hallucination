@@ -11,9 +11,23 @@ ROOT = Path(__file__).resolve().parents[2]
 AUTODL = ROOT / "scripts" / "autodl" / "camera_refiner_data_construction"
 RUNNER = AUTODL / "run_multiscale_study.sh"
 VALIDATOR = AUTODL / "validate_dataset.py"
+README = ROOT / "README.md"
 
 
 class AutoDLEntryPointTest(unittest.TestCase):
+    def test_readme_commands_use_resolvable_paths_not_shell_placeholders(self):
+        content = README.read_text(encoding="utf-8")
+        self.assertNotIn("results/<run_id>", content)
+        self.assertNotIn("<frozen_units.json>", content)
+        self.assertIn(
+            "camera_context/results/d33d98b_309a9a586242",
+            content,
+        )
+        self.assertIn(
+            "camera_hidden_replacement/state/calibration_run.txt",
+            content,
+        )
+
     def test_runner_is_strict_resumable_and_uses_only_frozen_inputs(self):
         content = RUNNER.read_text(encoding="utf-8")
         for required in (

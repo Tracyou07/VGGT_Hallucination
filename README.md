@@ -40,8 +40,12 @@ installs packages or downloads assets.
 
 ```bash
 cd /root/autodl-tmp/VGGT_Hallucination
-export SOURCE_RUN_DIR=/root/autodl-tmp/camera_context/results/<run_id>
-export FROZEN_UNITS=/root/autodl-tmp/camera_hidden_state_attribution/<frozen_units.json>
+export SOURCE_RUN_DIR=/root/autodl-tmp/camera_context/results/d33d98b_309a9a586242
+REPLACEMENT_CALIBRATION_RUN="$(< /root/autodl-tmp/camera_hidden_replacement/state/calibration_run.txt)"
+export FROZEN_UNITS="$REPLACEMENT_CALIBRATION_RUN/frozen_replacement.json"
+
+test -d "$SOURCE_RUN_DIR"
+test -f "$FROZEN_UNITS"
 
 bash scripts/autodl/camera_refiner_data_construction/run_multiscale_study.sh smoke
 bash scripts/autodl/camera_refiner_data_construction/run_multiscale_study.sh calibration
