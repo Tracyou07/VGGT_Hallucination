@@ -36,9 +36,10 @@ from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 ROOT = Path(__file__).resolve().parents[2]
 AUTODL_TMP = Path(os.environ.get("AUTODL_TMP", "/root/autodl-tmp"))
+RESULTS_ROOT = Path(os.environ.get("RESULTS_ROOT", str(AUTODL_TMP / "results")))
 DEFAULT_DATA = AUTODL_TMP / "datasets" / "scannetv2" / "process_scannet"
 DEFAULT_CHECKPOINT = AUTODL_TMP / "ckpt" / "VGGT-1B"
-DEFAULT_OUTPUT = AUTODL_TMP / "local_global_consistency" / "results"
+DEFAULT_OUTPUT = RESULTS_ROOT / "local_global_consistency" / "results"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
