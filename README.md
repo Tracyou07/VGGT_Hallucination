@@ -19,7 +19,7 @@ Default locations are:
 - Environment: `/root/miniconda3/envs/vggt`
 - Data: `/root/autodl-tmp/datasets/scannetv2`
 - Weights: `/root/autodl-tmp/ckpt/VGGT-1B`
-- Results: `/root/autodl-tmp/vggt_hallucination/results`
+- Results: `/root/autodl-tmp/results/vggt_hallucination/results`
 
 The runner validates dependencies, CUDA, weights, and then executes inference.
 It never creates environments, installs packages, or downloads checkpoints.
