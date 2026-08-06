@@ -21,7 +21,7 @@ Default external paths are:
 
 - ScanNet: `/root/autodl-tmp/datasets/scannetv2`
 - VGGT-1B: `/root/autodl-tmp/ckpt/VGGT-1B`
-- Results: `/root/autodl-tmp/camera_iteration/results`
+- Results: `/root/autodl-tmp/results/camera_iteration/results`
 - Conda environment: `vggt`
 
 The runner validates these existing inputs and executes the study. If ScanNet
@@ -49,7 +49,7 @@ repository. Pass the exact run directory printed by the study:
 
 ```bash
 python scripts/autodl/camera_iteration/export_numeric_results.py \
-  --source /root/autodl-tmp/camera_iteration/results/<run_id>
+  --source /root/autodl-tmp/results/camera_iteration/results/RUN_ID
 
 du -sh results/camera_iteration/<run_id>
 git status --short results/camera_iteration/<run_id>
