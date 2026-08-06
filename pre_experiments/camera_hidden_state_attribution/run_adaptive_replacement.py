@@ -6,6 +6,7 @@ import argparse
 from collections.abc import Mapping, Sequence
 import csv
 import json
+import os
 from pathlib import Path
 
 from pre_experiments.camera_hidden_state_attribution.adaptive_alpha import (
@@ -50,7 +51,10 @@ from pre_experiments.local_global_consistency.split import load_split_manifest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AUTODL_TMP = Path("/root/autodl-tmp")
+AUTODL_TMP = Path(os.environ.get("AUTODL_TMP", "/root/autodl-tmp"))
+RESULTS_ROOT = Path(
+    os.environ.get("RESULTS_ROOT", str(AUTODL_TMP / "results"))
+)
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
@@ -217,7 +221,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=AUTODL_TMP / "camera_hidden_adaptive_alpha" / "results",
+        default=RESULTS_ROOT / "camera_hidden_adaptive_alpha" / "results",
     )
     parser.add_argument("--run-dir-file", type=Path)
     parser.add_argument(

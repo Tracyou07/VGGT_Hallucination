@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -37,7 +38,10 @@ from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AUTODL_TMP = Path("/root/autodl-tmp")
+AUTODL_TMP = Path(os.environ.get("AUTODL_TMP", "/root/autodl-tmp"))
+RESULTS_ROOT = Path(
+    os.environ.get("RESULTS_ROOT", str(AUTODL_TMP / "results"))
+)
 
 
 def measure_scene_causal_effects(
@@ -470,7 +474,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=AUTODL_TMP / "camera_hidden_causal_preference" / "results",
+        default=RESULTS_ROOT / "camera_hidden_causal_preference" / "results",
     )
     parser.add_argument("--frozen-normalization", type=Path)
     parser.add_argument("--run-dir-file", type=Path)

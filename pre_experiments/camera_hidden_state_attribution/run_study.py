@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Sequence
 
@@ -38,7 +39,10 @@ from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AUTODL_TMP = Path("/root/autodl-tmp")
+AUTODL_TMP = Path(os.environ.get("AUTODL_TMP", "/root/autodl-tmp"))
+RESULTS_ROOT = Path(
+    os.environ.get("RESULTS_ROOT", str(AUTODL_TMP / "results"))
+)
 
 
 def replay_tokens(
@@ -328,7 +332,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--local-run-dir", type=Path, required=True)
     parser.add_argument("--split-manifest", type=Path, required=True)
     parser.add_argument("--ckpt-dir", type=Path, required=True)
-    parser.add_argument("--out-dir", type=Path, default=AUTODL_TMP / "camera_hidden_state_attribution")
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=RESULTS_ROOT / "camera_hidden_state_attribution" / "results",
+    )
     parser.add_argument("--frozen-units", type=Path)
     parser.add_argument("--run-dir-file", type=Path)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
