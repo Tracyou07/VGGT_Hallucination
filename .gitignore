@@ -148,22 +148,12 @@ dmypy.json
 skyseg.onnx
 .worktrees/
 /results/*
-!/results/camera_context/
-/results/camera_context/**
-!/results/camera_context/**/
-!/results/camera_context/**/*.json
-!/results/camera_context/**/*.npz
-!/results/local_global_consistency/
-/results/local_global_consistency/**
-!/results/local_global_consistency/**/
-!/results/local_global_consistency/**/*.json
-!/results/local_global_consistency/**/*.csv
-!/results/local_global_consistency/**/README.md
-!/results/camera_hidden_state_attribution/
-/results/camera_hidden_state_attribution/**
-!/results/camera_hidden_state_attribution/**/
-!/results/camera_hidden_state_attribution/**/*.json
-!/results/camera_hidden_state_attribution/**/*.csv
+!/results/camera_refiner_training/
+/results/camera_refiner_training/**
+!/results/camera_refiner_training/**/
+!/results/camera_refiner_training/**/*.json
+!/results/camera_refiner_training/**/*.csv
+!/results/camera_refiner_training/**/README.md
 
 # pixi environments
 .pixi

@@ -2,54 +2,49 @@
 
 ## Project Structure & Module Organization
 
-`vggt/` contains the frozen baseline plus opt-in Camera Head hidden tracing and
-ablation. `pre_experiments/camera_hidden_state_attribution/` owns token replay,
-unit ranking, intervention metrics, and numeric aggregation. It consumes frozen
-artifacts from `pre_experiments/local_global_consistency/`; do not duplicate
-that inference pipeline. The AutoDL entry point is
-`scripts/autodl/run_camera_hidden_state_attribution.sh`. Focused CPU tests live
-under `tests/camera_hidden_state_attribution/`.
-
-The four committed `frames_500/context_diagnostics.npz` files under
-`results/camera_context/911b598_f4577f584448/` are frozen Round 2 inputs, not
-an active Round 1.5 result tree. Do not add other files there.
+`vggt/` contains the frozen VGGT baseline plus opt-in Camera Head tracing.
+`pre_experiments/common/` provides shared checkpoint, ScanNet, metadata, and pose
+helpers. Retained modules under `local_global_consistency/` and
+`camera_hidden_state_attribution/` are dependencies for window alignment, metrics,
+hidden replay, and frozen translation-unit features. New training code belongs under
+`pre_experiments/camera_refiner_training/`, with matching tests under
+`tests/camera_refiner_training/`. AutoDL entry points belong under
+`scripts/autodl/camera_refiner_training/`.
 
 ## Build, Test, and Development Commands
 
-- `pip install -e .` installs the checkout into the existing environment.
-- `SCANNET_TOS_ACCEPTED=1 DOWNLOAD_GT_PLY=1 bash
-  scripts/autodl/prepare_scannet50.sh` prepares the official ScanNet-50 data.
-- `STAGE=smoke bash scripts/autodl/run_camera_hidden_state_attribution.sh`
-  replays one calibration scene.
-- `STAGE=all bash scripts/autodl/run_camera_hidden_state_attribution.sh` runs
-  smoke, calibration, holdout, and numeric export in order.
-- `python -m unittest discover -s tests/camera_hidden_state_attribution -v`
-  runs attribution CPU tests.
-- `python -m unittest discover -s tests/local_global_consistency -v` runs CPU
-  tests.
-- `python scripts/autodl/local_global_consistency/export_numeric_results.py
-  --source /absolute/run` publishes completed scalar CSV/JSON outputs.
+- `pip install -e .` installs the checkout into the active environment.
+- `python -m unittest discover -s tests -v` runs retained CPU regression tests.
+- `python -m compileall -q pre_experiments` checks Python syntax.
+- `bash -n <script>` validates each new AutoDL shell entry point.
+
+Assume AutoDL already has the `vggt` Conda environment, compatible CUDA/PyTorch,
+processed ScanNet data, and the VGGT checkpoint. Do not recreate environments or
+download weights.
 
 ## Coding Style & Naming Conventions
 
-Use Python 3.10+, four-space indentation, `snake_case` functions and variables,
-and `CamelCase` classes. Preserve upstream VGGT APIs. Document tensor shapes
-and coordinate conventions at module boundaries. Shell scripts use
-`set -euo pipefail` and quoted paths.
+Use Python 3.10+, four-space indentation, `snake_case` functions and variables, and
+`CamelCase` classes. Preserve upstream VGGT APIs. Document tensor shapes, pose
+direction, coordinate gauge, and alignment rules at module boundaries. Shell scripts
+use `set -euo pipefail` and quote paths.
 
-## Testing and Metric Rules
+## Training and Metric Rules
 
-Use `unittest` and name tests `test_<behavior>`. Unit tests must not require
-CUDA, checkpoints, network access, or ScanNet credentials. Unit identity is
-`(iteration, hidden_index)`. Calibration selects units; holdout must never
-refit them. Any error metric containing predictions uses aligned prediction
-data. GT is always raw. Ranking remains prediction-only; GT appears only in
-separately named validation outputs.
+The refiner predicts camera-center translation residuals only. Final rotations must
+remain numerically identical to global VGGT rotations. Translation-preferred units
+are conditions, not direct hidden-state edits. Keep training, validation, development,
+and final-test scenes disjoint. GT-derived training labels must be clearly named; raw
+GT remains unchanged for evaluation. Prediction metrics use aligned predictions.
 
-## Reproduction and Commit Rules
+Tests use `unittest`, follow `test_<behavior>`, and must not require CUDA, network
+access, checkpoints, or ScanNet credentials. Add regression tests for coordinate
+conversion, overlap fusion, resumability, and exact rotation preservation.
 
-Assume the remote machine already has the `vggt` Conda environment and VGGT
-checkpoint. Do not restore environment-creation or weight-download scripts.
-Never commit datasets, checkpoints, images, PLY files, or raw window NPZ
-outputs. Use the strict local-global exporter and keep commits independently
-testable.
+## Artifacts and Commits
+
+Store remote artifacts under
+`/root/autodl-tmp/results/camera_refiner_training/<run_id>`. Never commit datasets,
+checkpoints, images, PLY files, full hidden traces, or raw window NPZ files. Export
+only frozen manifests, scalar CSV/JSON summaries, and concise analysis documents.
+Use short imperative commit messages and keep each commit independently testable.

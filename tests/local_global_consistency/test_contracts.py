@@ -58,15 +58,15 @@ class CommonContractTest(unittest.TestCase):
             return result.returncode == 0
 
         for path in (
-            "results/camera_context/run/run_metadata.json",
-            "results/camera_context/run/scene0000_00/frames_500/context_diagnostics.npz",
-            "results/local_global_consistency/run/prediction_scores_per_frame.csv",
-            "results/local_global_consistency/run/local_global_summary.json",
+            "results/camera_refiner_training/run/run_metadata.json",
+            "results/camera_refiner_training/run/per_scene.csv",
+            "results/camera_refiner_training/run/README.md",
         ):
             self.assertFalse(is_ignored(path), path)
         for path in (
             "results/unpublished/output.json",
-            "results/local_global_consistency/run/window_diagnostics.npz",
+            "results/camera_refiner_training/run/window_diagnostics.npz",
+            "results/camera_refiner_training/run/model.pt",
         ):
             self.assertTrue(is_ignored(path), path)
 
