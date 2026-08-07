@@ -15,6 +15,8 @@ Key modules:
   frozen holdout evaluation.
 - `dataset.py` creates and validates portable, checksum-authenticated manifests
   without copying large shards into Git.
+- `co3d_download.py` builds the resumable 2050-sequence CO3Dv2 RGB and GT-pose
+  subset directly under the AutoDL dataset root.
 
 Metric contract:
 

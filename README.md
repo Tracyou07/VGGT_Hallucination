@@ -86,3 +86,28 @@ python -m compileall -q pre_experiments vggt
 Large hidden tensors, Camera Head replay artifacts, checkpoints, datasets, and
 figures stay outside Git. The remote machine is expected to provide the `vggt`
 Conda environment, VGGT checkpoint, and processed ScanNet scenes.
+
+## AutoDL CO3Dv2 Training Subset
+
+The CO3Dv2 builder runs only on AutoDL and reuses the existing `vggt` Conda
+environment. It selects the fixed 41-category training split with 50 sequences
+per category (2050 total). A sequence must have at least 50 RGB frames with GT
+camera annotations and `viewpoint_quality_score >= 0.5`.
+
+```bash
+cd /root/autodl-tmp/VGGT_Hallucination
+git switch camera-refiner-data-construction
+git pull --ff-only origin camera-refiner-data-construction
+
+nohup bash scripts/autodl/camera_refiner_data_construction/download_co3d_2050.sh \
+  > /root/autodl-tmp/co3d_2050.log 2>&1 &
+tail -f /root/autodl-tmp/co3d_2050.log
+```
+
+Data is written to `/root/autodl-tmp/datasets/co3dv2_2050`. Re-running the
+same command resumes `.part` downloads and completed categories. The official
+server exposes category ZIP chunks rather than arbitrary sequences, so network
+transfer is larger than the final 2050-sequence subset. Only selected
+`images/` members and category annotations are retained; large ZIP files are
+deleted after each processed chunk. The authenticated final selection is
+recorded in `download_manifest.json`.
