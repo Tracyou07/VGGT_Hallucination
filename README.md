@@ -11,18 +11,12 @@ The approved experiment specification is
 ## Repository Layout
 
 - `vggt/`: upstream VGGT with opt-in Camera Head tracing.
-- `pre_experiments/common/`: shared model, ScanNet, metadata, and pose helpers.
-- `pre_experiments/local_global_consistency/`: reusable window, alignment,
-  trajectory, and metric primitives.
-- `pre_experiments/camera_hidden_state_attribution/`: reusable hidden trace and
-  frozen-unit utilities inherited from the attribution study.
-- `scripts/autodl/scannet/`: ScanNet `.sens` extraction support.
-- `paper/`: the DiffusionSfM reference paper.
-
-Training implementation and its focused tests will be added only after the design is
-reviewed and an implementation plan is approved. Historical experiment documents,
-logs, outputs, and run-only entry points belong to their original branches and are
-intentionally absent here.
+- `pre_experiments/camera_refiner_training/`: dataset adapter, residual DiT,
+  prediction-only windowing, geometry, diffusion, losses, checkpoints, training,
+  inference, metrics, and visualization.
+- `scripts/autodl/camera_refiner_training/`: one-command AutoDL entry points.
+- `paper/`: frozen papers used to justify the implementation choices.
+- `tmp/references/`: ignored, locally curated source snapshots for inspection.
 
 ## Environment
 
@@ -36,7 +30,7 @@ Install the checkout into the active environment with:
 pip install -e .
 ```
 
-Run the retained CPU regression tests with:
+Run CPU tests, including an end-to-end train/infer smoke, with:
 
 ```bash
 python -m unittest discover -s tests -v
@@ -44,3 +38,19 @@ python -m unittest discover -s tests -v
 
 Large training caches and checkpoints stay under
 `/root/autodl-tmp/results/camera_refiner_training/` and must not be committed.
+
+## AutoDL Training and Inference
+
+Set the four external artifact paths, then run:
+
+```bash
+export DATASET_MANIFEST=/root/autodl-tmp/results/camera_refiner_data_construction/RUN_ID/dataset_manifest.json
+export DATASET_ROOT=/root/autodl-tmp/results/camera_refiner_data_construction/RUN_ID
+export LOCAL_RUN_DIR=/root/autodl-tmp/results/local_global_consistency/RUN_ID
+export FROZEN_UNITS=/root/autodl-tmp/results/camera_hidden_state_attribution/RUN_ID/frozen_units.json
+bash scripts/autodl/camera_refiner_training/train.sh
+bash scripts/autodl/camera_refiner_training/infer.sh
+```
+
+Use `RESUME=1` for strict checkpoint continuation. Override defaults through
+environment variables such as `EPOCHS`, `OUT_DIR`, `DEVICE`, and `MODEL_KIND`.

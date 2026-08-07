@@ -84,8 +84,9 @@ unchanged. Final evaluation follows repository policy: predictions are aligned f
 prediction metrics, while GT remains raw.
 
 The clean diffusion target is the per-frame difference between the derived target
-center and the canonical global center. Training-set statistics normalize residuals;
-the frozen statistics are reused for validation and test.
+center and the canonical global center. The prediction-derived scene scale keeps
+targets comparable across scenes. Training-set statistics standardize condition
+features and are frozen for validation and test.
 
 ## Model Inputs and Outputs
 
@@ -115,7 +116,10 @@ All global VGGT rotation matrices are copied unchanged to the final trajectory.
 
 ## Diffusion Network
 
-Use a compact temporal Transformer rather than full 500-frame attention:
+Use a compact one-dimensional DiT rather than full 500-frame attention. Following
+the open-source RayDiffusion and DiffusionSfM implementations, diffusion time enters
+each block through adaptive LayerNorm modulation and the residual output layer starts
+at zero:
 
 - 6 Transformer encoder blocks;
 - model width 256;
@@ -142,8 +146,7 @@ The total objective contains five terms:
 - relative motion loss: match center displacement over lags 1, 5, 10, and 25;
 - overlap consistency loss: make two windows predict compatible corrections for the
   same frame;
-- conservative gate loss: discourage large corrections unless they reduce supervised
-  center error.
+- conservative gate loss: penalize correction magnitude as a small regularizer.
 
 Loss weights are selected on validation and then frozen. Translation-unit magnitude
 does not directly weight the loss because attribution evidence is stable at the unit

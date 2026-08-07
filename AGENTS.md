@@ -3,11 +3,9 @@
 ## Project Structure & Module Organization
 
 `vggt/` contains the frozen VGGT baseline plus opt-in Camera Head tracing.
-`pre_experiments/common/` provides shared checkpoint, ScanNet, metadata, and pose
-helpers. Retained modules under `local_global_consistency/` and
-`camera_hidden_state_attribution/` are dependencies for window alignment, metrics,
-hidden replay, and frozen translation-unit features. New training code belongs under
-`pre_experiments/camera_refiner_training/`, with matching tests under
+All experiment code belongs under `pre_experiments/camera_refiner_training/`,
+including windowing, geometry, artifact I/O, training, inference, and metrics.
+Matching tests belong under
 `tests/camera_refiner_training/`. AutoDL entry points belong under
 `scripts/autodl/camera_refiner_training/`.
 
@@ -16,7 +14,8 @@ hidden replay, and frozen translation-unit features. New training code belongs u
 - `pip install -e .` installs the checkout into the active environment.
 - `python -m unittest discover -s tests -v` runs retained CPU regression tests.
 - `python -m compileall -q pre_experiments` checks Python syntax.
-- `bash -n <script>` validates each new AutoDL shell entry point.
+- `bash -n scripts/autodl/camera_refiner_training/{train,infer}.sh` validates the
+  AutoDL shell entry points.
 
 Assume AutoDL already has the `vggt` Conda environment, compatible CUDA/PyTorch,
 processed ScanNet data, and the VGGT checkpoint. Do not recreate environments or

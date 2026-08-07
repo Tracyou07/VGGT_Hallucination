@@ -1,13 +1,9 @@
 # Camera Refiner Dependencies
 
-This branch retains only the predecessor modules needed by the translation refiner:
+This branch retains one self-contained experiment package:
 
-- `common/` for model loading, ScanNet input, run contracts, and pose operations;
-- `local_global_consistency/` for local windows, prediction-only alignment, trajectory
-  fusion, and evaluation metrics;
-- `camera_hidden_state_attribution/` for Camera Head replay and frozen-unit feature
-  extraction.
+- `camera_refiner_training/` for data loading, model, losses, checkpoints, training,
+  prediction-only windowing, geometry, sampling, inference, and evaluation.
 
-New model, dataset, training, sampling, and evaluation code belongs in
-`camera_refiner_training/`. Do not add new studies to the retained predecessor
-packages.
+Frozen translation-unit files and data-construction shards are external inputs. Do
+not copy their predecessor study implementations back into this branch.
