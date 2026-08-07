@@ -2,48 +2,45 @@
 
 ## Project Structure & Module Organization
 
-`vggt/` contains the frozen model and opt-in Camera Head tracing hooks.
-`pre_experiments/common/` provides shared artifact, model-loading, ScanNet, and
-pose utilities. `pre_experiments/camera_hidden_state_attribution/` and
-`pre_experiments/local_global_consistency/` are retained infrastructure for
-hidden replay, context windows, alignment, and split validation. New work must
-live under `pre_experiments/camera_refiner_data_construction/`, with matching
-CPU tests in `tests/camera_refiner_data_construction/` and AutoDL entry points
-under `scripts/autodl/camera_refiner_data_construction/`.
+`vggt/` contains the upstream model package. CO3Dv2 subset construction lives
+in `pre_experiments/camera_refiner_data_construction/co3d_download.py`.
+`configs/co3d_train41.txt` is the immutable training-category split, and
+`scripts/autodl/camera_refiner_data_construction/download_co3d_2050.sh` is the
+AutoDL entry point. Focused CPU tests live in
+`tests/camera_refiner_data_construction/`.
 
-Keep design documents in `doc/`. Store immutable scene lists and split
-manifests in `configs/`. Do not commit generated `results/` contents.
+This branch is data-only. Multiscale Camera Head experiments, ScanNet tools,
+and their results belong to the `01-camera-refiner-multiscale` branch and must not
+be added here.
 
 ## Build, Test, and Development Commands
 
-- `pip install -e .` installs the checkout in the existing environment.
-- `python -m pytest -q` runs the complete CPU test suite.
-- `python -m compileall -q pre_experiments vggt` validates Python imports and
-  syntax.
-- `SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet50.sh` prepares
-  the authorized ScanNet scenes while reusing completed downloads.
+- `python -m unittest discover -s tests/camera_refiner_data_construction -v`
+  runs the offline downloader and contract tests.
+- `python -m compileall -q pre_experiments` validates Python syntax.
+- `bash -n scripts/autodl/camera_refiner_data_construction/download_co3d_2050.sh`
+  validates the shell entry point.
+- `bash scripts/autodl/camera_refiner_data_construction/download_co3d_2050.sh`
+  starts or resumes the AutoDL dataset build.
 
 ## Coding Style & Naming Conventions
 
 Use Python 3.10+, four-space indentation, `snake_case` functions and variables,
-and `CamelCase` classes. Add type hints at public boundaries. Document tensor
-shapes, frame identity, refinement iteration, and coordinate conventions.
-Shell scripts use `set -euo pipefail` and quote all paths.
+and `CamelCase` classes. Add type hints at public boundaries. Shell scripts use
+`set -euo pipefail`, quote paths, and reuse the existing `vggt` Conda
+environment. Do not add setup, package-install, or checkpoint-download steps.
 
-## Testing and Metric Rules
+## Testing and Data Rules
 
-Name tests `test_<behavior>` and keep unit tests independent of CUDA,
-checkpoints, network access, and ScanNet credentials. Test window tails,
-overlap tie-breaking, split leakage, artifact provenance, and non-finite
-inputs explicitly.
-
-Any metric containing a prediction must use the aligned prediction. Ground
-truth always remains raw; never align or replace GT. Calibration may select
-scales and mixtures. Holdout must consume a frozen policy without refitting.
+Name tests `test_<behavior>` and keep them independent of CUDA, network access,
+checkpoints, and real CO3D archives. Test deterministic selection, valid GT
+camera filtering, RGB-only extraction, path traversal rejection, exact quotas,
+and restart behavior. Keep the 41-category, 50-sequence-per-category protocol
+stable unless the experiment definition changes explicitly.
 
 ## Commit & Pull Request Guidelines
 
-Use short imperative commits such as `Add multiscale hidden manifest`.
-Keep generated tensors and figures out of Git. Pull requests must state the
-tested command, data split, source commit, checkpoint provenance, and whether
-the change affects calibration or untouched holdout evaluation.
+Use short imperative commits such as `Add CO3D resume validation`. Never commit
+datasets, ZIP files, checkpoints, generated manifests, or results. Pull
+requests should state the tested commands and any changes to category, frame,
+quality, or sequence quotas.

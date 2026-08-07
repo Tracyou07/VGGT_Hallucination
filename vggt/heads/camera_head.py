@@ -5,9 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 
 import math
-from typing import TypedDict
-
 import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,15 +14,6 @@ import torch.nn.functional as F
 from vggt.layers import Mlp
 from vggt.layers.block import Block
 from vggt.heads.head_act import activate_pose
-
-
-class CameraTrace(TypedDict):
-    normalized_camera_tokens: torch.Tensor
-    raw_pose_enc_list: list[torch.Tensor]
-    pose_delta_list: list[torch.Tensor]
-    delta_norm: torch.Tensor
-    trunk_output_list: list[torch.Tensor]
-    pose_branch_hidden_list: list[torch.Tensor]
 
 
 class CameraHead(nn.Module):
@@ -80,19 +70,7 @@ class CameraHead(nn.Module):
         self.adaln_norm = nn.LayerNorm(dim_in, elementwise_affine=False, eps=1e-6)
         self.pose_branch = Mlp(in_features=dim_in, hidden_features=dim_in // 2, out_features=self.target_dim, drop=0)
 
-    def forward(
-        self,
-        aggregated_tokens_list: list[torch.Tensor],
-        num_iterations: int = 4,
-        return_trace: bool = False,
-        trace_pose_tokens: bool = False,
-        hidden_ablation_mask: torch.Tensor | None = None,
-        hidden_additive_perturbation: torch.Tensor | None = None,
-        pose_delta_additive_perturbation: torch.Tensor | None = None,
-        hidden_replacement_values: torch.Tensor | None = None,
-        hidden_replacement_mask: torch.Tensor | None = None,
-        hidden_replacement_alpha: float = 1.0,
-    ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
+    def forward(self, aggregated_tokens_list: list, num_iterations: int = 4) -> list:
         """
         Forward pass to predict camera parameters.
 
@@ -100,167 +78,36 @@ class CameraHead(nn.Module):
             aggregated_tokens_list (list): List of token tensors from the network;
                 the last tensor is used for prediction.
             num_iterations (int, optional): Number of iterative refinement steps. Defaults to 4.
-            return_trace (bool, optional): Return per-iteration raw pose updates and
-                summary statistics. Defaults to False.
-            trace_pose_tokens (bool, optional): Include high-dimensional modulated
-                pose tokens in the trace. Requires return_trace=True.
-            hidden_additive_perturbation (torch.Tensor, optional): Batch-specific
-                post-GELU hidden additions with shape [iteration, batch, hidden].
-            pose_delta_additive_perturbation (torch.Tensor, optional):
-                Batch-specific pose-delta additions with shape
-                [iteration, batch, 9].
-            hidden_replacement_values (torch.Tensor, optional): Frame-specific
-                post-GELU replacement values with shape
-                [iteration, batch, frame, hidden].
-            hidden_replacement_mask (torch.Tensor, optional): Boolean unit
-                selector with shape [iteration, hidden].
-            hidden_replacement_alpha (float): Interpolation fraction from the
-                current long hidden to replacement values. Defaults to 1.
 
         Returns:
-            list or tuple: Predicted camera encodings from each iteration, optionally
-                paired with a CameraTrace.
+            list: A list of predicted camera encodings (post-activation) from each iteration.
         """
         # Use tokens from the last block for camera prediction.
         tokens = aggregated_tokens_list[-1]
 
         # Extract the camera tokens
-        normalized_pose_tokens = self.token_norm(tokens[:, :, 0])
+        pose_tokens = tokens[:, :, 0]
+        pose_tokens = self.token_norm(pose_tokens)
 
-        return self.decode_pose_tokens(
-            normalized_pose_tokens,
-            num_iterations=num_iterations,
-            return_trace=return_trace,
-            trace_pose_tokens=trace_pose_tokens,
-            hidden_ablation_mask=hidden_ablation_mask,
-            hidden_additive_perturbation=hidden_additive_perturbation,
-            pose_delta_additive_perturbation=pose_delta_additive_perturbation,
-            hidden_replacement_values=hidden_replacement_values,
-            hidden_replacement_mask=hidden_replacement_mask,
-            hidden_replacement_alpha=hidden_replacement_alpha,
-        )
+        pred_pose_enc_list = self.trunk_fn(pose_tokens, num_iterations)
+        return pred_pose_enc_list
 
-    def decode_pose_tokens(
-        self,
-        normalized_pose_tokens: torch.Tensor,
-        num_iterations: int = 4,
-        return_trace: bool = False,
-        trace_pose_tokens: bool = False,
-        hidden_ablation_mask: torch.Tensor | None = None,
-        hidden_additive_perturbation: torch.Tensor | None = None,
-        pose_delta_additive_perturbation: torch.Tensor | None = None,
-        hidden_replacement_values: torch.Tensor | None = None,
-        hidden_replacement_mask: torch.Tensor | None = None,
-        hidden_replacement_alpha: float = 1.0,
-    ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
-        """Decode normalized camera tokens with iterative pose refinement."""
-        if normalized_pose_tokens.ndim != 3:
-            raise ValueError("normalized_pose_tokens must have shape [B, S, C]")
-        if num_iterations < 1:
-            raise ValueError("num_iterations must be at least 1")
-        if trace_pose_tokens and not return_trace:
-            raise ValueError("trace_pose_tokens requires return_trace=True")
-        hidden_dim = self.pose_branch.fc2.in_features
-        if hidden_ablation_mask is not None:
-            expected = (num_iterations, hidden_dim)
-            if (
-                hidden_ablation_mask.dtype != torch.bool
-                or tuple(hidden_ablation_mask.shape) != expected
-            ):
-                raise ValueError(
-                    f"hidden_ablation_mask must be boolean with shape {expected}"
-                )
-        batch_size = normalized_pose_tokens.shape[0]
-        _validate_additive_perturbation(
-            "hidden_additive_perturbation",
-            hidden_additive_perturbation,
-            (num_iterations, batch_size, hidden_dim),
-        )
-        _validate_additive_perturbation(
-            "pose_delta_additive_perturbation",
-            pose_delta_additive_perturbation,
-            (num_iterations, batch_size, self.target_dim),
-        )
-        _validate_hidden_replacement(
-            hidden_replacement_values,
-            hidden_replacement_mask,
-            expected_values=(
-                num_iterations,
-                batch_size,
-                normalized_pose_tokens.shape[1],
-                hidden_dim,
-            ),
-            expected_mask=(num_iterations, hidden_dim),
-        )
-        if (
-            isinstance(hidden_replacement_alpha, bool)
-            or not isinstance(hidden_replacement_alpha, (int, float))
-            or not math.isfinite(float(hidden_replacement_alpha))
-            or not 0.0 <= float(hidden_replacement_alpha) <= 1.0
-        ):
-            raise ValueError(
-                "hidden_replacement_alpha must be finite and between 0 and 1"
-            )
-
-        return self.trunk_fn(
-            normalized_pose_tokens,
-            num_iterations=num_iterations,
-            return_trace=return_trace,
-            trace_pose_tokens=trace_pose_tokens,
-            hidden_ablation_mask=hidden_ablation_mask,
-            hidden_additive_perturbation=hidden_additive_perturbation,
-            pose_delta_additive_perturbation=pose_delta_additive_perturbation,
-            hidden_replacement_values=hidden_replacement_values,
-            hidden_replacement_mask=hidden_replacement_mask,
-            hidden_replacement_alpha=float(hidden_replacement_alpha),
-        )
-
-    def trunk_fn(
-        self,
-        pose_tokens: torch.Tensor,
-        num_iterations: int,
-        return_trace: bool = False,
-        trace_pose_tokens: bool = False,
-        hidden_ablation_mask: torch.Tensor | None = None,
-        hidden_additive_perturbation: torch.Tensor | None = None,
-        pose_delta_additive_perturbation: torch.Tensor | None = None,
-        hidden_replacement_values: torch.Tensor | None = None,
-        hidden_replacement_mask: torch.Tensor | None = None,
-        hidden_replacement_alpha: float = 1.0,
-    ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
+    def trunk_fn(self, pose_tokens: torch.Tensor, num_iterations: int) -> list:
         """
         Iteratively refine camera pose predictions.
 
         Args:
             pose_tokens (torch.Tensor): Normalized camera tokens with shape [B, S, C].
             num_iterations (int): Number of refinement iterations.
-            return_trace (bool): Return raw per-iteration state when True.
-            trace_pose_tokens (bool): Retain modulated pose tokens when True.
-            hidden_additive_perturbation (torch.Tensor, optional): Hidden
-                additions with shape [iteration, batch, hidden].
-            pose_delta_additive_perturbation (torch.Tensor, optional):
-                Pose-delta additions with shape [iteration, batch, 9].
-            hidden_replacement_values (torch.Tensor, optional): Frame-specific
-                post-GELU replacement values with shape
-                [iteration, batch, frame, hidden].
-            hidden_replacement_mask (torch.Tensor, optional): Boolean unit
-                selector with shape [iteration, hidden].
-            hidden_replacement_alpha (float): Interpolation fraction from the
-                current hidden to replacement values.
 
         Returns:
-            list or tuple: Activated camera encodings, optionally paired with a trace.
+            list: List of activated camera encodings from each iteration.
         """
         B, S, C = pose_tokens.shape
         pred_pose_enc = None
         pred_pose_enc_list = []
-        raw_pose_enc_list = [] if return_trace else None
-        pose_delta_list = [] if return_trace else None
-        delta_norm_list = [] if return_trace else None
-        trunk_output_list = [] if trace_pose_tokens else None
-        pose_branch_hidden_list = [] if trace_pose_tokens else None
 
-        for iteration in range(num_iterations):
+        for _ in range(num_iterations):
             # Use a learned empty pose for the first iteration.
             if pred_pose_enc is None:
                 module_input = self.embed_pose(self.empty_pose_tokens.expand(B, S, -1))
@@ -276,70 +123,14 @@ class CameraHead(nn.Module):
             pose_tokens_modulated = gate_msa * modulate(self.adaln_norm(pose_tokens), shift_msa, scale_msa)
             pose_tokens_modulated = pose_tokens_modulated + pose_tokens
 
-            trunk_output = self.trunk(pose_tokens_modulated)
+            pose_tokens_modulated = self.trunk(pose_tokens_modulated)
             # Compute the delta update for the pose encoding.
-            pose_branch_hidden = self.pose_branch.forward_features(
-                self.trunk_norm(trunk_output)
-            )
-            if hidden_ablation_mask is not None:
-                mask = hidden_ablation_mask[iteration].to(
-                    device=pose_branch_hidden.device
-                )
-                pose_branch_hidden = pose_branch_hidden.masked_fill(mask, 0)
-            if hidden_replacement_values is not None:
-                assert hidden_replacement_mask is not None
-                replacement = hidden_replacement_values[iteration].to(
-                    device=pose_branch_hidden.device,
-                    dtype=pose_branch_hidden.dtype,
-                )
-                replacement_mask = hidden_replacement_mask[iteration].to(
-                    device=pose_branch_hidden.device
-                )[None, None, :]
-                interpolated = torch.lerp(
-                    pose_branch_hidden,
-                    replacement,
-                    hidden_replacement_alpha,
-                )
-                pose_branch_hidden = torch.where(
-                    replacement_mask,
-                    interpolated,
-                    pose_branch_hidden,
-                )
-            if hidden_additive_perturbation is not None:
-                hidden_addition = hidden_additive_perturbation[iteration].to(
-                    device=pose_branch_hidden.device,
-                    dtype=pose_branch_hidden.dtype,
-                )
-                pose_branch_hidden = (
-                    pose_branch_hidden + hidden_addition[:, None, :]
-                )
-            pred_pose_enc_delta = self.pose_branch.forward_head(pose_branch_hidden)
-            if pose_delta_additive_perturbation is not None:
-                delta_addition = pose_delta_additive_perturbation[iteration].to(
-                    device=pred_pose_enc_delta.device,
-                    dtype=pred_pose_enc_delta.dtype,
-                )
-                pred_pose_enc_delta = (
-                    pred_pose_enc_delta + delta_addition[:, None, :]
-                )
+            pred_pose_enc_delta = self.pose_branch(self.trunk_norm(pose_tokens_modulated))
 
             if pred_pose_enc is None:
                 pred_pose_enc = pred_pose_enc_delta
             else:
                 pred_pose_enc = pred_pose_enc + pred_pose_enc_delta
-
-            if return_trace:
-                assert raw_pose_enc_list is not None
-                assert pose_delta_list is not None
-                assert delta_norm_list is not None
-                raw_pose_enc_list.append(pred_pose_enc)
-                pose_delta_list.append(pred_pose_enc_delta)
-                delta_norm_list.append(pred_pose_enc_delta.float().norm(dim=-1))
-                if trace_pose_tokens:
-                    assert trunk_output_list is not None
-                    assert pose_branch_hidden_list is not None
-                    trunk_output_list.append(trunk_output)
-                    pose_branch_hidden_list.append(pose_branch_hidden)
 
             # Apply final activation functions for translation, quaternion, and field-of-view.
             activated_pose = activate_pose(
@@ -347,70 +138,7 @@ class CameraHead(nn.Module):
             )
             pred_pose_enc_list.append(activated_pose)
 
-        if not return_trace:
-            return pred_pose_enc_list
-
-        assert raw_pose_enc_list is not None
-        assert pose_delta_list is not None
-        assert delta_norm_list is not None
-        trace: CameraTrace = {
-            "normalized_camera_tokens": pose_tokens,
-            "raw_pose_enc_list": raw_pose_enc_list,
-            "pose_delta_list": pose_delta_list,
-            "delta_norm": torch.stack(delta_norm_list, dim=0),
-            "trunk_output_list": trunk_output_list or [],
-            "pose_branch_hidden_list": pose_branch_hidden_list or [],
-        }
-        return pred_pose_enc_list, trace
-
-
-def _validate_additive_perturbation(
-    name: str,
-    perturbation: torch.Tensor | None,
-    expected_shape: tuple[int, int, int],
-) -> None:
-    if perturbation is None:
-        return
-    if (
-        not perturbation.is_floating_point()
-        or tuple(perturbation.shape) != expected_shape
-        or not bool(torch.isfinite(perturbation).all())
-    ):
-        raise ValueError(
-            f"{name} must be finite floating-point data with shape "
-            f"{expected_shape}"
-        )
-
-
-def _validate_hidden_replacement(
-    values: torch.Tensor | None,
-    mask: torch.Tensor | None,
-    *,
-    expected_values: tuple[int, int, int, int],
-    expected_mask: tuple[int, int],
-) -> None:
-    if (values is None) != (mask is None):
-        raise ValueError(
-            "hidden_replacement_values and hidden_replacement_mask "
-            "must be provided together"
-        )
-    if values is None:
-        return
-    assert mask is not None
-    if (
-        not values.is_floating_point()
-        or tuple(values.shape) != expected_values
-        or not bool(torch.isfinite(values).all())
-    ):
-        raise ValueError(
-            "hidden_replacement_values must be finite floating-point data "
-            f"with shape {expected_values}"
-        )
-    if mask.dtype != torch.bool or tuple(mask.shape) != expected_mask:
-        raise ValueError(
-            "hidden_replacement_mask must be boolean with shape "
-            f"{expected_mask}"
-        )
+        return pred_pose_enc_list
 
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:

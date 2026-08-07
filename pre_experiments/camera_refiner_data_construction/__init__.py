@@ -1,2 +1,2 @@
-"""Multiscale Camera hidden validation and dataset construction."""
+"""CO3Dv2 data construction for camera-refiner training."""
 

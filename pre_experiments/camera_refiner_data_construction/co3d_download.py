@@ -17,9 +17,6 @@ from typing import Iterable, Mapping, Sequence
 import zipfile
 import zlib
 
-from pre_experiments.common.contracts import atomic_write_json
-
-
 DEFAULT_BASE_URL = "https://dl.fbaipublicfiles.com/co3dv2_231130"
 DEFAULT_OUTPUT_ROOT = Path("/root/autodl-tmp/datasets/co3dv2_2050")
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -56,6 +53,16 @@ class ArchiveImage:
 
 class ArchiveNotFoundError(RuntimeError):
     """Raised when a numbered category archive does not exist upstream."""
+
+
+def _atomic_write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
 
 
 def archive_url(base_url: str, category: str, archive_index: int) -> str:
@@ -701,7 +708,7 @@ def _process_category(
     assert isinstance(selected, list)
     if len(selected) == sequences_per_category:
         state["completed"] = True
-        atomic_write_json(state_path, state)
+        _atomic_write_json(state_path, state)
         print(f"[resume] {category}: already complete", flush=True)
         return state
 
@@ -767,7 +774,7 @@ def _process_category(
         archives_processed += 1
         state["next_archive_index"] = archive_index
         state["completed"] = len(selected) == sequences_per_category
-        atomic_write_json(state_path, state)
+        _atomic_write_json(state_path, state)
         if not keep_archives:
             archive_path.unlink(missing_ok=True)
 
@@ -851,7 +858,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         source_base_url=args.base_url,
     )
     manifest_path = args.output_root / "download_manifest.json"
-    atomic_write_json(manifest_path, manifest)
+    _atomic_write_json(manifest_path, manifest)
     print(
         f"[done] sequences={manifest['sequence_count']} manifest={manifest_path}",
         flush=True,
