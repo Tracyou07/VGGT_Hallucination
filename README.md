@@ -5,8 +5,10 @@ camera trajectories. The model uses overlapping 100-frame local predictions and
 translation-preferred Camera Head features to correct camera centers from a
 500-frame global prediction. Global VGGT rotations remain unchanged.
 
-The approved experiment specification is
-[`doc/2026-08-07_Translation_Only_Residual_Diffusion_Design.md`](doc/2026-08-07_Translation_Only_Residual_Diffusion_Design.md).
+The approved experiment specifications are:
+
+- [`doc/2026-08-07_Translation_Only_Residual_Diffusion_Design.md`](doc/2026-08-07_Translation_Only_Residual_Diffusion_Design.md)
+- [`doc/2026-08-07_CO3D_Pretraining_and_ScanNet_Finetuning_Design.md`](doc/2026-08-07_CO3D_Pretraining_and_ScanNet_Finetuning_Design.md)
 
 ## Repository Layout
 

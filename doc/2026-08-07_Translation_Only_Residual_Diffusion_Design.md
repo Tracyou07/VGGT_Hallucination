@@ -46,6 +46,11 @@ shows a measurable advantage.
 
 ## Data and Split Integrity
 
+CO3Dv2 pretraining is an additive stage defined in
+[`2026-08-07_CO3D_Pretraining_and_ScanNet_Finetuning_Design.md`](2026-08-07_CO3D_Pretraining_and_ScanNet_Finetuning_Design.md).
+It learns a short multiview camera-motion prior but does not replace the ScanNet
+500-frame fine-tuning and evaluation protocol below.
+
 The previously inspected ScanNet-50 results are development evidence, not a fully
 untouched final test set for this learned method. Model training must use additional
 ScanNet training scenes that were not used in the earlier 10-scene calibration or
