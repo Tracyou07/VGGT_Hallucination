@@ -10,7 +10,7 @@ AutoDL entry point. Focused CPU tests live in
 `tests/camera_refiner_data_construction/`.
 
 This branch is data-only. Multiscale Camera Head experiments, ScanNet tools,
-and their results belong to the `01-camera-refiner-multiscale` branch and must not
+and their results belong to the `016-camera-refiner-multiscale` branch and must not
 be added here.
 
 ## Build, Test, and Development Commands

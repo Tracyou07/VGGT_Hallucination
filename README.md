@@ -2,7 +2,7 @@
 
 This branch builds a compact CO3Dv2 training subset for the camera refiner. It
 contains no multiscale Camera Head experiments or ScanNet result pipeline;
-those live on the `01-camera-refiner-multiscale` branch and worktree.
+those live on the `016-camera-refiner-multiscale` branch and worktree.
 
 ## Dataset Protocol
 
@@ -23,8 +23,8 @@ script does not create environments, install packages, or download weights.
 
 ```bash
 cd /root/autodl-tmp/VGGT_Hallucination
-git switch 02-camera-refiner-data-construction
-git pull --ff-only origin 02-camera-refiner-data-construction
+git switch 021-camera-refiner-data-construction
+git pull --ff-only origin 021-camera-refiner-data-construction
 
 nohup bash scripts/autodl/camera_refiner_data_construction/download_co3d_2050.sh \
   > /root/autodl-tmp/co3d_2050.log 2>&1 &
