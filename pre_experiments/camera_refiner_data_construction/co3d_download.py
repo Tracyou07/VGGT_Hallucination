@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Iterator, Mapping, Sequence, TextIO
 import zipfile
 import zlib
 
@@ -128,17 +128,11 @@ def load_eligible_sequences(
         raise ValueError("min_frames must be positive")
     if not math.isfinite(min_quality):
         raise ValueError("min_quality must be finite")
-    frame_rows = _annotation_rows(
-        _read_jgz(category_dir / "frame_annotations.jgz"),
-        keys=("frames", "frame_annotations"),
-    )
-    sequence_rows = _annotation_rows(
-        _read_jgz(category_dir / "sequence_annotations.jgz"),
-        keys=("sequences", "sequence_annotations"),
-    )
-
     qualities: dict[str, float] = {}
-    for row in sequence_rows:
+    for row in _iter_jgz_rows(
+        category_dir / "sequence_annotations.jgz",
+        keys=("sequences", "sequence_annotations"),
+    ):
         name = row.get("sequence_name")
         score = row.get("viewpoint_quality_score")
         if not isinstance(name, str):
@@ -147,14 +141,19 @@ def load_eligible_sequences(
             numeric_score = float(score)
         except (TypeError, ValueError):
             continue
-        if math.isfinite(numeric_score):
+        if math.isfinite(numeric_score) and numeric_score >= min_quality:
             qualities[name] = numeric_score
 
     paths_by_sequence: dict[str, set[str]] = defaultdict(set)
-    for row in frame_rows:
+    for row in _iter_jgz_rows(
+        category_dir / "frame_annotations.jgz",
+        keys=("frames", "frame_annotations"),
+    ):
         sequence_name = row.get("sequence_name")
         image = row.get("image")
         if not isinstance(sequence_name, str) or not isinstance(image, Mapping):
+            continue
+        if sequence_name not in qualities:
             continue
         if not _has_valid_pose(row.get("viewpoint")):
             continue
@@ -354,23 +353,145 @@ def _validate_category(category: str) -> None:
         raise ValueError(f"invalid CO3D category: {category!r}")
 
 
-def _read_jgz(path: Path) -> object:
+class _JsonTextStream:
+    """Incrementally decode JSON values while keeping a bounded text buffer."""
+
+    def __init__(self, handle: TextIO, *, chunk_size: int = 64 * 1024) -> None:
+        self.handle = handle
+        self.chunk_size = chunk_size
+        self.buffer = ""
+        self.position = 0
+        self.eof = False
+        self.decoder = json.JSONDecoder()
+
+    def _fill(self) -> bool:
+        if self.position:
+            self.buffer = self.buffer[self.position :]
+            self.position = 0
+        chunk = self.handle.read(self.chunk_size)
+        if not chunk:
+            self.eof = True
+            return False
+        self.buffer += chunk
+        return True
+
+    def peek(self) -> str:
+        while True:
+            while self.position < len(self.buffer) and self.buffer[self.position].isspace():
+                self.position += 1
+            if self.position < len(self.buffer):
+                return self.buffer[self.position]
+            if self.eof or not self._fill():
+                return ""
+
+    def take(self, expected: str) -> None:
+        actual = self.peek()
+        if actual != expected:
+            raise ValueError(f"expected {expected!r} in JSON stream, found {actual!r}")
+        self.position += 1
+
+    def value(self) -> object:
+        while True:
+            if not self.peek():
+                raise ValueError("unexpected end of JSON stream")
+            try:
+                value, end = self.decoder.raw_decode(self.buffer, self.position)
+            except json.JSONDecodeError as error:
+                if self.eof or not self._fill():
+                    raise ValueError("invalid JSON annotation payload") from error
+                continue
+            self.position = end
+            return value
+
+
+def _iter_stream_array(stream: _JsonTextStream) -> Iterator[Mapping[str, object]]:
+    stream.take("[")
+    if stream.peek() == "]":
+        stream.take("]")
+        return
+    while True:
+        row = stream.value()
+        if not isinstance(row, Mapping):
+            raise ValueError("CO3D annotation array must contain objects")
+        yield row
+        delimiter = stream.peek()
+        if delimiter == ",":
+            stream.take(",")
+            continue
+        if delimiter == "]":
+            stream.take("]")
+            return
+        raise ValueError(f"invalid JSON array delimiter: {delimiter!r}")
+
+
+def _skip_stream_value(stream: _JsonTextStream) -> None:
+    marker = stream.peek()
+    if marker == "[":
+        stream.take("[")
+        if stream.peek() == "]":
+            stream.take("]")
+            return
+        while True:
+            _skip_stream_value(stream)
+            delimiter = stream.peek()
+            if delimiter == ",":
+                stream.take(",")
+                continue
+            stream.take("]")
+            return
+    if marker == "{":
+        stream.take("{")
+        if stream.peek() == "}":
+            stream.take("}")
+            return
+        while True:
+            if not isinstance(stream.value(), str):
+                raise ValueError("JSON object key must be a string")
+            stream.take(":")
+            _skip_stream_value(stream)
+            delimiter = stream.peek()
+            if delimiter == ",":
+                stream.take(",")
+                continue
+            stream.take("}")
+            return
+    stream.value()
+
+
+def _iter_jgz_rows(path: Path, *, keys: Sequence[str]) -> Iterator[Mapping[str, object]]:
     if not path.is_file():
         raise FileNotFoundError(f"missing CO3D annotation: {path}")
     with gzip.open(path, "rt", encoding="utf-8") as handle:
-        return json.load(handle)
+        stream = _JsonTextStream(handle)
+        marker = stream.peek()
+        if marker == "[":
+            yield from _iter_stream_array(stream)
+            return
+        if marker != "{":
+            raise ValueError("CO3D annotation payload must contain an array of objects")
 
-
-def _annotation_rows(payload: object, *, keys: Sequence[str]) -> list[Mapping[str, object]]:
-    rows: object = payload
-    if isinstance(payload, Mapping):
-        for key in keys:
-            if key in payload:
-                rows = payload[key]
+        stream.take("{")
+        if stream.peek() == "}":
+            raise ValueError("CO3D annotation object does not contain a row array")
+        while True:
+            key = stream.value()
+            if not isinstance(key, str):
+                raise ValueError("JSON object key must be a string")
+            stream.take(":")
+            if key in keys:
+                if stream.peek() != "[":
+                    raise ValueError(f"CO3D annotation field {key!r} must be an array")
+                yield from _iter_stream_array(stream)
+                return
+            _skip_stream_value(stream)
+            delimiter = stream.peek()
+            if delimiter == ",":
+                stream.take(",")
+                continue
+            if delimiter == "}":
                 break
-    if not isinstance(rows, list) or not all(isinstance(row, Mapping) for row in rows):
-        raise ValueError("CO3D annotation payload must contain a list of objects")
-    return rows
+            raise ValueError(f"invalid JSON object delimiter: {delimiter!r}")
+        raise ValueError("CO3D annotation object does not contain a row array")
 
 
 def _finite_vector(value: object, length: int) -> bool:
@@ -535,8 +656,6 @@ def _copy_metadata(archive_path: Path, category_dir: Path, category: str) -> Non
             with archive.open(info) as source, temporary.open("wb") as target:
                 shutil.copyfileobj(source, target, length=1024 * 1024)
             temporary.replace(destination)
-    for basename in _REQUIRED_METADATA:
-        _read_jgz(category_dir / basename)
 
 
 def _ensure_metadata(

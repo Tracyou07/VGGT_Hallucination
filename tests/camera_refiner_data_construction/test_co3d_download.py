@@ -46,6 +46,33 @@ def _write_jgz(path: Path, payload: object) -> None:
 
 
 class Co3DMetadataTest(unittest.TestCase):
+    def test_streams_annotations_without_loading_the_full_json_document(self):
+        with TemporaryDirectory() as temporary:
+            category_dir = Path(temporary) / "apple"
+            category_dir.mkdir()
+            _write_jgz(
+                category_dir / "frame_annotations.jgz",
+                [_frame("apple", "good", index) for index in range(3)],
+            )
+            _write_jgz(
+                category_dir / "sequence_annotations.jgz",
+                [{"sequence_name": "good", "viewpoint_quality_score": 0.9}],
+            )
+
+            with patch.object(
+                co3d_download.json,
+                "load",
+                side_effect=AssertionError("full-document JSON loading is not allowed"),
+            ):
+                candidates = load_eligible_sequences(
+                    category_dir,
+                    category="apple",
+                    min_frames=3,
+                    min_quality=0.5,
+                )
+
+        self.assertEqual(tuple(candidates), ("good",))
+
     def test_filters_by_quality_frame_count_and_valid_camera_pose(self):
         with TemporaryDirectory() as temporary:
             category_dir = Path(temporary) / "apple"
