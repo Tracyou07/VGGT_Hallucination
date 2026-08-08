@@ -68,6 +68,12 @@ class AutoDLEntryPointTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_downloader_rejects_concurrent_writers(self):
+        content = DOWNLOADER.read_text(encoding="utf-8")
+        self.assertIn('command -v flock', content)
+        self.assertIn('flock --nonblock', content)
+        self.assertIn('.download.lock', content)
+
     def test_data_branch_has_no_multiscale_or_scannet_entry_points(self):
         forbidden = (
             AUTODL / "run_multiscale_study.sh",

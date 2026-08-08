@@ -23,6 +23,7 @@ CURL_BIN="${CURL_BIN:-curl}"
 [[ -f "$CONDA_SH" ]] || { printf 'Missing Conda activation: %s\n' "$CONDA_SH" >&2; exit 1; }
 [[ -f "$CATEGORY_FILE" ]] || { printf 'Missing category list: %s\n' "$CATEGORY_FILE" >&2; exit 1; }
 command -v "$CURL_BIN" >/dev/null || { printf 'Missing curl executable: %s\n' "$CURL_BIN" >&2; exit 1; }
+command -v flock >/dev/null || { printf 'Missing required command: flock\n' >&2; exit 1; }
 for value in "$SEQUENCES_PER_CATEGORY" "$MIN_FRAMES"; do
   [[ "$value" =~ ^[1-9][0-9]*$ ]] || { printf 'Sequence and frame quotas must be positive integers.\n' >&2; exit 1; }
 done
@@ -45,6 +46,12 @@ conda activate "$CONDA_ENV_NAME"
 cd "$REPO_ROOT"
 
 mkdir -p "$OUTPUT_ROOT"
+LOCK_FILE="$OUTPUT_ROOT/.download.lock"
+exec 9>"$LOCK_FILE"
+flock --nonblock 9 || {
+  printf 'Another CO3D download is already using %s\n' "$OUTPUT_ROOT" >&2
+  exit 1
+}
 df -h "$AUTODL_TMP"
 
 args=(

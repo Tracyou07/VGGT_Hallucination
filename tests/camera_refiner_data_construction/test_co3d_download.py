@@ -106,6 +106,14 @@ class Co3DMetadataTest(unittest.TestCase):
 
 
 class Co3DArchiveTest(unittest.TestCase):
+    def test_parses_total_size_from_proxy_range_headers(self):
+        headers = (
+            "HTTP/1.1 206 Partial Content\r\n"
+            "content-length: 1\r\n"
+            "content-range: bytes 0-0/20141321935\r\n\r\n"
+        )
+        self.assertEqual(co3d_download._parse_http_size(headers), 20141321935)
+
     def test_repairs_a_complete_archive_with_a_stale_partial_prefix(self):
         with TemporaryDirectory() as temporary:
             archive = Path(temporary) / "apple_001.zip.part"
@@ -122,6 +130,37 @@ class Co3DArchiveTest(unittest.TestCase):
 
             self.assertTrue(repaired)
             self.assertEqual(archive.read_bytes(), expected)
+
+    def test_discards_an_unreadable_full_partial_before_redownloading(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            valid = root / "valid.zip"
+            with zipfile.ZipFile(valid, "w") as handle:
+                handle.writestr("apple/seq/images/frame000000.jpg", b"rgb")
+            valid_bytes = valid.read_bytes()
+            destination = root / "apple_001.zip"
+            partial = destination.with_suffix(".zip.part")
+            partial.write_bytes(b"x" * len(valid_bytes))
+
+            def fake_curl(command, *, check):
+                del command, check
+                self.assertFalse(partial.exists())
+                partial.write_bytes(valid_bytes)
+                return co3d_download.subprocess.CompletedProcess([], 0)
+
+            with patch.object(
+                co3d_download,
+                "_probe_http_size",
+                return_value=len(valid_bytes),
+            ), patch.object(co3d_download.subprocess, "run", side_effect=fake_curl):
+                result = co3d_download.download_archive(
+                    "https://example.invalid/apple_001.zip",
+                    destination,
+                    curl_bin="curl",
+                )
+
+            self.assertEqual(result, destination)
+            self.assertTrue(co3d_download._zip_is_readable(destination))
 
     def test_inspects_and_extracts_only_selected_rgb_members(self):
         with TemporaryDirectory() as temporary:

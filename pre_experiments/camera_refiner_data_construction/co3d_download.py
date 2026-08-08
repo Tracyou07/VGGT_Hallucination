@@ -573,6 +573,21 @@ def _zip_is_readable(path: Path) -> bool:
     return True
 
 
+def _parse_http_size(headers: str) -> int | None:
+    range_matches = re.findall(
+        r"(?im)^content-range:\s*bytes\s+[^/]+/(\d+)\s*$",
+        headers,
+    )
+    if range_matches:
+        size = int(range_matches[-1])
+        return size if size > 0 else None
+    length_matches = re.findall(r"(?im)^content-length:\s*(\d+)\s*$", headers)
+    if not length_matches:
+        return None
+    size = int(length_matches[-1])
+    return size if size > 0 else None
+
+
 def _probe_http_size(url: str, curl_bin: str) -> int | None:
     result = subprocess.run(
         [
@@ -583,6 +598,12 @@ def _probe_http_size(url: str, curl_bin: str) -> int | None:
             "--show-error",
             "--connect-timeout",
             "30",
+            "--max-time",
+            "60",
+            "--header",
+            "Accept-Encoding: identity",
+            "--range",
+            "0-0",
             url,
         ],
         check=False,
@@ -591,11 +612,7 @@ def _probe_http_size(url: str, curl_bin: str) -> int | None:
     )
     if result.returncode != 0:
         return None
-    matches = re.findall(r"(?im)^content-length:\s*(\d+)\s*$", result.stdout)
-    if not matches:
-        return None
-    size = int(matches[-1])
-    return size if size > 0 else None
+    return _parse_http_size(result.stdout)
 
 
 def _remove_file_prefix(path: Path, prefix_size: int) -> None:
@@ -651,6 +668,19 @@ def _repair_oversized_archive(path: Path, *, expected_size: int) -> bool:
     return path.stat().st_size == expected_size and _zip_is_readable(path)
 
 
+def _discard_unreadable_complete_archive(path: Path, *, expected_size: int) -> None:
+    if not path.is_file() or path.stat().st_size < expected_size:
+        return
+    if _zip_is_readable(path):
+        return
+    print(
+        f"[discard] removing unreadable complete archive {path} "
+        f"({path.stat().st_size} bytes)",
+        flush=True,
+    )
+    path.unlink()
+
+
 def _probe_http_status(url: str, curl_bin: str) -> int | None:
     result = subprocess.run(
         [
@@ -684,6 +714,14 @@ def download_archive(url: str, destination: Path, *, curl_bin: str) -> Path:
     if expected_size is not None:
         _repair_oversized_archive(destination, expected_size=expected_size)
         _repair_oversized_archive(partial, expected_size=expected_size)
+        _discard_unreadable_complete_archive(
+            destination,
+            expected_size=expected_size,
+        )
+        _discard_unreadable_complete_archive(
+            partial,
+            expected_size=expected_size,
+        )
     if _zip_is_readable(destination):
         return destination
     if _zip_is_readable(partial):
