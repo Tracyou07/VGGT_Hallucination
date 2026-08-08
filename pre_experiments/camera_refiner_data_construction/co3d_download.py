@@ -573,6 +573,84 @@ def _zip_is_readable(path: Path) -> bool:
     return True
 
 
+def _probe_http_size(url: str, curl_bin: str) -> int | None:
+    result = subprocess.run(
+        [
+            curl_bin,
+            "--head",
+            "--location",
+            "--silent",
+            "--show-error",
+            "--connect-timeout",
+            "30",
+            url,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    matches = re.findall(r"(?im)^content-length:\s*(\d+)\s*$", result.stdout)
+    if not matches:
+        return None
+    size = int(matches[-1])
+    return size if size > 0 else None
+
+
+def _remove_file_prefix(path: Path, prefix_size: int) -> None:
+    if prefix_size <= 0:
+        raise ValueError("prefix_size must be positive")
+
+    fallocate = shutil.which("fallocate")
+    if fallocate is not None:
+        result = subprocess.run(
+            [
+                fallocate,
+                "--collapse-range",
+                "--offset",
+                "0",
+                "--length",
+                str(prefix_size),
+                str(path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return
+
+    temporary = path.with_suffix(path.suffix + ".repair")
+    temporary.unlink(missing_ok=True)
+    with path.open("rb") as source, temporary.open("wb") as target:
+        source.seek(prefix_size)
+        shutil.copyfileobj(source, target, length=8 * 1024 * 1024)
+    temporary.replace(path)
+
+
+def _repair_oversized_archive(path: Path, *, expected_size: int) -> bool:
+    """Remove a stale resume prefix when a full ZIP was appended to it."""
+    if not path.is_file() or expected_size <= 0:
+        return False
+    actual_size = path.stat().st_size
+    if actual_size <= expected_size:
+        return False
+    prefix_size = actual_size - expected_size
+    with path.open("rb") as handle:
+        handle.seek(prefix_size)
+        signature = handle.read(4)
+    if signature not in (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"):
+        return False
+
+    print(
+        f"[repair] stripping {prefix_size} stale prefix bytes from {path}",
+        flush=True,
+    )
+    _remove_file_prefix(path, prefix_size)
+    return path.stat().st_size == expected_size and _zip_is_readable(path)
+
+
 def _probe_http_status(url: str, curl_bin: str) -> int | None:
     result = subprocess.run(
         [
@@ -602,6 +680,10 @@ def download_archive(url: str, destination: Path, *, curl_bin: str) -> Path:
     """Download one archive with retries while retaining partial progress."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_suffix(destination.suffix + ".part")
+    expected_size = _probe_http_size(url, curl_bin)
+    if expected_size is not None:
+        _repair_oversized_archive(destination, expected_size=expected_size)
+        _repair_oversized_archive(partial, expected_size=expected_size)
     if _zip_is_readable(destination):
         return destination
     if _zip_is_readable(partial):
@@ -616,6 +698,8 @@ def download_archive(url: str, destination: Path, *, curl_bin: str) -> Path:
 
     print(f"[download] {url}", flush=True)
     result = subprocess.run(build_curl_command(url, partial, curl_bin), check=False)
+    if expected_size is not None:
+        _repair_oversized_archive(partial, expected_size=expected_size)
     if result.returncode != 0:
         status = _probe_http_status(url, curl_bin)
         if status == 404:

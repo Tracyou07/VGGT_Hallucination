@@ -106,6 +106,23 @@ class Co3DMetadataTest(unittest.TestCase):
 
 
 class Co3DArchiveTest(unittest.TestCase):
+    def test_repairs_a_complete_archive_with_a_stale_partial_prefix(self):
+        with TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "apple_001.zip.part"
+            with zipfile.ZipFile(archive, "w") as handle:
+                handle.writestr("apple/seq/images/frame000000.jpg", b"rgb")
+            expected = archive.read_bytes()
+            archive.write_bytes(b"stale-partial" + expected)
+
+            with patch.object(co3d_download.shutil, "which", return_value=None):
+                repaired = co3d_download._repair_oversized_archive(
+                    archive,
+                    expected_size=len(expected),
+                )
+
+            self.assertTrue(repaired)
+            self.assertEqual(archive.read_bytes(), expected)
+
     def test_inspects_and_extracts_only_selected_rgb_members(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
