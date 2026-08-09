@@ -11,6 +11,9 @@ ROOT = Path(__file__).resolve().parents[2]
 AUTODL = ROOT / "scripts" / "autodl" / "camera_refiner_data_construction"
 RUNNER = AUTODL / "run_multiscale_study.sh"
 VALIDATOR = AUTODL / "validate_dataset.py"
+SCANNET_PREPARE = AUTODL / "prepare_scannet_adaptation200.sh"
+SCANNET_WATCHER = AUTODL / "wait_for_co3d_then_prepare_scannet200.sh"
+OFFICIAL_SCANNET_TRAIN = ROOT / "configs" / "scannetv2_train_official.txt"
 README = ROOT / "README.md"
 REFINER_RUNNER = (
     ROOT
@@ -116,6 +119,71 @@ class AutoDLEntryPointTest(unittest.TestCase):
         self.assertIn("--manifest", result.stdout)
         self.assertIn("--dataset-root", result.stdout)
         self.assertIn("--split-manifest", result.stdout)
+
+    def test_scannet_adaptation_runner_is_authorized_serial_and_space_bounded(self):
+        content = SCANNET_PREPARE.read_text(encoding="utf-8")
+        for required in (
+            "set -euo pipefail",
+            'SCANNET_TOS_ACCEPTED:-0',
+            'MIN_FREE_GIB="${MIN_FREE_GIB:-60}"',
+            'TARGET_SCENES="${TARGET_SCENES:-200}"',
+            'REFINER_TRAIN_SCENES="${REFINER_TRAIN_SCENES:-160}"',
+            'VALIDATION_SCENES="${VALIDATION_SCENES:-20}"',
+            'SELECTOR_TRAIN_SCENES="${SELECTOR_TRAIN_SCENES:-20}"',
+            "flock --nonblock",
+            "download_asset",
+            "extract_scannet_sens.py",
+            "processed-scene-frame-count",
+            'rm -f -- "$sens"',
+            'cleanup_scene_download "$scene"',
+            "conda activate \"$CONDA_ENV_NAME\"",
+        ):
+            self.assertIn(required, content)
+        download = content.index('download_asset "$scene" .sens "$sens"')
+        extraction = content.index('extract_scannet_sens.py')
+        cleanup = content.rindex('cleanup_scene_download "$scene"')
+        self.assertLess(download, extraction)
+        self.assertLess(extraction, cleanup)
+        for forbidden in ("conda create", "pip install", "snapshot_download", "download_vggt"):
+            self.assertNotIn(forbidden, content.lower())
+
+    def test_scannet_watcher_requires_successful_co3d_completion_before_switch(self):
+        content = SCANNET_WATCHER.read_text(encoding="utf-8")
+        for required in (
+            "set -euo pipefail",
+            'SCANNET_TOS_ACCEPTED:-0',
+            "download_manifest.json",
+            "co3d_download",
+            "git switch 016-camera-refiner-multiscale",
+            "prepare_scannet_adaptation200.sh",
+            'SCANNET_TOS_ACCEPTED="$SCANNET_TOS_ACCEPTED"',
+        ):
+            self.assertIn(required, content)
+        self.assertNotIn("exec env SCANNET_TOS_ACCEPTED=1", content)
+        self.assertLess(content.index("download_manifest.json"), content.index("git switch"))
+        self.assertLess(content.index("git switch"), content.index("prepare_scannet_adaptation200.sh"))
+
+    def test_scannet_adaptation_scripts_have_valid_bash_syntax(self):
+        bash = shutil.which("bash")
+        if bash is None:
+            self.skipTest("bash is unavailable")
+        for script in (SCANNET_PREPARE, SCANNET_WATCHER):
+            result = subprocess.run(
+                [bash, "-n", str(script)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, f"{script}: {result.stderr}")
+
+    def test_vendored_official_scannet_train_split_is_complete(self):
+        scenes = [
+            line.strip()
+            for line in OFFICIAL_SCANNET_TRAIN.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(len(scenes), 1201)
+        self.assertEqual(len(set(scenes)), 1201)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,8 @@ manifests in `configs/`. Do not commit generated `results/` contents.
   syntax.
 - `SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/prepare_scannet50.sh` prepares
   the authorized ScanNet scenes while reusing completed downloads.
+- `SCANNET_TOS_ACCEPTED=1 bash scripts/autodl/camera_refiner_data_construction/prepare_scannet_adaptation200.sh`
+  serially prepares the disjoint 160/20/20 ScanNet adaptation split.
 
 ## Coding Style & Naming Conventions
 
@@ -36,6 +38,10 @@ Name tests `test_<behavior>` and keep unit tests independent of CUDA,
 checkpoints, network access, and ScanNet credentials. Test window tails,
 overlap tie-breaking, split leakage, artifact provenance, and non-finite
 inputs explicitly.
+
+ScanNet adaptation scenes must come from `configs/scannetv2_train_official.txt`,
+exclude `configs/fastvggt_scannet50.txt`, and contain at least 500 matching RGB
+frames and finite poses. Preserve the frozen candidate order and role split.
 
 Any metric containing a prediction must use the aligned prediction. Ground
 truth always remains raw; never align or replace GT. Calibration may select

@@ -76,6 +76,37 @@ python scripts/autodl/camera_refiner_data_construction/validate_dataset.py \
   --dataset-root /root/autodl-tmp/refiner_dataset
 ```
 
+## ScanNet Adaptation Split
+
+`configs/scannetv2_train_official.txt` vendors the 1,201 scene IDs from the
+[official ScanNet v2 train split](https://github.com/ScanNet/ScanNet/blob/master/Tasks/Benchmark/scannetv2_train.txt).
+The preparation runner excludes the protected ScanNet-50 list, then accepts
+the first 200 deterministically ordered scenes with at least 500 matching RGB
+frames and finite poses. Whole scenes are frozen as 160 `refiner_train`, 20
+`validation`, and 20 `selector_train` scenes.
+
+After accepting the ScanNet terms, run the preparation directly with:
+
+```bash
+cd /root/autodl-tmp/VGGT_Hallucination
+SCANNET_TOS_ACCEPTED=1 \
+  bash scripts/autodl/camera_refiner_data_construction/prepare_scannet_adaptation200.sh
+```
+
+To wait for an active CO3D-2050 acquisition first, launch the guarded watcher:
+
+```bash
+SCANNET_TOS_ACCEPTED=1 nohup \
+  bash scripts/autodl/camera_refiner_data_construction/wait_for_co3d_then_prepare_scannet200.sh \
+  > /root/autodl-tmp/scannet200.log 2>&1 &
+```
+
+The runner downloads and extracts one `.sens` at a time, resumes from
+`datasets/scannetv2/adaptation200_state/`, and stops before another download
+when less than 60 GiB remains. Its frozen output is
+`results/camera_refiner_data_construction/scannet_adaptation200/manifest.json`.
+Monitor it with `tail -f /root/autodl-tmp/scannet200.log`.
+
 ## Development
 
 ```bash
