@@ -12,6 +12,7 @@ import zipfile
 
 from pre_experiments.camera_refiner_data_construction import co3d_download
 from pre_experiments.camera_refiner_data_construction.co3d_download import (
+    allocate_category_quotas,
     archive_url,
     build_curl_command,
     build_dataset_manifest,
@@ -267,6 +268,80 @@ class Co3DArchiveTest(unittest.TestCase):
 
 
 class Co3DManifestTest(unittest.TestCase):
+    def test_redistributes_category_shortfall_without_changing_total(self):
+        quotas = allocate_category_quotas(
+            categories=("parkingmeter", "apple", "banana", "bench"),
+            capacities={
+                "parkingmeter": 47,
+                "apple": 60,
+                "banana": 60,
+                "bench": 60,
+            },
+            requested_per_category=50,
+        )
+
+        self.assertEqual(quotas["parkingmeter"], 47)
+        self.assertEqual(sorted(quotas.values()), [47, 51, 51, 51])
+        self.assertEqual(sum(quotas.values()), 200)
+
+    def test_quota_allocation_rejects_insufficient_global_capacity(self):
+        with self.assertRaisesRegex(RuntimeError, "global eligible capacity"):
+            allocate_category_quotas(
+                categories=("parkingmeter", "apple"),
+                capacities={"parkingmeter": 47, "apple": 50},
+                requested_per_category=50,
+            )
+
+    def test_redistribution_prefers_categories_not_started_yet(self):
+        quotas = allocate_category_quotas(
+            categories=("parkingmeter", "apple", "banana"),
+            capacities={"parkingmeter": 49, "apple": 100, "banana": 51},
+            requested_per_category=50,
+            preferred_donors={"banana"},
+        )
+
+        self.assertEqual(
+            quotas,
+            {"parkingmeter": 49, "apple": 50, "banana": 51},
+        )
+
+    def test_resume_state_allows_quota_growth_and_rewinds_archives(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "apple.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "category": "apple",
+                        "sequences_per_category": 50,
+                        "min_frames": 50,
+                        "min_quality": 0.5,
+                        "seed": 33,
+                        "next_archive_index": 3,
+                        "completed": True,
+                        "selected": [
+                            {"sequence_name": f"seq_{index}"}
+                            for index in range(50)
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = co3d_download._load_category_state(
+                path,
+                "apple",
+                sequences_per_category=51,
+                min_frames=50,
+                min_quality=0.5,
+                seed=33,
+            )
+
+        self.assertEqual(state["sequences_per_category"], 51)
+        self.assertEqual(state["next_archive_index"], 1)
+        self.assertFalse(state["completed"])
+        self.assertEqual(len(state["selected"]), 50)
+
     def test_manifest_requires_exact_quota_and_has_an_authenticated_selection(self):
         states = {}
         for category in ("apple", "banana"):
@@ -307,6 +382,51 @@ class Co3DManifestTest(unittest.TestCase):
                 seed=33,
                 source_base_url="https://example.invalid/co3d",
             )
+
+    def test_manifest_accepts_authenticated_per_category_quotas(self):
+        states = {
+            "parkingmeter": {
+                "completed": True,
+                "selected": [
+                    {
+                        "sequence_name": f"parkingmeter_{index}",
+                        "quality_score": 0.8,
+                        "valid_frame_count": 60,
+                        "extracted_frame_count": 60,
+                        "source_archive": "parkingmeter_001.zip",
+                    }
+                    for index in range(2)
+                ],
+            },
+            "apple": {
+                "completed": True,
+                "selected": [
+                    {
+                        "sequence_name": f"apple_{index}",
+                        "quality_score": 0.8,
+                        "valid_frame_count": 60,
+                        "extracted_frame_count": 60,
+                        "source_archive": "apple_001.zip",
+                    }
+                    for index in range(4)
+                ],
+            },
+        }
+
+        manifest = build_dataset_manifest(
+            categories=("parkingmeter", "apple"),
+            category_states=states,
+            sequences_per_category=3,
+            category_quotas={"parkingmeter": 2, "apple": 4},
+            min_frames=50,
+            min_quality=0.5,
+            seed=33,
+            source_base_url="https://example.invalid/co3d",
+        )
+
+        self.assertEqual(manifest["category_sequence_quotas"], {"apple": 4, "parkingmeter": 2})
+        self.assertEqual(manifest["target_sequence_count"], 6)
+        self.assertEqual(manifest["sequence_count"], 6)
 
 
 class Co3DDownloadIntegrationTest(unittest.TestCase):

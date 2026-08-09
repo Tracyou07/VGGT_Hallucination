@@ -22,7 +22,7 @@ DEFAULT_OUTPUT_ROOT = Path("/root/autodl-tmp/datasets/co3dv2_2050")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CATEGORY_FILE = REPO_ROOT / "configs" / "co3d_train41.txt"
 STATE_SCHEMA_VERSION = 1
-MANIFEST_SCHEMA_VERSION = 1
+MANIFEST_SCHEMA_VERSION = 2
 _CATEGORY_PATTERN = re.compile(r"[a-z0-9]+")
 _ARCHIVE_PATTERN = re.compile(r"_(\d{3})\.zip$")
 _REQUIRED_METADATA = ("frame_annotations.jgz", "sequence_annotations.jgz")
@@ -114,6 +114,61 @@ def load_categories(path: Path) -> tuple[str, ...]:
     if len(set(categories)) != len(categories):
         raise ValueError(f"category file contains duplicates: {path}")
     return categories
+
+
+def allocate_category_quotas(
+    *,
+    categories: Sequence[str],
+    capacities: Mapping[str, int],
+    requested_per_category: int,
+    preferred_donors: set[str] | None = None,
+) -> dict[str, int]:
+    """Preserve the requested global total when individual categories are short."""
+    if requested_per_category <= 0:
+        raise ValueError("requested_per_category must be positive")
+    ordered = tuple(categories)
+    if not ordered or len(set(ordered)) != len(ordered):
+        raise ValueError("categories must be non-empty and unique")
+    missing = set(ordered) - set(capacities)
+    if missing:
+        raise ValueError(f"missing category capacities: {sorted(missing)}")
+    normalized = {category: int(capacities[category]) for category in ordered}
+    if any(value < 0 for value in normalized.values()):
+        raise ValueError("category capacities must be non-negative")
+    target = len(ordered) * requested_per_category
+    total_capacity = sum(normalized.values())
+    if total_capacity < target:
+        raise RuntimeError(
+            f"global eligible capacity is {total_capacity}; need {target} sequences"
+        )
+
+    quotas = {
+        category: min(requested_per_category, normalized[category])
+        for category in ordered
+    }
+    remaining = target - sum(quotas.values())
+    preferred = preferred_donors or set()
+    order = {category: index for index, category in enumerate(ordered)}
+    while remaining:
+        donors = [
+            category
+            for category in ordered
+            if quotas[category] < normalized[category]
+        ]
+        if not donors:
+            raise RuntimeError("global eligible capacity could not satisfy quota allocation")
+        donor = min(
+            donors,
+            key=lambda category: (
+                0 if category in preferred else 1,
+                quotas[category],
+                -(normalized[category] - quotas[category]),
+                order[category],
+            ),
+        )
+        quotas[donor] += 1
+        remaining -= 1
+    return quotas
 
 
 def load_eligible_sequences(
@@ -276,12 +331,31 @@ def build_dataset_manifest(
     categories: Sequence[str],
     category_states: Mapping[str, Mapping[str, object]],
     sequences_per_category: int,
+    category_quotas: Mapping[str, int] | None = None,
     min_frames: int,
     min_quality: float,
     seed: int,
     source_base_url: str,
 ) -> dict[str, object]:
     """Build a strict final manifest and authenticate its sequence selection."""
+    if category_quotas is not None and set(category_quotas) != set(categories):
+        raise ValueError("category quotas must match the configured categories")
+    quotas = {
+        category: (
+            sequences_per_category
+            if category_quotas is None
+            else int(category_quotas[category])
+        )
+        for category in categories
+    }
+    if any(quota <= 0 for quota in quotas.values()):
+        raise ValueError("category quotas must be positive")
+    target_sequence_count = len(categories) * sequences_per_category
+    if sum(quotas.values()) != target_sequence_count:
+        raise ValueError(
+            f"category quotas total {sum(quotas.values())}; "
+            f"expected {target_sequence_count}"
+        )
     sequences: list[dict[str, object]] = []
     for category in categories:
         state = category_states.get(category)
@@ -290,9 +364,10 @@ def build_dataset_manifest(
         selected = state.get("selected")
         if not state.get("completed") or not isinstance(selected, list):
             raise ValueError(f"category {category} is incomplete")
-        if len(selected) != sequences_per_category:
+        category_quota = quotas[category]
+        if len(selected) != category_quota:
             raise ValueError(
-                f"category {category} must contain exactly {sequences_per_category} sequences"
+                f"category {category} must contain exactly {category_quota} sequences"
             )
         names: set[str] = set()
         for raw_entry in selected:
@@ -323,6 +398,7 @@ def build_dataset_manifest(
     selection_payload = {
         "categories": list(categories),
         "sequences_per_category": sequences_per_category,
+        "category_sequence_quotas": quotas,
         "min_frames": min_frames,
         "min_quality": min_quality,
         "seed": seed,
@@ -339,6 +415,8 @@ def build_dataset_manifest(
         "layout": "<root>/<category>/<sequence>/images plus category annotations",
         "category_count": len(categories),
         "sequences_per_category": sequences_per_category,
+        "category_sequence_quotas": quotas,
+        "target_sequence_count": target_sequence_count,
         "sequence_count": len(sequences),
         "min_valid_rgb_pose_frames": min_frames,
         "min_viewpoint_quality_score": min_quality,
@@ -841,7 +919,6 @@ def _load_category_state(
     for key in (
         "schema_version",
         "category",
-        "sequences_per_category",
         "min_frames",
         "min_quality",
         "seed",
@@ -853,6 +930,24 @@ def _load_category_state(
             )
     if not isinstance(state.get("selected"), list):
         raise ValueError(f"invalid selected list in {path}")
+    old_quota = int(state.get("sequences_per_category", 0))
+    new_quota = sequences_per_category
+    selected = state["selected"]
+    assert isinstance(selected, list)
+    if old_quota != new_quota:
+        if len(selected) > new_quota:
+            raise ValueError(
+                f"cannot reduce {category} quota to {new_quota}; "
+                f"state already selected {len(selected)} sequences"
+            )
+        if new_quota > old_quota:
+            state["next_archive_index"] = 1
+        state["sequences_per_category"] = new_quota
+        state["completed"] = len(selected) == new_quota
+        print(
+            f"[state] {category}: quota {old_quota} -> {new_quota}",
+            flush=True,
+        )
     return state
 
 
@@ -1026,7 +1121,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Download a resumable CO3Dv2 RGB subset from official category archives. "
-            "The default protocol selects 41 categories x 50 sequences on AutoDL."
+            "The default protocol targets 2050 sequences around a 50/category base quota."
         )
     )
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
@@ -1068,9 +1163,43 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.category_limit:
         categories = categories[: args.category_limit]
     args.output_root.mkdir(parents=True, exist_ok=True)
+    capacities: dict[str, int] = {}
+    preferred_donors: set[str] = set()
+    for category in categories:
+        _ensure_metadata(
+            output_root=args.output_root,
+            category=category,
+            base_url=args.base_url,
+            curl_bin=args.curl_bin,
+            keep_archives=args.keep_archives,
+        )
+        candidates = load_eligible_sequences(
+            args.output_root / category,
+            category=category,
+            min_frames=args.min_frames,
+            min_quality=args.min_quality,
+        )
+        capacities[category] = len(candidates)
+        state_path = args.output_root / ".download_state" / f"{category}.json"
+        if not state_path.is_file():
+            preferred_donors.add(category)
+        print(f"[capacity] {category}: {len(candidates)}", flush=True)
+    category_quotas = allocate_category_quotas(
+        categories=categories,
+        capacities=capacities,
+        requested_per_category=args.sequences_per_category,
+        preferred_donors=preferred_donors,
+    )
+    adjusted = {
+        category: quota
+        for category, quota in category_quotas.items()
+        if quota != args.sequences_per_category
+    }
     print(
         f"[plan] root={args.output_root} categories={len(categories)} "
-        f"quota={args.sequences_per_category} total={len(categories) * args.sequences_per_category}",
+        f"base_quota={args.sequences_per_category} "
+        f"total={len(categories) * args.sequences_per_category} "
+        f"adjusted={json.dumps(adjusted, sort_keys=True)}",
         flush=True,
     )
 
@@ -1079,7 +1208,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         states[category] = _process_category(
             output_root=args.output_root,
             category=category,
-            sequences_per_category=args.sequences_per_category,
+            sequences_per_category=category_quotas[category],
             min_frames=args.min_frames,
             min_quality=args.min_quality,
             seed=args.seed,
@@ -1093,6 +1222,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         categories=categories,
         category_states=states,
         sequences_per_category=args.sequences_per_category,
+        category_quotas=category_quotas,
         min_frames=args.min_frames,
         min_quality=args.min_quality,
         seed=args.seed,

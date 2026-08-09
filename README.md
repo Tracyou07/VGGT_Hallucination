@@ -7,10 +7,14 @@ those live on the `016-camera-refiner-multiscale` branch and worktree.
 ## Dataset Protocol
 
 The fixed split contains the 41 PoseDiffusion training categories listed in
-`configs/co3d_train41.txt`. The downloader selects 50 sequences per category,
-for 2050 sequences total. Every selected sequence must provide at least 50 RGB
-frames with finite GT rotation and translation annotations and
-`viewpoint_quality_score >= 0.5`.
+`configs/co3d_train41.txt`. The downloader targets 2050 sequences with a base quota
+of 50 per category. Before downloading data archives it reads all category metadata
+and measures eligible capacity. If a category has fewer than 50 valid sequences,
+its shortfall is deterministically redistributed to categories with spare capacity,
+preferentially those not downloaded yet. For example, `parkingmeter=47` causes
+three later categories to receive 51 sequences each. Every selected sequence must
+provide at least 50 RGB frames with finite GT rotation and translation annotations
+and `viewpoint_quality_score >= 0.5`.
 
 Only selected `images/` files and category-level `frame_annotations.jgz` and
 `sequence_annotations.jgz` metadata are retained. Depth maps, masks, point
@@ -33,7 +37,9 @@ tail -f /root/autodl-tmp/co3d_2050.log
 
 The default output is `/root/autodl-tmp/datasets/co3dv2_2050`. Re-running the
 same command resumes `.part` archives and validated category state. The final
-selection and its SHA-256 identity are stored in `download_manifest.json`.
+selection, per-category quotas, and SHA-256 identity are stored in
+`download_manifest.json` schema 2. Existing extracted sequences are retained if a
+quota grows; only the additional sequences are selected.
 
 ## Development
 
