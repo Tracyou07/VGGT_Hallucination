@@ -5,6 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 
 import math
+from typing import TypedDict
+
 import numpy as np
 
 import torch
@@ -14,6 +16,15 @@ import torch.nn.functional as F
 from vggt.layers import Mlp
 from vggt.layers.block import Block
 from vggt.heads.head_act import activate_pose
+
+
+class CameraTrace(TypedDict):
+    normalized_camera_tokens: torch.Tensor
+    raw_pose_enc_list: list[torch.Tensor]
+    pose_delta_list: list[torch.Tensor]
+    delta_norm: torch.Tensor
+    trunk_output_list: list[torch.Tensor]
+    pose_branch_hidden_list: list[torch.Tensor]
 
 
 class CameraHead(nn.Module):
@@ -70,7 +81,13 @@ class CameraHead(nn.Module):
         self.adaln_norm = nn.LayerNorm(dim_in, elementwise_affine=False, eps=1e-6)
         self.pose_branch = Mlp(in_features=dim_in, hidden_features=dim_in // 2, out_features=self.target_dim, drop=0)
 
-    def forward(self, aggregated_tokens_list: list, num_iterations: int = 4) -> list:
+    def forward(
+        self,
+        aggregated_tokens_list: list[torch.Tensor],
+        num_iterations: int = 4,
+        return_trace: bool = False,
+        trace_pose_tokens: bool = False,
+    ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
         """
         Forward pass to predict camera parameters.
 
@@ -86,13 +103,43 @@ class CameraHead(nn.Module):
         tokens = aggregated_tokens_list[-1]
 
         # Extract the camera tokens
-        pose_tokens = tokens[:, :, 0]
-        pose_tokens = self.token_norm(pose_tokens)
+        pose_tokens = self.token_norm(tokens[:, :, 0])
 
-        pred_pose_enc_list = self.trunk_fn(pose_tokens, num_iterations)
-        return pred_pose_enc_list
+        return self.decode_pose_tokens(
+            pose_tokens,
+            num_iterations=num_iterations,
+            return_trace=return_trace,
+            trace_pose_tokens=trace_pose_tokens,
+        )
 
-    def trunk_fn(self, pose_tokens: torch.Tensor, num_iterations: int) -> list:
+    def decode_pose_tokens(
+        self,
+        normalized_pose_tokens: torch.Tensor,
+        num_iterations: int = 4,
+        return_trace: bool = False,
+        trace_pose_tokens: bool = False,
+    ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
+        """Decode normalized Camera Head tokens with optional observability."""
+        if normalized_pose_tokens.ndim != 3:
+            raise ValueError("normalized_pose_tokens must have shape [B, S, C]")
+        if num_iterations < 1:
+            raise ValueError("num_iterations must be at least 1")
+        if trace_pose_tokens and not return_trace:
+            raise ValueError("trace_pose_tokens requires return_trace=True")
+        return self.trunk_fn(
+            normalized_pose_tokens,
+            num_iterations=num_iterations,
+            return_trace=return_trace,
+            trace_pose_tokens=trace_pose_tokens,
+        )
+
+    def trunk_fn(
+        self,
+        pose_tokens: torch.Tensor,
+        num_iterations: int,
+        return_trace: bool = False,
+        trace_pose_tokens: bool = False,
+    ) -> list[torch.Tensor] | tuple[list[torch.Tensor], CameraTrace]:
         """
         Iteratively refine camera pose predictions.
 
@@ -106,6 +153,11 @@ class CameraHead(nn.Module):
         B, S, C = pose_tokens.shape
         pred_pose_enc = None
         pred_pose_enc_list = []
+        raw_pose_enc_list = [] if return_trace else None
+        pose_delta_list = [] if return_trace else None
+        delta_norm_list = [] if return_trace else None
+        trunk_output_list = [] if trace_pose_tokens else None
+        pose_branch_hidden_list = [] if trace_pose_tokens else None
 
         for _ in range(num_iterations):
             # Use a learned empty pose for the first iteration.
@@ -123,14 +175,30 @@ class CameraHead(nn.Module):
             pose_tokens_modulated = gate_msa * modulate(self.adaln_norm(pose_tokens), shift_msa, scale_msa)
             pose_tokens_modulated = pose_tokens_modulated + pose_tokens
 
-            pose_tokens_modulated = self.trunk(pose_tokens_modulated)
+            trunk_output = self.trunk(pose_tokens_modulated)
             # Compute the delta update for the pose encoding.
-            pred_pose_enc_delta = self.pose_branch(self.trunk_norm(pose_tokens_modulated))
+            pose_branch_hidden = self.pose_branch.forward_features(
+                self.trunk_norm(trunk_output)
+            )
+            pred_pose_enc_delta = self.pose_branch.forward_head(pose_branch_hidden)
 
             if pred_pose_enc is None:
                 pred_pose_enc = pred_pose_enc_delta
             else:
                 pred_pose_enc = pred_pose_enc + pred_pose_enc_delta
+
+            if return_trace:
+                assert raw_pose_enc_list is not None
+                assert pose_delta_list is not None
+                assert delta_norm_list is not None
+                raw_pose_enc_list.append(pred_pose_enc)
+                pose_delta_list.append(pred_pose_enc_delta)
+                delta_norm_list.append(pred_pose_enc_delta.float().norm(dim=-1))
+                if trace_pose_tokens:
+                    assert trunk_output_list is not None
+                    assert pose_branch_hidden_list is not None
+                    trunk_output_list.append(trunk_output)
+                    pose_branch_hidden_list.append(pose_branch_hidden)
 
             # Apply final activation functions for translation, quaternion, and field-of-view.
             activated_pose = activate_pose(
@@ -138,7 +206,21 @@ class CameraHead(nn.Module):
             )
             pred_pose_enc_list.append(activated_pose)
 
-        return pred_pose_enc_list
+        if not return_trace:
+            return pred_pose_enc_list
+
+        assert raw_pose_enc_list is not None
+        assert pose_delta_list is not None
+        assert delta_norm_list is not None
+        trace: CameraTrace = {
+            "normalized_camera_tokens": pose_tokens,
+            "raw_pose_enc_list": raw_pose_enc_list,
+            "pose_delta_list": pose_delta_list,
+            "delta_norm": torch.stack(delta_norm_list, dim=0),
+            "trunk_output_list": trunk_output_list or [],
+            "pose_branch_hidden_list": pose_branch_hidden_list or [],
+        }
+        return pred_pose_enc_list, trace
 
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:

@@ -2,11 +2,13 @@
 
 ## Project Structure & Module Organization
 
-`vggt/` contains the upstream model package. CO3Dv2 subset construction lives
-in `pre_experiments/camera_refiner_data_construction/co3d_download.py`.
+`vggt/` contains the upstream model package plus observational Camera Head tracing.
+CO3Dv2 downloading, ordered clip manifests, prediction-only alignment, and
+authenticated training shards live in
+`pre_experiments/camera_refiner_data_construction/`.
 `configs/co3d_train41.txt` is the immutable training-category split, and
-`scripts/autodl/camera_refiner_data_construction/download_co3d_2050.sh` is the
-AutoDL entry point. Focused CPU tests live in
+`scripts/autodl/camera_refiner_data_construction/` contains the download and
+training-cache AutoDL entries. Focused CPU tests live in
 `tests/camera_refiner_data_construction/`.
 
 This branch is data-only. Multiscale Camera Head experiments, ScanNet tools,
@@ -22,6 +24,10 @@ be added here.
   validates the shell entry point.
 - `bash scripts/autodl/camera_refiner_data_construction/download_co3d_2050.sh`
   starts or resumes the AutoDL dataset build.
+- `bash scripts/autodl/camera_refiner_data_construction/build_co3d_training_data.sh
+  smoke` validates one sequence with the local checkpoint.
+- `bash scripts/autodl/camera_refiner_data_construction/build_co3d_training_data.sh
+  full` starts or resumes all accepted training shards.
 
 ## Coding Style & Naming Conventions
 
@@ -35,8 +41,10 @@ environment. Do not add setup, package-install, or checkpoint-download steps.
 Name tests `test_<behavior>` and keep them independent of CUDA, network access,
 checkpoints, and real CO3D archives. Test deterministic selection, valid GT
 camera filtering, RGB-only extraction, path traversal rejection, exact quotas,
-and restart behavior. Keep the 41-category, 50-sequence-per-category protocol
-stable unless the experiment definition changes explicitly.
+and restart behavior. Generated shards must match the
+`full_hidden_sequence_refiner` schema, must never contain `short_hidden`, and must
+retain overlapping short-pose candidates for multimodality auditing. Keep the
+41-category protocol stable unless the experiment definition changes explicitly.
 
 ## Commit & Pull Request Guidelines
 

@@ -9,6 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 AUTODL = ROOT / "scripts" / "autodl" / "camera_refiner_data_construction"
 DOWNLOADER = AUTODL / "download_co3d_2050.sh"
+BUILDER = AUTODL / "build_co3d_training_data.sh"
 CATEGORIES = ROOT / "configs" / "co3d_train41.txt"
 
 
@@ -62,6 +63,28 @@ class AutoDLEntryPointTest(unittest.TestCase):
             self.skipTest("bash is unavailable")
         result = subprocess.run(
             [bash, "-n", str(DOWNLOADER)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_training_builder_reuses_downloads_checkpoint_and_vggt_environment(self):
+        content = BUILDER.read_text(encoding="utf-8")
+        self.assertIn("set -euo pipefail", content)
+        self.assertIn('CONDA_ENV_NAME="${CONDA_ENV_NAME:-vggt}"', content)
+        self.assertIn("datasets/co3dv2_2050", content)
+        self.assertIn("$RESULTS_ROOT/camera_refiner_data_construction/co3d", content)
+        self.assertIn("build_co3d_cache", content)
+        for forbidden in ("conda create", "pip install", "git clone", "snapshot_download"):
+            self.assertNotIn(forbidden, content.lower())
+
+    def test_training_builder_has_valid_bash_syntax(self):
+        bash = shutil.which("bash")
+        if bash is None:
+            self.skipTest("bash is unavailable")
+        result = subprocess.run(
+            [bash, "-n", str(BUILDER)],
             text=True,
             capture_output=True,
             check=False,
