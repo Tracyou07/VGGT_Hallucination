@@ -158,13 +158,22 @@ Requirements:
 
 1. Define strict `camera_solution_space_01.eligibility.v1`. It binds the exact
    source/header, scene/split, selection and matcher config hashes, runtime
-   fingerprint, candidate count, and an ordered record for every legal start.
-   Each record contains the exact eight frame IDs, pass/fail, complete
-   diagnostics, and rejection reasons. Its ID is canonical SHA-256 excluding
-   the ID field.
+   fingerprint, depth-alignment config/version/hash and `[0.25,5.0]` valid
+   range, candidate count, and an ordered record for every legal start. Each
+   record contains the exact eight frame IDs, pass/fail, exact diagnostics, and
+   rejection reasons. Its ID is canonical SHA-256 excluding the ID field.
 2. Reject missing/extra/reordered/duplicate windows, bool-as-int, inconsistent
    frame IDs/counts, wrong source/header/config, non-finite diagnostics,
    malformed hashes, and any tamper even when an outer file is rehashed.
+   Diagnostics have exact keys and shapes: eight finite depth-valid fractions
+   in `[0,1]`; the exact ordered 15 position edges with nonnegative integer
+   RGB-D match counts; seven adjacent GT translations, seven adjacent GT
+   rotations, and one endpoint translation. Recompute—not trust—`eligible` as
+   all depth fractions `>=0.55`, all seven adjacent counts `>=150`, at least 12
+   of 15 counts `>=100`, all adjacent translations in `[0.04,0.25]` m, all
+   rotations in `[0,8]` degrees, and endpoint translation in `[0.30,1.50]` m.
+   Recompute the fixed-order rejection-reason list and require exact equality;
+   `eligible=true` with empty/self-reported diagnostics is invalid.
 3. Add `observation_plan.v2`. Production planning accepts only a validated
    eligibility artifact, selects the lowest eligible start, and binds the
    artifact path/size/SHA-256/ID plus the exact chosen record into `plan_id`.
@@ -189,8 +198,10 @@ Requirements:
 
 Tests must first fail, then cover canonical determinism, full candidate
 coverage, lowest-window proof, tamper/reorder/missing diagnostics rejection,
-source/config mismatch, v1 production rejection, output/source path guards,
-symlink escape, no raw-tree mutation, and exact plan/eligibility binding.
+source/config mismatch, exact predicate boundary values, inconsistent
+eligible/rejection flags, wrong/missing/duplicate 15-edge layouts, v1
+production rejection, output/source path guards, symlink escape, no raw-tree
+mutation, and exact plan/eligibility binding.
 
 Commit message: `Bind observation eligibility evidence`
 

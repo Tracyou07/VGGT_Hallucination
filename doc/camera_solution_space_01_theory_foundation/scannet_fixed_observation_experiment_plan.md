@@ -276,6 +276,11 @@ $$
   "split": "calibration|evaluation",
   "selection_version": "fixed8_stride15_v1",
   "selector_config_sha256": "<64 lowercase hex>",
+  "depth_alignment_config": {
+    "version": "calibrated_nearest_z_v1",
+    "valid_depth_m": [0.25, 5.0],
+    "sha256": "<64 lowercase hex>"
+  },
   "matcher_config_sha256": "<64 lowercase hex>",
   "runtime_fingerprint": {},
   "candidate_count": 0,
@@ -284,7 +289,17 @@ $$
       "start": 0,
       "frame_ids": [0, 15, 30, 45, 60, 75, 90, 105],
       "eligible": false,
-      "diagnostics": {},
+      "diagnostics": {
+        "depth_valid_fraction_rgb": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "edges": [
+          {"i": 0, "j": 1, "valid_rgbd_match_count": 0}
+        ],
+        "gt_audit": {
+          "adjacent_translation_m": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+          "adjacent_rotation_deg": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+          "endpoint_translation_m": 0.0
+        }
+      },
       "rejection_reasons": []
     }
   ]
@@ -295,6 +310,25 @@ $$
 ID 是去掉自身 ID 后 canonical JSON 的 SHA-256。Plan 只能从经验证的 artifact 中
 选择最低 eligible start，且必须把 artifact fingerprint 与 chosen record 绑定进
 `plan_id`；artifact 的任何位、顺序、配置或 source 改变都使 plan 失效。
+
+上例 `edges` 为缩写；真实 record 必须按固定顺序精确包含全部 15 个 position edge：
+
+```text
+(0,1)..(6,7), (0,2)..(5,7), (0,4), (3,7)
+```
+
+Validator 不能信任 artifact 写入的 `eligible`。它必须从 exact diagnostics 重算：
+
+- 8 个 `depth_valid_fraction_rgb` 都是有限 `[0,1]`，且全部 `>=0.55`；
+- 7 个相邻 edge 的 `valid_rgbd_match_count` 全部 `>=150`；
+- 15 个 edge 中至少 12 个 count `>=100`；
+- 7 个相邻 GT 平移全部在 `[0.04,0.25]` m，7 个旋转全部在 `[0,8]` degree；
+- `endpoint_translation_m` 在 `[0.30,1.50]` m。
+
+`rejection_reasons` 也必须由以上 predicate 以固定顺序重算并精确相等；不能接受
+`eligible=true`、空 diagnostics 或自报 pass flag。Depth coverage 和 RGB-D match
+所用 depth-to-RGB/有效深度协议必须由 `depth_alignment_config.sha256` 绑定，且其
+显式 version/range 与 config 内容一致。
 
 ### 4.4 Observation manifest 必须封存的内容
 
