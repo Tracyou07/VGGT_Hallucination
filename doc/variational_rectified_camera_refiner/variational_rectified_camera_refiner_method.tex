@@ -219,8 +219,8 @@ V0 通过后，训练前增加一个不参与推理的 builder：
 target，就没有足够理由训练多模态 V-RFM。
 
 \begin{keybox}
-Pairwise V0 只是第一道门。八个 overlap 的局部选择还必须证明能组成多个完整、连贯、
-独立评价有效的 sequence targets。这是正式训练前的第二道门。
+Pairwise V0 只是第一道门。八个 overlap 的局部选择还必须由冻结、独立评价验证能否组成
+多个完整、连贯、有效的 sequence targets，并给出跨 scene 的稳定证据。这是正式训练前的第二道门。
 \end{keybox}
 
 \section{一个核心训练目标}
