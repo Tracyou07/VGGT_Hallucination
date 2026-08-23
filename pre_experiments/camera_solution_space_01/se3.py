@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 
-_SMALL_ANGLE = 1e-8
+_SMALL_ANGLE = 1e-4
 _NEAR_PI = 1e-5
 _HOMOGENEOUS_ATOL = 1e-10
 _ROTATION_ATOL = 1e-8
@@ -149,18 +149,19 @@ def _validate_transform(transform, name: str = "transform"):
 
 def _so3_coefficients(omega):
     theta2 = (omega * omega).sum(axis=-1) if not _is_torch(omega) else (omega * omega).sum(dim=-1)
-    theta = _sqrt(theta2, omega)
-    safe_theta = _clamp(theta, minimum=_SMALL_ANGLE, like=omega)
-    safe_theta2 = safe_theta * safe_theta
+    threshold2 = _SMALL_ANGLE**2
+    safe_theta = _sqrt(_clamp(theta2, minimum=threshold2, like=omega), omega)
     regular_a = _sin(safe_theta, omega) / safe_theta
-    regular_b = (1.0 - _cos(safe_theta, omega)) / safe_theta2
-    small_a = 1.0 - theta2 / 6.0 + theta2 * theta2 / 120.0
-    small_b = 0.5 - theta2 / 24.0 + theta2 * theta2 / 720.0
-    small = theta < _SMALL_ANGLE
+    half_theta = 0.5 * safe_theta
+    regular_b = 0.5 * (_sin(half_theta, omega) / half_theta) ** 2
+    theta4 = theta2 * theta2
+    theta6 = theta4 * theta2
+    small_a = 1.0 - theta2 / 6.0 + theta4 / 120.0 - theta6 / 5040.0
+    small_b = 0.5 - theta2 / 24.0 + theta4 / 720.0 - theta6 / 40320.0
+    small = theta2 < threshold2
     return (
         _select(small, small_a, regular_a, omega),
         _select(small, small_b, regular_b, omega),
-        theta,
         theta2,
     )
 
@@ -168,7 +169,7 @@ def _so3_coefficients(omega):
 def so3_exp(omega):
     """Exponentiate float64 axis-angle vectors of shape ``[..., 3]``."""
     _require_last_shape(omega, (3,), "omega")
-    a, b, _, _ = _so3_coefficients(omega)
+    a, b, _ = _so3_coefficients(omega)
     skew = _hat(omega)
     identity = _eye(3, omega, omega.shape[:-1])
     return identity + a[..., None, None] * skew + b[..., None, None] * (skew @ skew)
@@ -181,6 +182,8 @@ def _near_pi_axis(rotation, cosine):
     outer = (symmetric - cosine[..., None, None] * identity) / denominator[..., None, None]
     flat_outer = outer.reshape(-1, 3, 3)
     flat_rotation = rotation.reshape(-1, 3, 3)
+    if flat_outer.shape[0] == 0:
+        return rotation[..., 0, :]
     axes = []
     for matrix, source_rotation in zip(flat_outer, flat_rotation):
         diagonal = matrix.diagonal()
@@ -217,18 +220,29 @@ def so3_log(rotation):
         -1,
         rotation,
     )
-    sine = _norm(skew_vector, -1, rotation)
+    sine2 = (
+        (skew_vector * skew_vector).sum(dim=-1)
+        if _is_torch(rotation)
+        else (skew_vector * skew_vector).sum(axis=-1)
+    )
     trace = rotation[..., 0, 0] + rotation[..., 1, 1] + rotation[..., 2, 2]
     cosine = _clamp(0.5 * (trace - 1.0), minimum=-1.0, maximum=1.0, like=rotation)
-    theta = _atan2(sine, cosine, rotation)
-
-    safe_sine = _clamp(sine, minimum=_SMALL_ANGLE, like=rotation)
-    regular = skew_vector * (theta / safe_sine)[..., None]
-    small_factor = 1.0 + theta * theta / 6.0 + 7.0 * theta**4 / 360.0
+    threshold2 = _SMALL_ANGLE**2
+    safe_sine = _sqrt(_clamp(sine2, minimum=threshold2, like=rotation), rotation)
+    regular_theta = _atan2(safe_sine, cosine, rotation)
+    regular = skew_vector * (regular_theta / safe_sine)[..., None]
+    sine4 = sine2 * sine2
+    sine6 = sine4 * sine2
+    small_factor = 1.0 + sine2 / 6.0 + 3.0 * sine4 / 40.0 + 5.0 * sine6 / 112.0
     small = skew_vector * small_factor[..., None]
-    regular_or_small = _select((theta < _SMALL_ANGLE)[..., None], small, regular, rotation)
-    near_pi = _near_pi_axis(rotation, cosine) * theta[..., None]
-    return _select((theta > math.pi - _NEAR_PI)[..., None], near_pi, regular_or_small, rotation)
+    small_mask = (sine2 < threshold2) & (cosine > 0.0)
+    regular_or_small = _select(small_mask[..., None], small, regular, rotation)
+
+    near_sine = _sqrt(_clamp(sine2, minimum=1e-30, like=rotation), rotation)
+    near_theta = _atan2(near_sine, cosine, rotation)
+    near_pi = _near_pi_axis(rotation, cosine) * near_theta[..., None]
+    near_pi_mask = cosine < -math.cos(_NEAR_PI)
+    return _select(near_pi_mask[..., None], near_pi, regular_or_small, rotation)
 
 
 def se3_exp(twist):
@@ -236,11 +250,14 @@ def se3_exp(twist):
     _require_last_shape(twist, (6,), "twist")
     velocity = twist[..., :3]
     omega = twist[..., 3:]
-    _, b, theta, theta2 = _so3_coefficients(omega)
-    safe_theta = _clamp(theta, minimum=_SMALL_ANGLE, like=twist)
+    _, b, theta2 = _so3_coefficients(omega)
+    threshold2 = _SMALL_ANGLE**2
+    safe_theta = _sqrt(_clamp(theta2, minimum=threshold2, like=twist), twist)
     regular_c = (safe_theta - _sin(safe_theta, twist)) / (safe_theta**3)
-    small_c = 1.0 / 6.0 - theta2 / 120.0 + theta2 * theta2 / 5040.0
-    c = _select(theta < _SMALL_ANGLE, small_c, regular_c, twist)
+    theta4 = theta2 * theta2
+    theta6 = theta4 * theta2
+    small_c = 1.0 / 6.0 - theta2 / 120.0 + theta4 / 5040.0 - theta6 / 362880.0
+    c = _select(theta2 < threshold2, small_c, regular_c, twist)
     skew = _hat(omega)
     identity3 = _eye(3, twist, twist.shape[:-1])
     jacobian = identity3 + b[..., None, None] * skew + c[..., None, None] * (skew @ skew)
@@ -264,14 +281,14 @@ def se3_log(transform):
     translation = transform[..., :3, 3]
     omega = so3_log(rotation)
     theta2 = (omega * omega).sum(dim=-1) if _is_torch(omega) else (omega * omega).sum(axis=-1)
-    theta = _sqrt(theta2, omega)
-    safe_theta = _clamp(theta, minimum=1e-4, like=omega)
+    threshold2 = _SMALL_ANGLE**2
+    safe_theta = _sqrt(_clamp(theta2, minimum=threshold2, like=omega), omega)
     if _is_torch(omega):
         regular_d = (1.0 - 0.5 * safe_theta / torch.tan(0.5 * safe_theta)) / (safe_theta**2)
     else:
         regular_d = (1.0 - 0.5 * safe_theta / np.tan(0.5 * safe_theta)) / (safe_theta**2)
     small_d = 1.0 / 12.0 + theta2 / 720.0 + theta2 * theta2 / 30240.0
-    d = _select(theta < _SMALL_ANGLE, small_d, regular_d, omega)
+    d = _select(theta2 < threshold2, small_d, regular_d, omega)
     skew = _hat(omega)
     identity = _eye(3, omega, omega.shape[:-1])
     jacobian_inverse = identity - 0.5 * skew + d[..., None, None] * (skew @ skew)
@@ -312,41 +329,95 @@ def compose(first, second):
     return result
 
 
+def _broadcast_transform_pair(first, second):
+    if _is_torch(first) != _is_torch(second):
+        raise TypeError("transforms must use the same NumPy or torch backend")
+    if _is_torch(first) and first.device != second.device:
+        raise ValueError("torch transforms must use the same device")
+    try:
+        if _is_torch(first):
+            batch_shape = torch.broadcast_shapes(first.shape[:-2], second.shape[:-2])
+            return (
+                first.expand(*batch_shape, 4, 4),
+                second.expand(*batch_shape, 4, 4),
+            )
+        batch_shape = np.broadcast_shapes(first.shape[:-2], second.shape[:-2])
+        return (
+            np.broadcast_to(first, (*batch_shape, 4, 4)),
+            np.broadcast_to(second, (*batch_shape, 4, 4)),
+        )
+    except (RuntimeError, ValueError) as error:
+        raise ValueError("transform batch shapes are not broadcast-compatible") from error
+
+
 def _parameter_value(parameter, like):
     if isinstance(parameter, bool):
         raise TypeError("t must be a real scalar")
     if isinstance(parameter, Real):
         value = float(parameter)
     elif isinstance(parameter, np.ndarray):
+        if _is_torch(like):
+            raise TypeError("t and transforms must use the same NumPy or torch backend")
         if parameter.shape != () or parameter.dtype != np.float64:
             raise TypeError("t must be a float64 scalar")
-        value = float(parameter)
+        value = parameter
     elif isinstance(parameter, torch.Tensor):
+        if not _is_torch(like):
+            raise TypeError("t and transforms must use the same NumPy or torch backend")
         if parameter.shape != () or parameter.dtype != torch.float64:
             raise TypeError("t must be a float64 scalar")
-        if _is_torch(like) and parameter.device != like.device:
+        if parameter.device != like.device:
             raise ValueError("torch t must use the same device as transforms")
-        value = float(parameter.detach().item())
+        value = parameter
     else:
         raise TypeError("t must be a real scalar")
-    if not math.isfinite(value):
-        raise ValueError("t must be finite")
-    if value < 0.0 or value > 1.0:
-        raise ValueError("t must lie in [0, 1]")
+    if _is_torch(value):
+        if not torch.isfinite(value).item():
+            raise ValueError("t must be finite")
+        if ((value < 0.0) | (value > 1.0)).item():
+            raise ValueError("t must lie in [0, 1]")
+    else:
+        if not np.isfinite(value):
+            raise ValueError("t must be finite")
+        if value < 0.0 or value > 1.0:
+            raise ValueError("t must lie in [0, 1]")
     return value
+
+
+def _is_exact_parameter(value, expected: float) -> bool:
+    if _is_torch(value):
+        return bool((value == expected).item())
+    return bool(value == expected)
+
+
+def _exact_endpoint(transform):
+    return transform.clone() if _is_torch(transform) else transform.copy()
+
+
+def _straight_through_endpoint(transform, interpolated):
+    return transform.detach().clone() + interpolated - interpolated.detach()
 
 
 def geodesic_interpolate(start, end, t):
     """Interpolate as ``Exp(t Log(end @ inv(start))) @ start``."""
     _validate_transform(start, "start transform")
     _validate_transform(end, "end transform")
+    start, end = _broadcast_transform_pair(start, end)
     value = _parameter_value(t, start)
-    if value == 0.0:
-        return start.clone() if _is_torch(start) else start.copy()
-    if value == 1.0:
-        return end.clone() if _is_torch(end) else end.copy()
+    at_start = _is_exact_parameter(value, 0.0)
+    at_end = _is_exact_parameter(value, 1.0)
+    trainable_parameter = _is_torch(value) and value.requires_grad
+    if at_start and not trainable_parameter:
+        return _exact_endpoint(start)
+    if at_end and not trainable_parameter:
+        return _exact_endpoint(end)
     difference = compose(end, inverse(start))
-    return compose(se3_exp(se3_log(difference) * value), start)
+    interpolated = compose(se3_exp(se3_log(difference) * value), start)
+    if at_start:
+        return _straight_through_endpoint(start, interpolated)
+    if at_end:
+        return _straight_through_endpoint(end, interpolated)
+    return interpolated
 
 
 __all__ = [

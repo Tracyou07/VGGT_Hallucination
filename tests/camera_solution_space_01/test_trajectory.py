@@ -156,6 +156,43 @@ class TrajectoryTests(unittest.TestCase):
         midpoint = product_geodesic(tensor, tensor, 0.5)
         self.assertEqual(midpoint.device, tensor.device)
 
+    def test_product_geodesic_preserves_torch_scalar_parameter_gradient(self):
+        first = torch.eye(4, dtype=torch.float64).repeat(8, 1, 1)
+        second = first.clone()
+        second[1:] = se3_exp(
+            torch.tensor([[0.2, 0.0, 0.0, 0.0, 0.0, 0.0]] * 7, dtype=torch.float64)
+        )
+        parameter = torch.tensor(0.5, dtype=torch.float64, requires_grad=True)
+        midpoint = product_geodesic(first, second, parameter)
+        gradient = torch.autograd.grad(midpoint[1, 0, 3], parameter)[0]
+        self.assertTrue(torch.isfinite(gradient).item())
+        self.assertAlmostEqual(gradient.item(), 0.2, places=14)
+
+    def test_equal_torch_distance_retains_every_trainable_input_graph(self):
+        base = torch.eye(4, dtype=torch.float64).repeat(8, 1, 1)
+
+        first_fixed = base.clone()
+        second_trainable = base.clone().requires_grad_()
+        distance = trajectory_distance(first_fixed, second_trainable)
+        second_gradient = torch.autograd.grad(distance, second_trainable)[0]
+        self.assertTrue(torch.isfinite(second_gradient).all().item())
+        self.assertEqual(torch.count_nonzero(second_gradient).item(), 0)
+
+        first_trainable = base.clone().requires_grad_()
+        second_fixed = base.clone()
+        distance = trajectory_distance(first_trainable, second_fixed)
+        first_gradient = torch.autograd.grad(distance, first_trainable)[0]
+        self.assertTrue(torch.isfinite(first_gradient).all().item())
+        self.assertEqual(torch.count_nonzero(first_gradient).item(), 0)
+
+        first_trainable = base.clone().requires_grad_()
+        second_trainable = base.clone().requires_grad_()
+        distance = trajectory_distance(first_trainable, second_trainable)
+        gradients = torch.autograd.grad(distance, (first_trainable, second_trainable))
+        for gradient in gradients:
+            self.assertTrue(torch.isfinite(gradient).all().item())
+            self.assertEqual(torch.count_nonzero(gradient).item(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

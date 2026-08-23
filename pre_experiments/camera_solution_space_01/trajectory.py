@@ -95,7 +95,7 @@ def trajectory_distance(first, second):
     _require_matching_backends(first, second)
     if _is_torch(first):
         if torch.equal(first, second):
-            return first.sum() * 0.0
+            return (first.sum() + second.sum()) * 0.0
     elif np.array_equal(first, second):
         return np.float64(0.0)
     difference = compose(second[1:], inverse(first[1:]))

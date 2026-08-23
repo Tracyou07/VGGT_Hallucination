@@ -139,6 +139,89 @@ class Se3Tests(unittest.TestCase):
         log_gradient = torch.autograd.grad(jacobian_loss, twist)[0]
         self.assertTrue(torch.isfinite(log_gradient).all().item())
 
+    def test_torch_zero_and_identity_geometry_have_finite_gradients(self):
+        omega = torch.zeros(3, dtype=torch.float64, requires_grad=True)
+        rotation_gradient = torch.autograd.grad(so3_exp(omega)[2, 1], omega)[0]
+        self.assertTrue(torch.isfinite(rotation_gradient).all().item())
+        torch.testing.assert_close(rotation_gradient, torch.tensor([1.0, 0.0, 0.0], dtype=torch.float64))
+
+        twist = torch.zeros(6, dtype=torch.float64, requires_grad=True)
+        transform = se3_exp(twist)
+        exp_gradient = torch.autograd.grad(transform[0, 3] + transform[2, 1], twist)[0]
+        self.assertTrue(torch.isfinite(exp_gradient).all().item())
+
+        identity = torch.eye(4, dtype=torch.float64, requires_grad=True)
+        weights = torch.arange(1, 7, dtype=torch.float64)
+        log_gradient = torch.autograd.grad((se3_log(identity) * weights).sum(), identity)[0]
+        self.assertTrue(torch.isfinite(log_gradient).all().item())
+
+    def test_equal_transform_geodesic_has_finite_torch_gradient(self):
+        twist = torch.zeros(6, dtype=torch.float64, requires_grad=True)
+        transform = se3_exp(twist)
+        midpoint = geodesic_interpolate(transform, transform, 0.5)
+        gradient = torch.autograd.grad(midpoint[0, 3] + midpoint[2, 1], twist)[0]
+        self.assertTrue(torch.isfinite(gradient).all().item())
+
+    def test_small_angle_left_jacobian_is_accurate_and_continuous(self):
+        angles = (1.0000001e-8, 0.999e-4, 1.001e-4)
+        for angle in angles:
+            with self.subTest(angle=angle):
+                twist = np.array([0.0, 1.0, 0.0, angle, 0.0, 0.0], dtype=np.float64)
+                transform = se3_exp(twist)
+                expected = np.array(
+                    [0.0, math.sin(angle) / angle, 2.0 * math.sin(angle / 2.0) ** 2 / angle],
+                    dtype=np.float64,
+                )
+                np.testing.assert_allclose(transform[:3, 3], expected, atol=2e-15, rtol=2e-15)
+                np.testing.assert_allclose(se3_log(transform), twist, atol=2e-15, rtol=2e-15)
+                torch_result = se3_exp(torch.tensor(twist, dtype=torch.float64))
+                np.testing.assert_allclose(torch_result.numpy(), transform, atol=2e-15, rtol=2e-15)
+        self.assertAlmostEqual(
+            se3_exp(np.array([0.0, 1.0, 0.0, 1.0000001e-8, 0.0, 0.0]))[2, 3],
+            5.0000005e-9,
+            places=16,
+        )
+
+    def test_torch_scalar_t_remains_differentiable(self):
+        start = torch.eye(4, dtype=torch.float64)
+        end = se3_exp(torch.tensor([0.2, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.float64))
+        for value, expected in ((0.0, start), (0.5, None), (1.0, end)):
+            with self.subTest(value=value):
+                parameter = torch.tensor(value, dtype=torch.float64, requires_grad=True)
+                interpolated = geodesic_interpolate(start, end, parameter)
+                if expected is not None:
+                    torch.testing.assert_close(interpolated, expected, atol=0.0, rtol=0.0)
+                gradient = torch.autograd.grad(interpolated[0, 3], parameter)[0]
+                self.assertTrue(torch.isfinite(gradient).item())
+                self.assertAlmostEqual(gradient.item(), 0.2, places=14)
+
+    def test_geodesic_validates_pairs_before_endpoints_and_broadcasts_consistently(self):
+        numpy_identity = np.eye(4, dtype=np.float64)
+        torch_identity = torch.eye(4, dtype=torch.float64)
+        with self.assertRaisesRegex(TypeError, "backend|NumPy|torch"):
+            geodesic_interpolate(torch_identity, numpy_identity, 0.0)
+        with self.assertRaisesRegex(TypeError, "float64"):
+            geodesic_interpolate(
+                torch_identity, torch_identity, torch.tensor(0.0, dtype=torch.float32)
+            )
+
+        start = torch_identity.expand(2, 1, 4, 4)
+        end = torch_identity.expand(1, 3, 4, 4)
+        for parameter in (0.0, 0.5, 1.0):
+            with self.subTest(parameter=parameter):
+                result = geodesic_interpolate(start, end, parameter)
+                self.assertEqual(result.shape, (2, 3, 4, 4))
+                torch.testing.assert_close(result, torch.eye(4, dtype=torch.float64).expand(2, 3, 4, 4))
+
+    def test_empty_rotation_batches_are_supported(self):
+        numpy_result = so3_log(np.empty((0, 3, 3), dtype=np.float64))
+        torch_input = torch.empty((0, 3, 3), dtype=torch.float64, requires_grad=True)
+        torch_result = so3_log(torch_input)
+        self.assertEqual(numpy_result.shape, (0, 3))
+        self.assertEqual(torch_result.shape, (0, 3))
+        self.assertEqual(torch_result.dtype, torch.float64)
+        self.assertEqual(torch_result.device, torch_input.device)
+
     def test_geodesic_endpoints_are_exact_and_midpoint_is_valid(self):
         start = se3_exp(np.array([0.1, -0.2, 0.3, 0.2, 0.1, -0.15], dtype=np.float64))
         end = se3_exp(np.array([-0.3, 0.1, 0.2, -0.1, 0.3, 0.25], dtype=np.float64))
