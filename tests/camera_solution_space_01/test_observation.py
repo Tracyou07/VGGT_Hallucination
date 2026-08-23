@@ -44,6 +44,7 @@ def _sens_bytes(frame_count=120, jpeg_size=(2, 1)):
         payload.extend(struct.pack("<QQQQ", 1000 + frame_id, 2000 + frame_id, len(color), len(depth)))
         payload.extend(color)
         payload.extend(depth)
+    payload.extend(struct.pack("<Q", 0))
     return bytes(payload)
 
 

@@ -13,6 +13,7 @@ SENS_VERSION = 4
 MAX_STRING_BYTES = 1024 * 1024
 MAX_PAYLOAD_BYTES = 1 << 34
 MAX_DIMENSION = 100_000
+IMU_RECORD_SIZE = 128
 COLOR_COMPRESSION = {0: "raw", 1: "png", 2: "jpeg"}
 DEPTH_COMPRESSION = {0: "raw_ushort", 1: "zlib_ushort", 2: "occi_ushort"}
 
@@ -61,6 +62,9 @@ class SensIndex:
     depth_height: int
     depth_shift: float
     frames: tuple[SensFrame, ...]
+    imu_frame_count: int
+    imu_frames_offset: int
+    imu_end_offset: int
 
 
 def _read_exact(stream: BinaryIO, size: int, field: str) -> bytes:
@@ -99,7 +103,7 @@ def _validate_payload_range(file_size: int, start: int, size: int, field: str) -
 
 
 def index_sens(path: str | Path) -> SensIndex:
-    """Parse a SENS v4 header and frame table without decoding payloads."""
+    """Index SENS v4 RGB-D and IMU record ranges without decoding payloads."""
     source = Path(path)
     file_size = source.stat().st_size
     with source.open("rb") as stream:
@@ -165,9 +169,21 @@ def index_sens(path: str | Path) -> SensIndex:
                     next_record_offset=next_record_offset,
                 )
             )
+        imu_frame_count = _read_struct(stream, "<Q", "imu_frame_count")[0]
+        imu_frames_offset = stream.tell()
+        remaining = file_size - imu_frames_offset
+        if imu_frame_count > remaining // IMU_RECORD_SIZE:
+            required = imu_frame_count * IMU_RECORD_SIZE
+            raise SensTruncationError(
+                f"IMU records: count {imu_frame_count} requires {required} bytes "
+                f"from offset {imu_frames_offset}, only {remaining} remain"
+            )
+        imu_end_offset = imu_frames_offset + imu_frame_count * IMU_RECORD_SIZE
+        stream.seek(imu_end_offset)
         if stream.tell() != file_size:
             raise SensFormatError(
-                f"trailing undeclared bytes: frame table ended at {stream.tell()}, file size is {file_size}"
+                f"trailing undeclared bytes after IMU section: ended at {stream.tell()}, "
+                f"file size is {file_size}"
             )
 
     return SensIndex(
@@ -187,4 +203,7 @@ def index_sens(path: str | Path) -> SensIndex:
         depth_height=depth_height,
         depth_shift=depth_shift,
         frames=tuple(frames),
+        imu_frame_count=imu_frame_count,
+        imu_frames_offset=imu_frames_offset,
+        imu_end_offset=imu_end_offset,
     )

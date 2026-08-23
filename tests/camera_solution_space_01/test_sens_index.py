@@ -27,6 +27,8 @@ def _fixture_bytes(
     matrix_value=1.0,
     color_size=None,
     frame_count=2,
+    imu_frame_count=0,
+    imu_record_count=None,
     suffix=b"",
 ):
     color_payloads = [b"\xff\xd8\xff", b"\xff\xd8\x00\xff"]
@@ -48,6 +50,10 @@ def _fixture_bytes(
         payload.extend(struct.pack("<Q", len(depth)))
         payload.extend(color)
         payload.extend(depth)
+    payload.extend(struct.pack("<Q", imu_frame_count))
+    actual_imu_records = imu_frame_count if imu_record_count is None else imu_record_count
+    for record_index in range(actual_imu_records):
+        payload.extend(struct.pack("<15dQ", *([0.0] * 15), 300 + record_index))
     return bytes(payload) + suffix
 
 
@@ -59,8 +65,24 @@ class SensIndexTests(unittest.TestCase):
         path.write_bytes(payload)
         return index_sens(path)
 
+    def _index_valid(self, payload):
+        try:
+            return self._index(payload)
+        except SensFormatError as error:
+            self.fail(f"valid canonical SENS fixture was rejected: {error}")
+
+    def _assert_truncated(self, payload, field):
+        try:
+            self._index(payload)
+        except SensTruncationError as error:
+            self.assertRegex(str(error), field)
+        except SensFormatError as error:
+            self.fail(f"expected {field} truncation error, got: {error}")
+        else:
+            self.fail(f"expected {field} truncation error")
+
     def test_indexes_two_frames_with_exact_offsets_without_decoding_payloads(self):
-        index = self._index(_fixture_bytes())
+        index = self._index_valid(_fixture_bytes())
         self.assertEqual(index.sensor_name, "sensor")
         self.assertEqual(index.version, 4)
         self.assertEqual(index.color_compression, "jpeg")
@@ -78,8 +100,19 @@ class SensIndexTests(unittest.TestCase):
         self.assertEqual(index.frames[1].color_data_offset, 509)
         self.assertEqual(index.frames[1].depth_data_offset, 513)
         self.assertEqual(index.frames[1].next_record_offset, 518)
+        self.assertEqual(index.imu_frame_count, 0)
+        self.assertEqual(index.imu_frames_offset, 526)
+        self.assertEqual(index.imu_end_offset, 526)
         self.assertFalse(hasattr(index.frames[0], "color_payload"))
         self.assertFalse(hasattr(index.frames[0], "depth_payload"))
+
+    def test_indexes_nonzero_imu_section_with_exact_range_without_materializing_records(self):
+        index = self._index_valid(_fixture_bytes(imu_frame_count=2))
+        self.assertEqual(index.imu_frame_count, 2)
+        self.assertEqual(index.imu_frames_offset, 526)
+        self.assertEqual(index.imu_end_offset, 782)
+        self.assertEqual(index.file_size, 782)
+        self.assertFalse(hasattr(index, "imu_frames"))
 
     def test_rejects_truncated_header(self):
         with self.assertRaisesRegex(SensTruncationError, "version"):
@@ -107,7 +140,22 @@ class SensIndexTests(unittest.TestCase):
 
     def test_rejects_truncated_frame_with_frame_context(self):
         with self.assertRaisesRegex(SensTruncationError, "frame 1"):
-            self._index(_fixture_bytes()[:-2])
+            self._index(_fixture_bytes()[:-10])
+
+    def test_rejects_missing_or_truncated_imu_count(self):
+        cases = (_fixture_bytes()[:-8], _fixture_bytes()[:-4])
+        for payload in cases:
+            with self.subTest(size=len(payload)):
+                self._assert_truncated(payload, "imu_frame_count")
+
+    def test_rejects_truncated_imu_records_and_oversized_count(self):
+        cases = (
+            _fixture_bytes(imu_frame_count=2, imu_record_count=1),
+            _fixture_bytes(imu_frame_count=(1 << 64) - 1, imu_record_count=0),
+        )
+        for payload in cases:
+            with self.subTest(size=len(payload)):
+                self._assert_truncated(payload, "IMU records")
 
 
 if __name__ == "__main__":
