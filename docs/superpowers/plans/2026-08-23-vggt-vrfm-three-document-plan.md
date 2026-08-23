@@ -4,7 +4,7 @@
 
 **Goal:** 将当前单份“固定观测相机解空间”材料重构为三份互相衔接、语言通俗且证据边界严格的 PDF：理论基础、前置实验协议、V-RFM 方法设计。
 
-**Architecture:** Markdown 是内容评审主稿，LaTeX 是正式排版源；三份文档共享一套 LaTeX 视觉样式和一份 BibTeX 文献库。一个跨平台 Python 构建入口负责 XeLaTeX/BibTeX 编译和 Poppler 页面渲染，一组轻量 `unittest` 负责文件布局、关键术语、状态声明、交叉引用和“不得提前下结论”的内容契约。前置实验分支仍是实验事实的唯一来源，本分支只读取已经提交且带 provenance 的信息。
+**Architecture:** Markdown 是内容评审主稿，LaTeX 是正式排版源；三份文档共享一套 LaTeX 视觉样式和一份 BibTeX 文献库。一个跨平台 Python 构建入口负责 XeLaTeX/BibTeX 编译和 Poppler 页面渲染，轻量 `unittest` 只冻结可执行的 CLI 与产物 manifest 契约；中文科学论述、交叉引用和“不得提前下结论”的边界由逐文档人工审计。前置实验分支仍是实验事实的唯一来源，本分支只读取已经提交且带 provenance 的信息。
 
 **Tech Stack:** Chinese Markdown、XeLaTeX/ctex、TikZ、BibTeX/natbib、Python 3.10+ `unittest`/`subprocess`、Poppler (`pdfinfo`/`pdftoppm`/`pdftotext`)
 
@@ -25,6 +25,11 @@
 ---
 
 ## Task 1: 用失败测试冻结三文档内容契约
+
+> **实现修正（2026-08-23）：** 执行时按测试规范复核后，取消了对 Markdown/LaTeX
+> 人类文本做关键词 grep 断言的方案。自动测试改为验证 `--list`、三份公开产物 manifest
+> 和未知 key 拒绝等可执行行为；科学语义边界保留为 Task 11 的人工逐段审计。这样不会
+> 因正常改写中文措辞产生脆弱失败，也不会把“关键词存在”误当成科学论证正确。
 
 **Files:**
 
@@ -566,7 +571,9 @@ git commit -m "docs: typeset variational camera refiner concept"
 
 **Step 3: 运行链接和状态检查**
 
-扩展 `test_vggt_vrfm_documents.py`，确认导航页引用的六个 source 路径都存在，三个 README 的构建 key 分别正确。
+人工打开导航页引用的六个 source 路径，并运行构建脚本的 `--list` 契约测试，确认三个
+README 的构建 key 与公开 manifest 一致。链接正文和状态声明属于人类文档内容，不增加
+源码关键词 grep 测试。
 
 Run: `python -m unittest tests.documentation.test_vggt_vrfm_documents -v`
 
