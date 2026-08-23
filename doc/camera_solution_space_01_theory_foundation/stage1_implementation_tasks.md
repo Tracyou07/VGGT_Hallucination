@@ -108,9 +108,10 @@ Requirements:
 2. Plan schema records source path/size/SHA-256, scene/split, selection version
    `fixed8_stride15_v1`, ordered frame IDs/timestamps, header fingerprint, and
    selection diagnostics. Canonical hash is the plan ID.
-3. The first implementation accepts a precomputed eligibility callback/cache;
-   it must deterministically choose the lowest eligible `f`. Do not implement
-   matcher thresholds in this task.
+3. The first implementation accepts a precomputed eligibility callback/cache
+   only as a synthetic seam; it must deterministically choose the lowest
+   eligible `f`. This v1 seam is not authorized for real ScanNet sealing. Task
+   2.5 replaces it with hash-bound full-window evidence before any real plan.
 4. Random-access extraction only reads planned payload offsets. Implement JPEG
    color decode and zlib uint16 depth decode; reject unsupported active
    compression instead of guessing. Validate decoded shape exactly.
@@ -136,6 +137,62 @@ PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 \
 ```
 
 Commit message: `Seal fixed ScanNet observations`
+
+## Task 2.5: Bind full-window eligibility evidence and production paths
+
+Create/update:
+
+```text
+pre_experiments/camera_solution_space_01/eligibility.py
+pre_experiments/camera_solution_space_01/observation.py
+scripts/camera_solution_space_01/preflight_scannet50.py
+scripts/camera_solution_space_01/build_eligibility.py
+scripts/camera_solution_space_01/plan_observations.py
+scripts/camera_solution_space_01/seal_observations.py
+scripts/camera_solution_space_01/validate_observations.py
+tests/camera_solution_space_01/test_eligibility.py
+tests/camera_solution_space_01/test_observation.py
+```
+
+Requirements:
+
+1. Define strict `camera_solution_space_01.eligibility.v1`. It binds the exact
+   source/header, scene/split, selection and matcher config hashes, runtime
+   fingerprint, candidate count, and an ordered record for every legal start.
+   Each record contains the exact eight frame IDs, pass/fail, complete
+   diagnostics, and rejection reasons. Its ID is canonical SHA-256 excluding
+   the ID field.
+2. Reject missing/extra/reordered/duplicate windows, bool-as-int, inconsistent
+   frame IDs/counts, wrong source/header/config, non-finite diagnostics,
+   malformed hashes, and any tamper even when an outer file is rehashed.
+3. Add `observation_plan.v2`. Production planning accepts only a validated
+   eligibility artifact, selects the lowest eligible start, and binds the
+   artifact path/size/SHA-256/ID plus the exact chosen record into `plan_id`.
+   Arbitrary callback/mapping input remains test-only v1 and must not be exposed
+   by the production CLI.
+4. Eligibility matching is selection evidence, not the later objective match
+   cache. The two artifacts may share a versioned matcher config but must have
+   separate IDs, files, schemas, and consumers. Sealing never runs either
+   selector or matcher.
+5. Production CLIs fail closed unless raw sources resolve below
+   `/data/yjh/share/datasets/ScanNet` and derived artifacts resolve below the
+   exact eligibility/plans/observations subdirectories of
+   `/data/output/camera_solution_space_01`. Reject symlinks, `..`, wrong roots,
+   and output-in-raw-tree. Python library APIs may still use temporary roots in
+   unit tests.
+6. `preflight_scannet50.py` consumes the verified transfer marker and strictly
+   indexes all 50 SENS files; it writes a versioned structural card only under
+   `/data/output/camera_solution_space_01/preflight` and never mutates raw data.
+7. Deep observation validation also verifies the referenced eligibility
+   artifact fingerprint and chosen record. Existing synthetic v1 artifacts are
+   explicitly non-production; there is no silent schema upgrade.
+
+Tests must first fail, then cover canonical determinism, full candidate
+coverage, lowest-window proof, tamper/reorder/missing diagnostics rejection,
+source/config mismatch, v1 production rejection, output/source path guards,
+symlink escape, no raw-tree mutation, and exact plan/eligibility binding.
+
+Commit message: `Bind observation eligibility evidence`
 
 ## Task 3: Gauge-fixed SE(3) trajectories and distance
 

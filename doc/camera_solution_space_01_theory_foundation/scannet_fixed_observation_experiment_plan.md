@@ -55,6 +55,10 @@ FastVGGT 的评估入口读取处理后的 `color/`、`pose/` 和 GT PLY；参�
 SHA-256；只有 100 对 hash 全相等，才原子生成 `verified_completion.json`。上游
 没有发布逐文件密码学 checksum，因此结果卡必须准确写成“HTTPS 长度重新核对且
 本地/H20 副本逐字节一致”，不能声称与一个不存在的上游 SHA-256 清单比对过。
+这里的本地副本不是从 H20 拉回：它是本次获准下载的临时 acquisition origin
+`D:\ScanNet_FastVGGT50_staging_20260823`，数据方向始终为官方 HTTPS → 本地 →
+H20。终态验证只从 H20 返回每个文件的 size/hash 文本，不回传数据。验证后 H20
+副本成为权威数据源；本地 staging 是否清理必须另行确认，不能静默删除。
 50 个 `.sens` 的官方长度合计为 37,267,218,065 bytes（34.708 GiB）。
 
 固定落盘位置：
@@ -198,18 +202,31 @@ configs/camera_solution_space_01/scannet50_split_v1.json
 
 ## 4. M0：为每个 scene 封存一个固定 8 帧 observation
 
-### 4.1 三阶段创建，后续不可重采样
+### 4.1 四阶段创建，后续不可重采样
 
-Observation 与 objective 创建分成不可混淆的三个阶段：
+Observation 与 objective 创建分成不可混淆的四个阶段：
 
-1. `index/plan`：只读 `.sens` header 和 frame offsets，生成
-   `observation_plan.json`；此阶段确定并保存最终 8 个原始 frame ID。
-2. `extract/seal`：只接受该 plan，随机 seek/decode 8 帧，写 native RGB、depth、
+1. `build eligibility`：只读 `.sens`，按固定 selector/matcher 配置评估**全部**候选
+   起点，生成 versioned、hash-addressed eligibility artifact。它必须逐窗口保存
+   frame IDs、深度覆盖、15 条边的匹配计数、GT 运动 audit、通过/拒绝原因和环境/
+   配置 hash；不得只给调用方一个任意 Boolean callback。
+2. `plan`：验证 eligibility artifact 的 source/header/config/hash 和候选覆盖完整性，
+   确定第一个 `eligible=true` 的窗口。`observation_plan.json` 必须绑定该 artifact 的
+   path/size/SHA-256/ID 以及 chosen-window diagnostics；这些字段进入 `plan_id`。
+3. `extract/seal`：只接受该 plan，随机 seek/decode 8 帧，写 native RGB、depth、
    pose-audit、intrinsics 和逐文件 SHA-256，最后用原子 no-replace 发布
    complete/manifest；此阶段不运行 matcher，也不选择新帧。
-3. `freeze objective`：在 observation 已封存后，由后续任务生成单独的不可变
+4. `freeze objective`：在 observation 已封存后，由后续任务生成单独的不可变
    objective artifact。它保存 depth-to-RGB、冻结匹配、能量配置与 hash，并通过
    `observation_id` 引用 observation，绝不回写或改变 observation。
+
+Eligibility 中的匹配只用于**选择证据**，objective 中的匹配用于**可接受性能量**；
+两者可共享同一个 versioned matcher config，但必须是两个命名、hash 和用途都分离的
+artifact。这样既能审计“第一条通过窗口”，也不会让后续 objective 回写 observation。
+
+当前代码里的 `observation_plan.v1` + 任意 eligibility mapping/callback 只允许作为
+synthetic seam 测试；它还不足以封存真实 ScanNet observation。任何真实 seal 之前
+必须先实现并通过 `eligibility.v1` + `observation_plan.v2` 门禁。
 
 后续实验 CLI 只能接受：
 
@@ -248,13 +265,44 @@ $$
 如果 v1 大面积失败，应在看到候选/路径结果前建立全新的 `selection_version=v2`，
 重新生成全部 manifest，并把 v1 失败率完整保留。
 
-### 4.3 Observation manifest 必须封存的内容
+### 4.3 Eligibility artifact 必须封存的内容
+
+```json
+{
+  "schema": "camera_solution_space_01.eligibility.v1",
+  "eligibility_id": "<64 lowercase hex>",
+  "source": {"path": "...", "size": 0, "sha256": "<64 lowercase hex>"},
+  "scene_id": "sceneXXXX_YY",
+  "split": "calibration|evaluation",
+  "selection_version": "fixed8_stride15_v1",
+  "selector_config_sha256": "<64 lowercase hex>",
+  "matcher_config_sha256": "<64 lowercase hex>",
+  "runtime_fingerprint": {},
+  "candidate_count": 0,
+  "windows": [
+    {
+      "start": 0,
+      "frame_ids": [0, 15, 30, 45, 60, 75, 90, 105],
+      "eligible": false,
+      "diagnostics": {},
+      "rejection_reasons": []
+    }
+  ]
+}
+```
+
+`windows` 必须按每个合法起点完整、有序、无重复覆盖，不能只保存通过项。artifact
+ID 是去掉自身 ID 后 canonical JSON 的 SHA-256。Plan 只能从经验证的 artifact 中
+选择最低 eligible start，且必须把 artifact fingerprint 与 chosen record 绑定进
+`plan_id`；artifact 的任何位、顺序、配置或 source 改变都使 plan 失效。
+
+### 4.4 Observation manifest 必须封存的内容
 
 ```json
 {
   "schema": "camera_solution_space_01.observation_manifest.v1",
-  "observation_id": "sha256:...",
-  "plan_id": "sha256:...",
+  "observation_id": "<64 lowercase hex>",
+  "plan_id": "<64 lowercase hex>",
   "source": {"path": "...", "size": 0, "sha256": "..."},
   "files": [],
   "ordered_model_input": [],
@@ -264,9 +312,12 @@ $$
 
 真实 frame ID 必须来自 `.sens`，只能在 `plan.json` 中按固定规则封存，不能预写进
 结果模板或在 seal 阶段替换。
-所有导出文件记录相对路径、size 与 SHA-256。当前 v1 使用 canonical `plan_id` 作为
-目录名和 `observation_id`，同时在 manifest 内冻结派生文件 Merkle hash；任何内容、
-顺序或 source fingerprint 不一致都必须 deep-validation 失败，不能覆盖既有目录。
+所有内容文件记录相对路径、size 与 SHA-256；协议 envelope 是明确例外：
+`manifest.json` 不能自我散列，`complete.json` 也不进入 `files`，而由
+`complete.json.manifest_sha256` 单向绑定 manifest。当前 v1 使用 canonical
+`plan_id` 作为目录名和 `observation_id`，同时在 manifest 内冻结派生文件 Merkle
+hash；任何内容、顺序或 source fingerprint 不一致都必须 deep-validation 失败，
+不能覆盖既有目录。
 RGB 文件是 native JPEG 解码后的 `uint8` 数组；任何 proposal resize/pad 都属于
 另行版本化的模型适配器，不能悄悄改变 observation。
 
@@ -275,8 +326,8 @@ RGB 文件是 native JPEG 解码后的 `uint8` 数组；任何 proposal resize/p
 ```json
 {
   "schema": "camera_solution_space_objective/v1",
-  "objective_id": "sha256:...",
-  "observation_id": "sha256:...",
+  "objective_id": "<64 lowercase hex>",
+  "observation_id": "<64 lowercase hex>",
   "depth_to_rgb": "calibrated reprojection, nearest-z z-buffer",
   "depth_valid_m": [0.25, 5.0],
   "edges": [],
@@ -286,10 +337,13 @@ RGB 文件是 native JPEG 解码后的 `uint8` 数组；任何 proposal resize/p
 }
 ```
 
-### 4.4 派生输出结构
+### 4.5 派生输出结构
 
 ```text
 /data/output/camera_solution_space_01/
+  eligibility/<eligibility-id>/
+    eligibility.json
+    complete.json
   plans/<scene>.observation_plan.json
   observations/<observation-id>/
     plan.json
@@ -307,7 +361,7 @@ RGB 文件是 native JPEG 解码后的 `uint8` 数组；任何 proposal resize/p
     matches/<edge>.npz
 ```
 
-`pose_audit/` 和 PLY 只能用于筛选、校准或 post-hoc audit。独立目标函数的 Python
+`pose_audit.json` 和 PLY 只能用于筛选、校准或 post-hoc audit。独立目标函数的 Python
 接口不能接收 sensor pose、PLY、VGGT depth、VGGT point map 或 VGGT confidence。
 
 ## 5. M1：去 gauge 的状态、距离和独立 RGB-D 能量
@@ -589,6 +643,7 @@ pre_experiments/camera_solution_space_01/
   __init__.py
   contracts.py
   sens_index.py
+  eligibility.py
   observation.py
   matching.py
   se3.py
@@ -608,6 +663,7 @@ pre_experiments/camera_solution_space_01/
 
 scripts/camera_solution_space_01/
   preflight_scannet50.py
+  build_eligibility.py
   plan_observations.py
   seal_observations.py
   validate_observations.py
@@ -621,6 +677,7 @@ scripts/camera_solution_space_01/
 tests/camera_solution_space_01/
   test_contracts.py
   test_sens_index.py
+  test_eligibility.py
   test_observation.py
   test_matching.py
   test_se3.py
@@ -744,26 +801,30 @@ CPU smoke 或研究结论。所有真实 ScanNet/VGGT 数值实验在 H20 上运
   scripts/camera_solution_space_01/*.py
 ```
 
-真实数据 Gate：
+真实数据 Gate 当前**不可执行**：现有三个 observation CLI 只是 Task 2 的
+synthetic seam，参数是临时 positional 接口，既没有生成完整 eligibility evidence，
+也没有强制 H20 的 source/output roots。不得把它们用于真实 ScanNet。
 
-```bash
-python scripts/camera_solution_space_01/preflight_scannet50.py \
-  --dataset-root /data/yjh/share/datasets/ScanNet \
-  --output-root /data/output/camera_solution_space_01 \
-  --strict --dry-run
+Task 2.5 必须先交付并测试以下正式命令链，随后把每条真实 `--help` 和完整命令原样
+回填本节：
 
-python scripts/camera_solution_space_01/plan_observations.py \
-  --dataset-root /data/yjh/share/datasets/ScanNet \
-  --split calibration --selection-version fixed8_stride15_v1
-
-python scripts/camera_solution_space_01/seal_observations.py \
-  --plans-root /data/output/camera_solution_space_01/plans \
-  --split calibration
-
-python scripts/camera_solution_space_01/validate_observations.py \
-  --root /data/output/camera_solution_space_01/observations \
-  --split calibration --deep
+```text
+preflight_scannet50
+  verified_completion.json -> remote structural index card
+build_eligibility
+  one immutable full-window eligibility artifact per scene
+plan_observations
+  verified eligibility artifact -> observation_plan.v2
+seal_observations
+  plan.v2 + eligibility fingerprint -> no-replace observation
+validate_observations
+  observation + plan + eligibility + source deep validation
 ```
+
+正式 CLI 必须 fail closed 地强制 source 在
+`/data/yjh/share/datasets/ScanNet`，eligibility/plan/observation 在
+`/data/output/camera_solution_space_01` 对应子目录；测试用临时目录只能通过 Python
+library API，不能成为正式 CLI 的隐式逃逸路径。
 
 正式 GPU 运行前重新检查 `nvidia-smi`。当前优先候选 GPU 为 5，其次 3；明确避开
 GPU 4/6/7，且不自动挑卡。命令必须显式：
@@ -786,6 +847,8 @@ G0  50 个 .sens + 50 个 PLY：官方清单/长度、精确路径、零 partial
     且本地与 H20 的 100 对 SHA-256 全相等并生成 verified_completion.json
  ↓
 G1  synthetic .sens 索引/随机解码/manifest tests 全过
+ ↓
+G1.5  eligibility.v1 全窗口证据、plan.v2 绑定和正式 CLI 路径门禁全过
  ↓
 G2  12 个 calibration observation 封存并 deep validate
  ↓
