@@ -58,8 +58,11 @@ Requirements:
    record offset. Indexing must seek over payloads without decoding them or
    retaining payload bytes.
 6. Validate version, dimensions, finite matrices, nonnegative bounded string
-   and payload sizes, record/file bounds, and exact EOF after the declared last
-   frame. Fail with typed, actionable exceptions including field/frame context.
+   and payload sizes, and record/file bounds. After the RGB-D frame table,
+   parse the canonical SENS v4 `uint64` IMU count and its fixed 128-byte record
+   range without materializing records; require exact EOF after that IMU
+   section. Fail with typed, actionable exceptions including field/frame
+   context. Never accept arbitrary trailing bytes.
 7. The public API is read-only and accepts a file path; no network and no
    output deletion. Use immutable dataclasses for parsed metadata.
 
@@ -68,7 +71,9 @@ Tests must first fail, then cover:
 - a synthetic two-frame SENS fixture with JPEG-like and zlib payload bytes;
 - exact offsets and metadata without any decode call;
 - truncated header, invalid version/compression/dimensions/matrix;
-- payload size beyond EOF, trailing undeclared bytes, and truncated frame;
+- payload size beyond EOF and truncated RGB-D frame;
+- zero/nonzero IMU sections, missing/truncated IMU count or records, oversized
+  count, and trailing undeclared bytes after an otherwise valid IMU section;
 - canonical JSON determinism and non-finite rejection;
 - exact 50 scene list and 12/38 split reconstruction from the recorded rule.
 
@@ -195,5 +200,13 @@ profile continuation, product-SE(3) string/NEB, and reporting described in the
 detailed spec. Candidate/path acceptance reads frozen observation, objective,
 and calibration cards only. Reports must encode the asymmetric conclusion
 language: search failure never becomes a disconnectedness claim.
+
+The official VGGT proposal preprocessing is frozen as
+`official_vggt_pad518_bicubic_v1`: decoded native RGB, aspect-preserving resize
+with the largest side 518, the other side rounded to a multiple of patch size
+14, Pillow bicubic resampling, and centered white padding to 518x518. Tests must
+compare the array adapter against `vggt.utils.load_fn.load_and_preprocess_images`
+on lossless fixtures. Do not use the obsolete long-side-640/bilinear text, the
+Omega 512/256 transform, or treat four `pose_enc_list` refinements as samples.
 
 Commit message: `Add camera solution-space probes`

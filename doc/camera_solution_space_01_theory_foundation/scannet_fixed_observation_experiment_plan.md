@@ -1,9 +1,10 @@
 # Camera Solution Space 01：ScanNet 固定观测验证实施计划
 
 > 日期：2026-08-23
-> 分支：`codex/camera_solution_space_01_theory_foundation`
-> 基线提交：`8d2036faa9e9f54c6bee6889f563ef54f3b890fb`
-> 状态：实施前冻结协议；尚无真实解空间实验结论
+> 理论父分支：`codex/camera_solution_space_01_theory_foundation`
+> 实施分支：`codex/camera_solution_space_01_stage1`
+> 理论计划基线：`cc1d8ac15861aea54d14961653cd340e7d984f29`
+> 状态：Stage 1 实施与真实输入门禁进行中；尚无真实解空间实验结论
 > 执行平台：H20；正式数值实验不设 CPU smoke 门
 
 ## 0. 本计划解决什么
@@ -26,8 +27,8 @@ Hessian、perturb-refit、continuation 和路径搜索，必须读取同一个�
 ### 1.1 已经存在的内容
 
 - 代码仓库：`/home/ubuntu/yjh/vggt`
-- 当前分支：`codex/camera_solution_space_01_theory_foundation`
-- 当前 HEAD：`8d2036faa9e9f54c6bee6889f563ef54f3b890fb`
+- 理论父分支：`codex/camera_solution_space_01_theory_foundation`
+- 实施 worktree 分支：`codex/camera_solution_space_01_stage1`
 - 理论文档：
   `doc/camera_solution_space_01_theory_foundation/camera_trajectory_solution_space.md`
 - 同一理论文档的 LaTeX 与 PDF 已存在；理论文档明确声明尚无真实实验结论。
@@ -49,6 +50,11 @@ FastVGGT 的评估入口读取处理后的 `color/`、`pose/` 和 GT PLY；参�
 
 本项目下载官方 50 个 `.sens` 以及对应 50 个 `_vh_clean_2.ply`，不经过按键确认。
 下载采用官方 HTTPS、可续传 partial、Content-Length 验证、完成后原子改名。
+下载器自己的长度门禁之后还必须运行独立终态 verifier：重新读取官方 50 场景
+清单，核对 100 个固定路径和零残留 partial，并在本地与 H20 分别计算每个文件的
+SHA-256；只有 100 对 hash 全相等，才原子生成 `verified_completion.json`。上游
+没有发布逐文件密码学 checksum，因此结果卡必须准确写成“HTTPS 长度重新核对且
+本地/H20 副本逐字节一致”，不能声称与一个不存在的上游 SHA-256 清单比对过。
 50 个 `.sens` 的官方长度合计为 37,267,218,065 bytes（34.708 GiB）。
 
 固定落盘位置：
@@ -70,17 +76,26 @@ FastVGGT 的评估入口读取处理后的 `color/`、`pose/` 和 GT PLY；参�
 派生 observation 与实验结果：/data/output/camera_solution_space_01
 ```
 
-`.sens` 的官方 version、header、RGB-D frame record 和压缩定义以
-[`ScanNet/SensReader/python/SensorData.py`](https://raw.githubusercontent.com/ScanNet/ScanNet/master/SensReader/python/SensorData.py)
-为格式依据。旧 reader 会把整条序列全部载入内存，本计划只借鉴格式，不直接复用
-其全量加载/全量导出 API。
+`.sens` 的 canonical v4 格式以 ScanNet 官方 C++
+[`sensorData.h`](https://raw.githubusercontent.com/ScanNet/ScanNet/master/SensReader/c%2B%2B/src/sensorData.h)
+为最终依据；Python
+[`SensorData.py`](https://raw.githubusercontent.com/ScanNet/ScanNet/master/SensReader/python/SensorData.py)
+可辅助核对 RGB-D，但没有覆盖 v4 文件末尾的完整 IMU 段。真实
+`scene0136_01.sens` 门禁已验证：787 条 RGB-D 之后是 `uint64=1576`，随后
+1576 条 128-byte IMU record，区间 `[240548853,240750581)` 精确到 EOF。
+因此索引器必须完整校验 canonical IMU count/range 后再要求 exact EOF，不能把它
+误报为垃圾尾部，也不能放宽成接受任意 trailing bytes。旧 reader 会全量载入序列，
+本计划只借鉴格式，不直接复用其全量加载/导出 API。
 
 ### 1.3 当前缺口
 
-当前分支还没有：
+Stage 1 已经完成并通过独立复审的基础能力：
 
-- ScanNet `.sens` 随机索引器；
-- 固定 observation plan、封存和完整性验证器；
+- 严格 SENS v4 随机索引（含 canonical IMU trailer）和官方 50/12–38 split；
+- 固定 8 帧 observation 的 plan/seal/deep-validation 基础实现。
+
+当前仍没有：
+
 - 与 VGGT 输出独立的 RGB-D 能量；
 - gauge-fix、轨迹距离和合法 `SE(3)` 插值；
 - 多起点候选 registry；
@@ -183,19 +198,24 @@ configs/camera_solution_space_01/scannet50_split_v1.json
 
 ## 4. M0：为每个 scene 封存一个固定 8 帧 observation
 
-### 4.1 两阶段创建，后续不可重采样
+### 4.1 三阶段创建，后续不可重采样
 
-Observation 创建分成不可混淆的两个阶段：
+Observation 与 objective 创建分成不可混淆的三个阶段：
 
 1. `index/plan`：只读 `.sens` header 和 frame offsets，生成
    `observation_plan.json`；此阶段确定并保存最终 8 个原始 frame ID。
-2. `extract/seal`：只接受该 plan，随机 seek/decode 8 帧，写 RGB、depth、pose、
-   intrinsics、匹配 cache 和逐文件 SHA-256，最后原子写入 complete/manifest。
+2. `extract/seal`：只接受该 plan，随机 seek/decode 8 帧，写 native RGB、depth、
+   pose-audit、intrinsics 和逐文件 SHA-256，最后用原子 no-replace 发布
+   complete/manifest；此阶段不运行 matcher，也不选择新帧。
+3. `freeze objective`：在 observation 已封存后，由后续任务生成单独的不可变
+   objective artifact。它保存 depth-to-RGB、冻结匹配、能量配置与 hash，并通过
+   `observation_id` 引用 observation，绝不回写或改变 observation。
 
 后续实验 CLI 只能接受：
 
 ```bash
---observation-manifest /data/output/camera_solution_space_01/observations/<id>/observation_manifest.json
+--observation-manifest /data/output/camera_solution_space_01/observations/<id>/manifest.json
+--objective-card /data/output/camera_solution_space_01/objectives/<id>/objective_card.json
 ```
 
 不得接受 raw `.sens`、`--frame-count`、重新 sampling 的 seed，或在坏帧时自动换帧。
@@ -232,30 +252,39 @@ $$
 
 ```json
 {
-  "schema": "camera_solution_space_observation/v1",
+  "schema": "camera_solution_space_01.observation_manifest.v1",
   "observation_id": "sha256:...",
-  "tool_commit": "...",
-  "scene_id": "sceneXXXX_YY",
-  "split": "calibration|evaluation",
-  "sens": {"path": "...", "size": 0, "sha256": "..."},
-  "ply": {"path": "...", "size": 0, "sha256": "..."},
-  "frame_indices": [0, 15, 30, 45, 60, 75, 90, 105],
-  "timestamps_color_us": [],
-  "timestamps_depth_us": [],
-  "selection_version": "fixed8_stride15_v1",
-  "ordered_model_inputs": [],
-  "rgb_decode_resize": "native -> long-side 640, bilinear, no crop",
+  "plan_id": "sha256:...",
+  "source": {"path": "...", "size": 0, "sha256": "..."},
+  "files": [],
+  "ordered_model_input": [],
+  "artifact_merkle_hash": "..."
+}
+```
+
+真实 frame ID 必须来自 `.sens`，只能在 `plan.json` 中按固定规则封存，不能预写进
+结果模板或在 seal 阶段替换。
+所有导出文件记录相对路径、size 与 SHA-256。当前 v1 使用 canonical `plan_id` 作为
+目录名和 `observation_id`，同时在 manifest 内冻结派生文件 Merkle hash；任何内容、
+顺序或 source fingerprint 不一致都必须 deep-validation 失败，不能覆盖既有目录。
+RGB 文件是 native JPEG 解码后的 `uint8` 数组；任何 proposal resize/pad 都属于
+另行版本化的模型适配器，不能悄悄改变 observation。
+
+冻结匹配和能量属于独立 objective artifact：
+
+```json
+{
+  "schema": "camera_solution_space_objective/v1",
+  "objective_id": "sha256:...",
+  "observation_id": "sha256:...",
   "depth_to_rgb": "calibrated reprojection, nearest-z z-buffer",
   "depth_valid_m": [0.25, 5.0],
   "edges": [],
   "matcher_config_sha256": "...",
+  "energy_config_sha256": "...",
   "artifact_merkle_sha256": "..."
 }
 ```
-
-真实 frame ID 必须来自 `.sens`，上面的数字只是 schema 示例，不能预写进结果。
-所有导出文件记录相对路径、size 与 SHA-256。`observation_id` 必须由规范化 manifest
-主体和 artifact hashes 生成。
 
 ### 4.4 派生输出结构
 
@@ -263,16 +292,18 @@ $$
 /data/output/camera_solution_space_01/
   plans/<scene>.observation_plan.json
   observations/<observation-id>/
-    observation_manifest.json
+    plan.json
+    intrinsics.json
+    pose_audit.json
+    read_audit.json
+    rgb/<position>.npy
+    depth/<position>.npy
+    manifest.json
     complete.json
-    color/<frame-id>.jpg
-    depth/<frame-id>.png
-    pose_audit/<frame-id>.txt
-    intrinsic/
-      intrinsic_color.txt
-      extrinsic_color.txt
-      intrinsic_depth.txt
-      extrinsic_depth.txt
+  objectives/<objective-id>/
+    objective_card.json
+    complete.json
+    aligned_depth/<position>.npy
     matches/<edge>.npz
 ```
 
@@ -305,8 +336,8 @@ Procrustes/SE(3) 对齐。四元数 $r$ 与 $-r$ 必须映射成同一个旋转�
 - 两端必须有有效 RGB-aligned depth；
 - 按固定 key 排序，冻结到 cache 并散列。
 
-若 OpenCV/build 差异导致 matcher cache hash 改变，必须生成新 observation/objective
-版本，不能在原结果上继续。
+若 OpenCV/build 差异导致 matcher cache hash 改变，必须生成新的 objective
+artifact/version；原 observation 保持不变，不能在原 objective 结果上继续。
 
 ### 5.3 能量
 
@@ -432,11 +463,42 @@ state = safetensors.torch.load_file(
     "/data/yjh/share/pretrained/VGGT-1B/model.safetensors", device="cpu"
 )
 model.load_state_dict(state, strict=True)
+del state
+# 只有 strict load 成功后，camera-only proposal 才可释放未使用 heads。
+model.depth_head = None
+model.point_head = None
+model.track_head = None
+model = model.to(device).eval()
 ```
+
+模型构造时必须保留全部 heads，先对 1,797 个 checkpoint key 做 `strict=True`
+加载；若在 load 前裁 head，会把官方权重误报为 unexpected keys。模型构造本身会
+消费 RNG，因此 Sobol/候选 RNG 要在加载完成后单独重新初始化。
+
+VGGT proposal 的唯一预处理协议冻结为
+`official_vggt_pad518_bicubic_v1`，并与 observation 的 native RGB 解码分离：
+
+1. 将 8 个 sealed `uint8 RGB` 转为 PIL RGB；
+2. 保持长宽比，把最大边缩放到 518；另一边按官方实现四舍五入到 patch size 14
+   的整数倍；
+3. 使用 Pillow `Image.Resampling.BICUBIC`；
+4. 用值 1.0 的白色在两侧居中 pad 到 `518x518`；
+5. 堆叠为 float32 `[8,3,518,518]`、范围 `[0,1]`。
+
+数组适配器必须用 lossless PNG fixture 与仓库
+`vggt.utils.load_fn.load_and_preprocess_images(..., mode="pad")` 做逐元素一致性测试。
+旧文本中的“长边 640、bilinear、no crop”不可执行：640 不是 patch size 14 的
+整数倍，也不是当前官方 loader 的协议。VGGT-Omega 的 512/256、patch-16 预处理
+同样禁止混入本实验。
 
 `pose_enc_list` 是同一次 forward 的四次 refinement，不作为四个样本。只使用最终
 `pose_enc`，经 `pose_encoding_to_extri_intri` 转为矩阵、统一 convention、gauge-fix
 后得到 $q_{VGGT}$。ScanNet 已知内参固定，VGGT 预测 FoV 不进入独立目标。
+
+当前接口 `VGGT.forward(images, query_points=None)` 没有 seed sampler，也不接受计划
+文档中曾设想的 `camera_num_iterations` 参数。最终 decode 形状为 w2c/OpenCV
+`[1,8,3,4]`；`pose_encoding_to_extri_intri` 返回的不是 c2w。所有候选随机性来自
+模型之后单独登记的 Sobol/refit，多次 seed 不能伪装成多次 VGGT stochastic sample。
 
 第一轮固定 8 帧、camera-only proposal；VGGT proposal 保存后，后续几何优化不再
 重复运行完整模型。
@@ -534,6 +596,7 @@ pre_experiments/camera_solution_space_01/
   rgbd_energy.py
   calibration.py
   controls.py
+  vggt_preprocess.py
   vggt_proposal.py
   pose_graph_proposal.py
   refit.py
@@ -565,6 +628,7 @@ tests/camera_solution_space_01/
   test_rgbd_energy.py
   test_calibration.py
   test_controls.py
+  test_vggt_preprocess.py
   test_registry.py
   test_local_geometry.py
   test_continuation.py
@@ -718,7 +782,8 @@ GPU 选择只是当前快照，正式启动前必须重新确认进程归属和�
 ## 14. Go / No-Go 顺序
 
 ```text
-G0  50 个 .sens + 50 个 PLY 下载、数量和长度验证
+G0  50 个 .sens + 50 个 PLY：官方清单/长度、精确路径、零 partial，
+    且本地与 H20 的 100 对 SHA-256 全相等并生成 verified_completion.json
  ↓
 G1  synthetic .sens 索引/随机解码/manifest tests 全过
  ↓
