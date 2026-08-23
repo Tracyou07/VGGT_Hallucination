@@ -3,11 +3,14 @@
 本目录是新研究线的理论起点。它继承 `origin/main@15e96cc` 的稳定 VGGT
 基线，但不继承旧实验分支的专属提交、结果或结论。
 
-当前状态：**只有理论定义与证据规范；尚无拓扑实验结果，也没有训练结论。**
+当前状态：**已有理论定义、证据规范和 ScanNet 固定观测实施计划；尚无真实
+解空间实验结果，也没有训练结论。**
 
 ## 产物
 
 - `camera_trajectory_solution_space.md`：便于协作和评审的 Markdown 主文档。
+- `scannet_fixed_observation_experiment_plan.md`：固定 8 帧 RGB-D observation、
+  独立能量、控制实验、H20 执行门和三人分工的递进实施计划。
 - `camera_trajectory_solution_space.tex`：与 Markdown 同结构的排版源文件。
 - `references.bib`：报告引用的原始论文和正式出版物。
 - `../../output/pdf/camera_trajectory_solution_space_theory.pdf`：编译后的 PDF。
