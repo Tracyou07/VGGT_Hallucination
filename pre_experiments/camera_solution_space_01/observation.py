@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import io
 import json
 import os
@@ -14,7 +16,7 @@ import zlib
 import numpy as np
 from PIL import Image
 
-from .contracts import canonical_json_bytes, canonical_json_sha256, sha256_file, sha256_hex, validate_schema
+from .contracts import canonical_json_bytes, canonical_json_sha256, sha256_file, validate_schema
 from .sens_index import SensIndex, SensIndexError, index_sens
 
 
@@ -24,6 +26,25 @@ COMPLETE_SCHEMA = "camera_solution_space_01.observation_complete.v1"
 SELECTION_VERSION = "fixed8_stride15_v1"
 FRAME_COUNT = 8
 FRAME_STRIDE = 15
+AT_FDCWD = -100
+RENAME_NOREPLACE = 1
+PLAN_KEYS = frozenset(
+    {
+        "schema",
+        "source",
+        "scene_id",
+        "split",
+        "selection_version",
+        "frame_ids",
+        "frames",
+        "header_fingerprint",
+        "selection",
+        "plan_id",
+    }
+)
+SOURCE_KEYS = frozenset({"path", "size", "sha256"})
+FRAME_KEYS = frozenset({"frame_id", "timestamp_color_us", "timestamp_depth_us"})
+SELECTION_KEYS = frozenset({"candidate_count", "eligible_count", "chosen_start"})
 
 
 class ObservationError(ValueError):
@@ -86,39 +107,113 @@ def _plan_without_id(plan: Mapping[str, Any]) -> dict[str, Any]:
     return document
 
 
-def _validate_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
-    if not isinstance(plan, dict):
-        raise ObservationError("plan must be a native JSON object")
+def _require_exact_keys(value: Any, expected: frozenset[str], label: str) -> dict[str, Any]:
+    if type(value) is not dict:
+        raise ObservationError(f"{label} must be a native JSON object")
+    actual = frozenset(value)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        raise ObservationError(f"{label} keys mismatch: missing={missing}, extra={extra}")
+    return value
+
+
+def _require_nonempty_string(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ObservationError(f"{label} must be a non-empty string")
+    return value
+
+
+def _require_uint(value: Any, label: str) -> int:
+    if type(value) is not int or value < 0:
+        raise ObservationError(f"{label} must be a nonnegative integer")
+    return value
+
+
+def _require_sha256(value: Any, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ObservationError(f"{label} must be a lowercase SHA-256 digest")
+    return value
+
+
+def _validate_plan(
+    plan: Mapping[str, Any], frame_count: int | None = None
+) -> dict[str, Any]:
+    checked = _require_exact_keys(plan, PLAN_KEYS, "plan top-level")
     try:
-        validate_schema(plan, PLAN_SCHEMA)
+        validate_schema(checked, PLAN_SCHEMA)
     except ValueError as error:
         raise ObservationError(str(error)) from error
-    plan_id = plan.get("plan_id")
-    if not isinstance(plan_id, str) or plan_id != canonical_json_sha256(_plan_without_id(plan)):
-        raise ObservationError("plan_id does not match canonical plan hash")
-    frame_ids = plan.get("frame_ids")
-    if (
-        not isinstance(frame_ids, list)
-        or len(frame_ids) != FRAME_COUNT
-        or any(not isinstance(value, int) for value in frame_ids)
-        or frame_ids != [frame_ids[0] + FRAME_STRIDE * offset for offset in range(FRAME_COUNT)]
-    ):
+
+    source = _require_exact_keys(checked["source"], SOURCE_KEYS, "source")
+    _require_nonempty_string(source["path"], "source path")
+    _require_uint(source["size"], "source size")
+    _require_sha256(source["sha256"], "source sha256")
+    _require_nonempty_string(checked["scene_id"], "scene_id")
+    _require_nonempty_string(checked["split"], "split")
+    if checked["selection_version"] != SELECTION_VERSION:
+        raise ObservationError("unexpected selection_version")
+    _require_sha256(checked["header_fingerprint"], "header_fingerprint")
+
+    frame_ids = checked["frame_ids"]
+    if type(frame_ids) is not list or len(frame_ids) != FRAME_COUNT:
+        raise ObservationError("plan frame_ids must contain exactly eight integers")
+    if any(type(frame_id) is not int or frame_id < 0 for frame_id in frame_ids):
+        raise ObservationError("plan frame_ids must be nonnegative integers, excluding bool")
+    if frame_ids != [
+        frame_ids[0] + FRAME_STRIDE * offset for offset in range(FRAME_COUNT)
+    ]:
         raise ObservationError("plan frame_ids must be one fixed eight-frame stride-15 sequence")
-    frames = plan.get("frames")
-    if not isinstance(frames, list) or len(frames) != FRAME_COUNT:
+    if frame_count is not None:
+        if type(frame_count) is not int or frame_count < 0:
+            raise ObservationError("source frame count must be a nonnegative integer")
+        for frame_id in frame_ids:
+            if frame_id >= frame_count:
+                raise ObservationError(
+                    f"plan frame ID {frame_id} is outside source frame range 0..{frame_count - 1}"
+                )
+
+    frames = checked["frames"]
+    if type(frames) is not list or len(frames) != FRAME_COUNT:
         raise ObservationError("plan frames must contain eight timestamp records")
     for frame_id, record in zip(frame_ids, frames):
-        if not isinstance(record, dict) or record.get("frame_id") != frame_id:
+        record = _require_exact_keys(record, FRAME_KEYS, "frame record")
+        if type(record["frame_id"]) is not int or record["frame_id"] != frame_id:
             raise ObservationError("plan frame records do not match frame_ids")
-        if not isinstance(record.get("timestamp_color_us"), int) or not isinstance(
-            record.get("timestamp_depth_us"), int
-        ):
-            raise ObservationError("plan frame timestamps must be integers")
-    if plan.get("selection_version") != SELECTION_VERSION:
-        raise ObservationError("unexpected selection_version")
-    if not isinstance(plan.get("source"), dict) or not isinstance(plan.get("header_fingerprint"), str):
-        raise ObservationError("plan is missing source or header fingerprint")
-    return plan
+        _require_uint(record["timestamp_color_us"], "frame timestamp_color_us")
+        _require_uint(record["timestamp_depth_us"], "frame timestamp_depth_us")
+
+    selection = _require_exact_keys(checked["selection"], SELECTION_KEYS, "selection")
+    candidate_count = _require_uint(selection["candidate_count"], "selection candidate_count")
+    eligible_count = _require_uint(selection["eligible_count"], "selection eligible_count")
+    chosen_start = _require_uint(selection["chosen_start"], "selection chosen_start")
+    if candidate_count == 0 or chosen_start >= candidate_count:
+        raise ObservationError("selection chosen_start must be within candidate_count")
+    if eligible_count == 0 or eligible_count > candidate_count:
+        raise ObservationError("selection eligible_count must be within 1..candidate_count")
+    if chosen_start != frame_ids[0]:
+        raise ObservationError("selection chosen_start must equal the first frame ID")
+    if frame_count is not None:
+        expected_candidates = max(
+            0, frame_count - ((FRAME_COUNT - 1) * FRAME_STRIDE)
+        )
+        if candidate_count != expected_candidates:
+            raise ObservationError(
+                "selection candidate_count does not match the indexed source"
+            )
+
+    plan_id = _require_sha256(checked["plan_id"], "plan_id")
+    try:
+        canonical_id = canonical_json_sha256(_plan_without_id(checked))
+    except ValueError as error:
+        raise ObservationError(f"plan is not canonical JSON: {error}") from error
+    if plan_id != canonical_id:
+        raise ObservationError("plan_id does not match canonical plan hash")
+    return checked
 
 
 def plan_observation(
@@ -185,8 +280,14 @@ def _read_payload(stream, offset: int, size: int, label: str, audit: list[dict[s
 def _decode_rgb(payload: bytes, index: SensIndex, frame_id: int) -> np.ndarray:
     try:
         with Image.open(io.BytesIO(payload)) as image:
+            if image.format != "JPEG":
+                raise ObservationError(
+                    f"frame {frame_id}: detected {image.format!r} payload, expected JPEG"
+                )
             image.load()
             rgb = np.asarray(image.convert("RGB"), dtype=np.uint8).copy()
+    except ObservationError:
+        raise
     except Exception as error:
         raise ObservationError(f"frame {frame_id}: invalid JPEG color payload") from error
     if rgb.shape != (index.color_height, index.color_width, 3):
@@ -239,6 +340,43 @@ def _merkle_hash(files: list[dict[str, Any]]) -> str:
         {"schema": "camera_solution_space_01.artifact_merkle.v1", "files": files}
     )
 
+def _rename_noreplace(source: Path, destination: Path) -> None:
+    """Atomically publish a path while refusing every pre-existing directory entry."""
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+    except OSError as error:
+        raise ObservationError("atomic no-replace publication is unavailable") from error
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:
+        raise ObservationError("atomic no-replace publication is unavailable")
+    renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
+    ctypes.set_errno(0)
+    result = renameat2(
+        AT_FDCWD,
+        os.fsencode(source),
+        AT_FDCWD,
+        os.fsencode(destination),
+        RENAME_NOREPLACE,
+    )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number in (errno.EEXIST, errno.ENOTEMPTY):
+        raise FileExistsError(error_number, os.strerror(error_number), destination)
+    unavailable_errors = {errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP}
+    if error_number in unavailable_errors:
+        raise ObservationError(
+            f"atomic no-replace publication is unavailable: {os.strerror(error_number)}"
+        )
+    raise OSError(error_number, os.strerror(error_number), destination)
+
 
 def seal_observation(
     plan: Mapping[str, Any], source_path: str | Path, output_parent: str | Path
@@ -252,6 +390,7 @@ def seal_observation(
         index = index_sens(source)
     except SensIndexError as error:
         raise ObservationError(f"cannot index source during sealing: {error}") from error
+    checked_plan = _validate_plan(checked_plan, frame_count=len(index.frames))
     if _header_fingerprint(index) != checked_plan["header_fingerprint"]:
         raise ObservationError("source header fingerprint changed since planning")
     if index.color_compression != "jpeg" or index.depth_compression != "zlib_ushort":
@@ -269,7 +408,7 @@ def seal_observation(
     parent = Path(output_parent)
     parent.mkdir(parents=True, exist_ok=True)
     target = parent / checked_plan["plan_id"]
-    if target.exists():
+    if os.path.lexists(target):
         try:
             if validate_observation(target, source) == checked_plan["plan_id"]:
                 return target
@@ -335,9 +474,17 @@ def seal_observation(
                 "manifest_sha256": sha256_file(temporary / "manifest.json"),
             },
         )
-        if target.exists():
-            raise ObservationError("existing output appeared during sealing and will not be overwritten")
-        os.rename(temporary, target)
+        try:
+            _rename_noreplace(temporary, target)
+        except FileExistsError:
+            try:
+                if validate_observation(target, source) == checked_plan["plan_id"]:
+                    return target
+            except ObservationError as error:
+                raise ObservationError(
+                    f"existing output is invalid and will not be overwritten: {error}"
+                ) from error
+            raise ObservationError("existing output does not match the requested plan")
         temporary = None
     finally:
         if temporary is not None and temporary.exists():
@@ -417,14 +564,18 @@ def validate_observation(observation_root: str | Path, source_path: str | Path) 
     if plan["plan_id"] != observation_id or plan["source"] != manifest["source"]:
         raise ObservationError("plan does not match manifest")
     ordered = manifest.get("ordered_model_input")
-    if not isinstance(ordered, list) or len(ordered) != FRAME_COUNT:
-        raise ObservationError("ordered model input must contain eight frames")
-    if [item.get("frame_id") if isinstance(item, dict) else None for item in ordered] != plan["frame_ids"]:
-        raise ObservationError("ordered model input does not match planned frame order")
-    for item in ordered:
-        if not isinstance(item, dict):
-            raise ObservationError("ordered model input entry must be an object")
-        for key in ("rgb", "depth", "intrinsics", "pose_audit"):
-            if _safe_relative(item.get(key)).as_posix() not in expected_paths:
-                raise ObservationError(f"ordered model input references unsealed {key} path")
+    expected_ordered = [
+        {
+            "frame_id": frame_id,
+            "rgb": f"rgb/{position:06d}.npy",
+            "depth": f"depth/{position:06d}.npy",
+            "intrinsics": "intrinsics.json",
+            "pose_audit": "pose_audit.json",
+        }
+        for position, frame_id in enumerate(plan["frame_ids"])
+    ]
+    if type(ordered) is not list or ordered != expected_ordered:
+        raise ObservationError(
+            "ordered model input must exactly match all eight planned position mappings"
+        )
     return observation_id
