@@ -1,0 +1,549 @@
+\documentclass[UTF8,a4paper,11pt]{ctexart}
+
+\usepackage{doc/references/vggt_vrfm_report}
+
+\hypersetup{
+  pdftitle={多个短上下文 VGGT 预测是否产生多模态相机修复速度？},
+  pdfauthor={VGGT Camera Repair Research Notes}
+}
+\ReportHeaders{VGGT Camera Repair}{V0 Pre-experiment}
+
+\newcommand{\Sim}{\mathrm{Sim}}
+\newcommand{\SE}{\mathrm{SE}}
+\newcommand{\RMS}{\operatorname{RMS}}
+\newcommand{\argminop}{\operatorname*{arg\,min}}
+
+\title{\bfseries\color{GlobalBlue}多个短上下文 VGGT 预测是否产生\\多模态相机修复速度？\\[0.45em]
+\large Do Overlapping Short-Context VGGT Predictions Induce\\
+Multimodal Camera-Repair Velocities?}
+\author{V0 Pre-experiment Protocol}
+\date{2026-08-23\\[0.25em]
+\texttt{codex/camera\_solution\_space\_docs\_reframe}}
+
+\begin{document}
+
+\maketitle
+
+\begin{statusbox}
+\textbf{当前状态：}\texttt{protocol in progress; no scientific conclusion yet}。
+当前只有冻结协议，没有 V0 result card、run ID 或可引用的速度歧义结果。本报告中的曲线
+只用于说明如何读图，全部标为示意；不得当作观测数据。
+\end{statusbox}
+
+\begin{abstract}
+本文定义一个可复现的前置实验，用来判断多个重叠短上下文 VGGT predictions 是否在
+同一长序列上产生多个有效、方向分离且不可安全平均的 camera-center repair velocities。
+贯穿设置是一条 500 帧 global prediction 和九个长度 100、stride 50 的 local windows。
+每个相邻窗口 pair 在共享 50 帧上提供 $d_L,d_R$ 两个候选残差。实验只用预测值完成
+local-to-global alignment，再把每个 scene 唯一一次 global-to-GT $\Sim(3)$ 冻结给端点、
+均值和全部插值。结果分为 \texttt{NOT\_SUPPORTED}、\texttt{SELECTOR\_PROBLEM}、
+\texttt{CONTINUOUS\_REDUNDANCY} 和
+\texttt{MULTIMODAL\_VELOCITY\_SUPPORTED}。只有双端有效、方向分离、内部插值变差且
+跨 scene 稳定，才进入 V-RFM。本实验不证明多个物理真轨迹。
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{一页读懂这个实验}
+
+VGGT\citep{wang2025vggt} 对一条 500 帧序列整体预测时，可能在长距离上出现漂移。
+同一序列切成九个短窗口后，相邻两个窗口在共享 50 帧上会给出左残差 $d_L$ 和右残差
+$d_R$。实验依次问：
+\begin{enumerate}
+  \item 两个局部结果能否可靠对齐到 global prediction？
+  \item $d_L,d_R$ 各自应用后是否都改善 global trajectory？
+  \item 两个有效方向是否真的分离，而不是噪声或 gauge copy？
+  \item 均值或内部插值是否比两个端点显著更差？
+\end{enumerate}
+
+\begin{keybox}
+多个输出不等于多个有效方向；两个有效端点也不等于多模态。只有“端点都好、方向分开、
+中间变差、跨场景稳定”才直接支持用 latent 建模修复速度。
+\end{keybox}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{4.0cm}X X}
+    \toprule
+    标签 & 通俗含义 & 下一步 \\
+    \midrule
+    \texttt{NOT\_SUPPORTED} & 没看到稳定的多候选有效现象 & 改候选、数据或评价 \\
+    \texttt{SELECTOR\_PROBLEM} & 往往只有一个窗口建议是好的 & 训练/设计 selector \\
+    \texttt{CONTINUOUS\_}\newline\texttt{REDUNDANCY} & 两端和中间都好，可以连续融合
+      & 确定性融合优先 \\
+    \texttt{MULTIMODAL\_}\newline\texttt{VELOCITY\_}\newline\texttt{SUPPORTED}
+      & 两端都好且分开，但平均/内部更差 & 才进入 V-RFM \\
+    \bottomrule
+  \end{tabularx}
+  \caption{四种结果对应四条不同工程路线。}
+\end{table}
+
+\section{研究问题与可证伪假设}
+
+\subsection{研究问题}
+
+对同一条 500 帧 global VGGT camera trajectory，多个重叠的 100 帧 local predictions
+是否会在共享帧上产生多个有效、方向分离、不可安全平均的 camera-center repair
+velocities？这里的“多模态”限定在修复速度，不指多个物理世界，也不指 raw outputs
+形成多个视觉簇。
+
+\subsection{五级假设链}
+
+\begin{description}[leftmargin=3.5cm,style=nextline]
+  \item[H0：eligibility] prediction-only local-to-global alignment 数值可靠；
+  \item[H1：endpoint validity] $d_L,d_R$ 至少有一个改善 global；
+  \item[H2：double validity] 两个端点都通过冻结有效性门槛；
+  \item[H3：separation] 两个有效残差按冻结指标显著分离；
+  \item[H4：unsafe interpolation] 均值或预注册内部插值显著差于两个端点；
+  \item[H5：prevalence] 上述事件在 scene-level bootstrap 下稳定。
+\end{description}
+
+只有 H0 到 H5 全部成立，结果才进入
+\texttt{MULTIMODAL\_VELOCITY\_SUPPORTED}。任何一级失败都必须保留样本和原因。
+
+\subsection{非目标}
+
+本实验不证明固定观测下存在多个物理真轨迹，不把窗口输出称作 posterior samples，
+不证明 V-RFM 必然优于 Diffusion 或 deterministic refiner，也不让 GT 进入部署条件。
+
+\section{当前 provenance 与证据状态}
+
+\subsection{已提交且可核验的事实}
+
+2026-08-23 对 H20 主项目 \texttt{/home/ubuntu/yjh/vggt} 做只读检查：
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{>{\bfseries}p{3.2cm}X}
+    \toprule
+    字段 & 已核验内容 \\
+    \midrule
+    Host / user & \texttt{VM-0-11-ubuntu} / \texttt{ubuntu} \\
+    主 worktree & \texttt{camera\_solution\_space\_01\_theory\_foundation@cc1d8ac}，clean \\
+    实验 worktree & \texttt{camera\_solution\_space\_01\_stage1@dcc55a2}，clean \\
+    Stage 1 范围 & 固定观测解空间、$\SE(3)$ geometry 与 eligibility diagnostics \\
+    V0 result card & \texttt{PENDING\_COMMITTED\_RESULT\_CARD} \\
+    V0 run / artifact & \texttt{PENDING\_COMMITTED\_RESULT\_CARD} \\
+    \bottomrule
+  \end{tabularx}
+  \caption{当前可进入文档的 committed provenance。}
+\end{table}
+
+Stage 1 可提供几何合法性与 eligibility 的实现经验，但不是 500/100 重叠窗口速度实验，
+不能作为本报告的正面或负面结果。
+
+\subsection{Result card 最低字段}
+
+正式结果必须包含 experiment branch、code commit、input manifest 路径与 SHA-256、
+dataset/split、run ID、原始命令、config、artifact root 与 hash、scene/pair 数、decision
+counts 和 bootstrap seed。字段不全时只能写“执行中”或“provenance 不完整”。
+
+任何已经看过或用于调阈值的旧 40 scenes 只能标为 development evaluation，不能与
+未见 evaluation scenes 混合后声称无偏 prevalence。
+
+\section{输入冻结协议}
+
+\subsection{Scene manifest}
+
+每个 scene 显式记录 dataset/split/scene ID、500 个有序 frame IDs、每帧图像 path/hash/
+尺寸/时间戳、GT pose 与合法性 mask、完整预处理、VGGT weights/hash、dtype、batching、
+seed 和代码 commit。scene 不足 500 帧、frame identity 异常或 GT 有 invalid sentinel 时，
+按预注册规则处理，不能看结果后删帧。
+
+\subsection{九个窗口与八个实验单位}
+
+\begin{figure}[htbp]
+  \centering
+  \resizebox{\textwidth}{!}{%
+  \begin{tikzpicture}[x=0.028cm,y=0.62cm,font=\footnotesize]
+    \draw[-Latex,thick,GlobalBlue] (0,1.0) -- (510,1.0);
+    \foreach \x in {0,50,100,150,200,250,300,350,400,450,500} {
+      \draw[GlobalBlue] (\x,0.88) -- (\x,1.12);
+      \node[anchor=north,text=GlobalBlue] at (\x,0.84) {\x};
+    }
+    \node[anchor=east,text=GlobalBlue] at (-8,1.0) {global};
+    \foreach \k/\start in {0/0,1/50,2/100,3/150,4/200,5/250,6/300,7/350,8/400} {
+      \pgfmathsetmacro{\finish}{\start+100}
+      \pgfmathtruncatemacro{\row}{mod(\k,2)}
+      \ifnum\row=0
+        \def\windowcolor{LeftOrange}
+      \else
+        \def\windowcolor{RightGreen}
+      \fi
+      \draw[rounded corners,very thick,draw=\windowcolor,fill=\windowcolor!12]
+        (\start,-0.35-\k*0.72) rectangle (\finish,0.10-\k*0.72);
+      \node[anchor=east,text=\windowcolor] at (-8,-0.125-\k*0.72) {$W_{\k}$};
+    }
+    \draw[very thick,VRFMPurple,<->] (50,1.55) -- node[above]{共享 50 帧} (100,1.55);
+    \node[align=left,anchor=west,text=DarkGray] at (515,-2.9)
+      {每个相邻 pair\\重复同一协议};
+  \end{tikzpicture}
+  }
+  \caption{真实窗口协议：500 帧 global 序列切成九个长度 100、stride 50 的窗口；
+  相邻窗口共享 50 帧。颜色只区分交替窗口，不代表实验结果。}
+  \label{fig:window-overlap}
+\end{figure}
+
+窗口固定为 $W_0=0{:}99,W_1=50{:}149,\ldots,W_8=400{:}499$。每条 scene 产生八个
+实验单位
+\begin{equation}
+  (\text{scene},\text{left window},\text{right window},\text{shared 50 frames}).
+\end{equation}
+统计时不能把同一 scene 的八个 pair 当成独立 scenes。
+
+\subsection{VGGT 推理冻结}
+
+global 和九个 local passes 共享 weights、预处理、分辨率、pose decode、有效帧规则和
+随机设置。global pass 输入 500 帧，每个 local pass 只输入对应 100 帧；不能把 global
+features 偷送给 local pass。
+
+\section{预测值对齐与候选构造}
+
+\subsection{Local-to-global prediction-only $\Sim(3)$}
+
+global centers 为 $c_i^G$，窗口 $W_k$ 的 local centers 为 $c_i^{(k)}$。仅用该窗口覆盖
+的预测帧拟合
+\begin{equation}
+  A_k^*=\argminop_{A\in\Sim(3)}
+  \sum_{i\in W_k}w_i\|A(c_i^{(k)})-c_i^G\|_2^2.
+  \label{eq:local-global-align}
+\end{equation}
+权重、robust loss、最小有效帧数和退化判据都由 calibration 冻结。定义
+\begin{equation}
+  \widetilde c_i^{(k)}=A_k^*(c_i^{(k)}),\qquad
+  d_k(i)=\widetilde c_i^{(k)}-c_i^G.
+  \label{eq:candidate-residual}
+\end{equation}
+相邻 pair 的共享帧上令 $d_L=d_j,d_R=d_{j+1}$。
+
+\subsection{Alignment eligibility}
+
+每个窗口保存有效 centers 数、centered rank/singular values、fitted scale/rotation/
+translation、alignment RMS/normalized RMS、reflection guard、near-zero baseline、non-finite
+pose 和 sentinel flags。任一窗口不合格，pair 标为
+\texttt{INELIGIBLE\_ALIGNMENT}，不进入四类科学决策分母，但必须报告。
+
+第一版候选只修 camera center：
+\begin{equation}
+  c_i^{(\alpha)}=c_i^G+d(\alpha,i).
+\end{equation}
+rotation 和 FoV 保持 global VGGT 输出。这样只检验 translation repair velocity，避免
+多个表示问题同时改变。
+
+\section{GT 只用于冻结后的离线评价}
+
+\subsection{每个 scene 只拟合一次 global-to-GT $\Sim(3)$}
+
+在预先判定为 GT-valid 的 global frames 上拟合
+\begin{equation}
+  B_s^*=\argminop_{B\in\Sim(3)}
+  \sum_{i\in\mathcal V_s}\|B(c_i^G)-c_i^{GT}\|_2^2.
+  \label{eq:global-gt-align}
+\end{equation}
+$B_s^*$ 随后冻结给 global、两个端点、均值和全部插值。严禁为每个候选重新拟合 GT，
+否则错误候选可能通过重对齐获得不公平优势。
+
+\subsection{GT 泄漏边界}
+
+GT 不得进入窗口选择、式~\eqref{eq:local-global-align}、$d_L,d_R$ 构造、candidate
+filtering 或部署 condition。GT 只可进入离线 endpoint/interpolation 指标、calibration
+阈值和最终科学分类。报告必须写 privileged diagnosis，而不是 deployable selector。
+
+\section{插值实验}
+
+\subsection{固定网格与评价范围}
+
+对每个 eligible pair 计算
+\begin{equation}
+  d(\alpha)=(1-\alpha)d_L+\alpha d_R,
+  \qquad \alpha\in\{0,0.25,0.5,0.75,1\}.
+  \label{eq:alpha-grid}
+\end{equation}
+主分析只评价共同的 50 个 frame IDs。更密网格必须在 evaluation 前预注册，不能看到
+曲线后只挑最坏点。
+
+\subsection{如何读 interpolation curve}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[x=11.8cm,y=2.4cm,font=\footnotesize]
+    \draw[-Latex,thick] (0,0) -- (1.08,0) node[right] {$\alpha$};
+    \draw[-Latex,thick] (0,0) -- (0,2.35) node[above] {冻结误差 $E$};
+    \foreach \x/\label in {0/0,0.25/.25,0.5/.5,0.75/.75,1/1} {
+      \draw (\x,-0.05) -- (\x,0.05);
+      \node[anchor=north] at (\x,-0.06) {\label};
+    }
+    \draw[MeanGray,dashed] (0,1.15) -- (1,1.15) node[right]{validity threshold};
+    \draw[RightGreen,very thick]
+      plot[smooth] coordinates {(0,0.55) (0.25,0.58) (0.5,0.62) (0.75,0.59) (1,0.57)};
+    \node[text=RightGreen,anchor=west] at (0.66,0.42) {连续安全};
+    \draw[VRFMPurple,very thick]
+      plot[smooth] coordinates {(0,0.55) (0.25,1.18) (0.5,1.75) (0.75,1.20) (1,0.58)};
+    \node[text=VRFMPurple,anchor=west] at (0.47,1.92) {端点好，中间差};
+    \draw[LeftOrange,very thick]
+      plot[smooth] coordinates {(0,0.54) (0.25,0.82) (0.5,1.10) (0.75,1.48) (1,1.86)};
+    \node[text=LeftOrange,anchor=west] at (0.76,2.03) {一好一坏};
+    \node[draw=LeftOrange,fill=PaleOrange,rounded corners,anchor=north west]
+      at (0.02,2.28) {示意图，不是实验结果};
+  \end{tikzpicture}
+  \caption{Residual interpolation 的三种典型读法。绿色对应连续可融合，橙色对应
+  selector，紫色才是速度多模态的候选形态。数值与曲线均为示意。}
+  \label{fig:interpolation-reading}
+\end{figure}
+
+对误差指标 $E$ 定义
+\begin{align}
+  P_{0.5}&=E(d(0.5))-\max\{E(d_L),E(d_R)\},\\
+  P_{\mathrm{int}}&=
+  \max_{\alpha\in\{0.25,0.5,0.75\}}E(d(\alpha))
+  -\max\{E(d_L),E(d_R)\}.
+\end{align}
+只有它们超过 calibration 冻结的绝对/相对 margin，才能称内部变差。
+
+\section{指标定义}
+
+\subsection{Alignment residual}
+
+\begin{equation}
+  R_{\mathrm{align}}^{(k)}
+  =\sqrt{\frac{1}{|W_k|}\sum_{i\in W_k}
+  \|\widetilde c_i^{(k)}-c_i^G\|_2^2}.
+\end{equation}
+同时除以 global window path length 或 centered RMS，得到 normalized value，避免 scene
+尺度直接决定阈值。
+
+\subsection{方向 cosine 与 NRMS separation}
+
+将 overlap 上 residual 展平为 $\mathbf d_L,\mathbf d_R$：
+\begin{align}
+  \cos(d_L,d_R)&=\frac{\langle\mathbf d_L,\mathbf d_R\rangle}
+  {\|\mathbf d_L\|_2\|\mathbf d_R\|_2+\varepsilon},\\
+  S_{\mathrm{NRMS}}&=
+  \frac{\RMS(d_L-d_R)}
+  {\tfrac12[\RMS(d_L)+\RMS(d_R)]+\varepsilon}.
+\end{align}
+cosine 在小残差时不稳定，必须与 magnitude、NRMS 和逐帧一致率共同使用。
+
+只在两侧逐帧 residual 都超过 noise floor 的帧集 $\mathcal J$ 上计算
+\begin{equation}
+  r_{\mathrm{agree}}=\frac1{|\mathcal J|}
+  \sum_{i\in\mathcal J}
+  \mathbf1[\cos(d_L(i),d_R(i))\ge\tau_{\mathrm{frame}}].
+\end{equation}
+$\mathcal J$ 太小时标为 \texttt{INELIGIBLE\_SMALL\_RESIDUAL}。
+
+\subsection{Translation error 与 relative translation error}
+
+在冻结 $B_s^*$ 下，候选 $X$ 的 overlap ATE 为
+\begin{equation}
+  E_{\mathrm{ATE}}(X)=
+  \sqrt{\frac1{50}\sum_i\|B_s^*(c_i^X)-c_i^{GT}\|_2^2},
+\end{equation}
+改善量为
+\begin{equation}
+  \Delta_{\mathrm{ATE}}(X)=E_{\mathrm{ATE}}(G)-E_{\mathrm{ATE}}(X).
+\end{equation}
+正值表示改善。Relative translation error 在预注册 frame gaps 上比较相对位移，检查
+候选是否修复轨迹形状，而非只整体移动 overlap。主结论要求 ATE/RTE 方向一致；冲突
+时进入灰区。
+
+\section{阈值冻结与 pair 分类}
+
+\subsection{Calibration 只做一次}
+
+calibration split 冻结 $\tau_{\mathrm{align}}$、端点绝对/相对改善门槛、
+$\tau_{\mathrm{sep}}$、$\tau_{\mathrm{frame}}$、barrier 绝对/相对门槛、灰区和最小有效
+帧数。冻结值与 config hash 写入 result card，evaluation 期间不修改。
+
+候选有效需同时满足 alignment eligible、ATE 超过双门槛、RTE 不显著恶化、不在灰区、
+不触发 non-finite/sentinel/extreme-scale guard。
+
+\subsection{四类决策流程}
+
+\begin{figure}[htbp]
+  \centering
+  \resizebox{0.94\textwidth}{!}{%
+  \begin{tikzpicture}[
+    node distance=7mm and 12mm,
+    q/.style={diamond,aspect=2.2,draw=GlobalBlue,fill=PaleBlue,align=center,
+      inner sep=2pt,text width=3.5cm},
+    leaf/.style={rounded corners,draw=VRFMPurple,fill=PalePurple,align=center,
+      text width=4.0cm,minimum height=12mm},
+    stop/.style={rounded corners,draw=LeftOrange,fill=PaleOrange,align=center,
+      text width=4.0cm,minimum height=12mm},
+    arrow/.style={-Latex,thick,draw=MeanGray}
+  ]
+    \node[q] (align) {对齐是否可靠？};
+    \node[q,below=of align] (valid) {是否双端有效？};
+    \node[q,below=of valid] (sep) {方向是否分离？};
+    \node[q,below=of sep] (barrier) {内部插值是否变差？};
+    \node[q,below=of barrier] (stable) {跨 scene 是否稳定？};
+    \node[stop,right=of align] (pipeline) {PIPELINE FAILURE\\不进入科学分类};
+    \node[stop,right=of valid] (selector) {\texttt{SELECTOR\_}\\\texttt{PROBLEM}\\若恰好一端有效};
+    \node[stop,right=of sep] (not) {\texttt{NOT\_SUPPORTED}\\候选近似一致};
+    \node[leaf,right=of barrier] (continuous) {\texttt{CONTINUOUS\_}\\\texttt{REDUNDANCY}\\内部保持有效};
+    \node[leaf,below=of stable] (multi) {\texttt{MULTIMODAL\_}\\\texttt{VELOCITY\_}\\\texttt{SUPPORTED}};
+    \node[stop,left=of stable] (insufficient) {\texttt{NO\_GO\_EVIDENCE}\\尚不稳定};
+    \draw[arrow] (align) -- node[left]{是} (valid);
+    \draw[arrow] (align) -- node[above]{否} (pipeline);
+    \draw[arrow] (valid) -- node[left]{是} (sep);
+    \draw[arrow] (valid) -- node[above]{否} (selector);
+    \draw[arrow] (sep) -- node[left]{是} (barrier);
+    \draw[arrow] (sep) -- node[above]{否} (not);
+    \draw[arrow] (barrier) -- node[left]{是} (stable);
+    \draw[arrow] (barrier) -- node[above]{否} (continuous);
+    \draw[arrow] (stable) -- node[right]{是} (multi);
+    \draw[arrow] (stable) -- node[above]{否} (insufficient);
+  \end{tikzpicture}}
+  \caption{从 eligibility 到四类科学决策的固定顺序。灰区样本标为
+  \texttt{INDETERMINATE}，不强行落入叶节点。}
+  \label{fig:decision-flow}
+\end{figure}
+
+\subsection{操作定义}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{4.1cm}
+  >{\raggedright\arraybackslash}p{10.4cm}}
+  \toprule
+  标签 & 必须满足的条件 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  标签 & 必须满足的条件 \\
+  \midrule
+  \endhead
+  \texttt{NOT\_SUPPORTED} & 无双端有效且不形成清晰一好一坏；或候选不分离；或
+    evaluation 不复现。\\
+  \texttt{SELECTOR\_PROBLEM} & 恰好一个端点有效，另一端明确无效而非灰区，并跨 scene
+    稳定出现一好一坏。\\
+  \texttt{CONTINUOUS\_}\newline\texttt{REDUNDANCY} & 双端有效，预注册内部插值保持有效，平均与内部
+    penalty 不超过 barrier margin。\\
+  \texttt{MULTIMODAL\_}\newline\texttt{VELOCITY\_}\newline\texttt{SUPPORTED}
+    & 双端有效；NRMS、cosine/逐帧指标共同支持
+    分离；平均或内部超过 barrier margin；负控制正常；scene-level prevalence 过门槛。\\
+  \texttt{INDETERMINATE} & 任一核心指标落入预注册灰区，或 ATE/RTE 结论冲突。\\
+  \bottomrule
+\end{longtable}
+
+\section{控制实验}
+
+\begin{longtable}{>{\bfseries}p{3.0cm}p{6.0cm}p{5.5cm}}
+  \toprule
+  控制 & 构造 & 预期 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  控制 & 构造 & 预期 \\
+  \midrule
+  \endhead
+  Self-pair & 令 $d_R=d_L$ & separation 为零，插值曲线恒定 \\
+  Gauge copy & 对同一 local trajectory 施加已知 $\Sim(3)$ 后重走 alignment
+    & 恢复原候选，不得判为分离 \\
+  随机错误窗口 & 从预注册的不匹配 scene/pair 池取 residual，并做幅度匹配
+    & endpoint validity 显著下降 \\
+  残差取反 & 对有效候选应用 $-d_L$ & 检查评价的方向敏感性 \\
+  小扰动 & 加入低于 noise floor 的扰动 & decision 不应频繁翻转 \\
+  退化对齐 & near-zero baseline、collinear centers、重复/invalid poses
+    & 明确 eligibility failure，不产生巨大 scale \\
+  \bottomrule
+\end{longtable}
+
+若正反 residual 都同样改善，可能说明评价不敏感、修复幅度过小或存在连续弱方向，
+不能轻易称 selector 或多模态。
+
+\section{统计协议与 GO/NO-GO}
+
+\subsection{Scene 是独立重采样单位}
+
+每个 scene 内先汇总 eligible pairs/8、四类 pair 比例、是否至少出现一次各类事件，以及
+pair 指标的 scene median/worst case。bootstrap 对 scenes 有放回采样，并保留每个
+scene 内全部 pairs，避免把八个 overlap 当成八个独立 scene。
+
+每类报告 scene prevalence 与 95\% bootstrap CI、pair prevalence、eligibility failure、
+calibration/evaluation 分离、scene/pair/frame 数、seed、bootstrap 次数和统计代码 commit。
+
+\subsection{门控结果}
+
+\begin{itemize}
+  \item \texttt{GO\_VRFM}：多模态速度 scene prevalence 的 CI 下界过预注册门槛，
+    controls 正常；
+  \item \texttt{GO\_SELECTOR}：一好一坏占主导，多模态事件未过门槛；
+  \item \texttt{GO\_DETERMINISTIC}：双端有效但内部安全，或候选近似一致；
+  \item \texttt{NO\_GO\_PIPELINE}：alignment/GT eligibility failure 过高；
+  \item \texttt{NO\_GO\_EVIDENCE}：样本量或 provenance 不足。
+\end{itemize}
+
+正式数值阈值必须在 calibration 阶段写入 result card，本文不预填。
+
+\section{Artifact 与复现合同}
+
+冻结 run 至少保存 input manifest、config、provenance、scene summary、pair metrics、
+interpolation metrics、control metrics、decision card、代表性/失败案例图和 artifact
+manifest SHA-256。
+
+\texttt{pair\_metrics} 至少含 scene/window/frame identity、eligibility、alignment、
+cosine、NRMS、endpoint ATE/RTE、五个 alpha、decision 与 failure reason。
+\texttt{decision\_card} 是本 PDF 结果回填的唯一摘要来源。
+
+复现者应能仅凭仓库完成以下操作：
+\begin{itemize}
+  \item checkout result card 指定的 commit，并核验 input/artifact manifests；
+  \item 复现 global pass 和九个 local passes；
+  \item 确认 prediction-only alignment 未访问 GT，且每个 scene 只拟合一次 $B_s^*$；
+  \item 重算候选、全部指标、decision、scene bootstrap 和 controls；
+  \item 对照 artifact hashes 与 case IDs。口头补充不得成为必要步骤。
+\end{itemize}
+
+\section{结果页模板}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{>{\bfseries}p{4.2cm}X}
+    \toprule
+    字段 & 冻结值 \\
+    \midrule
+    Status & \texttt{protocol in progress; no scientific conclusion yet} \\
+    Branch / commit & \texttt{PENDING\_COMMITTED\_RESULT\_CARD} \\
+    Run ID & \texttt{PENDING\_COMMITTED\_RESULT\_CARD} \\
+    Dataset / split & \texttt{PENDING\_COMMITTED\_RESULT\_CARD} \\
+    Input manifest hash & \texttt{PENDING\_COMMITTED\_RESULT\_CARD} \\
+    Scene / eligible pairs & \texttt{PENDING\_COMMITTED\_RESULT\_CARD} \\
+    Decision prevalence + CI & \texttt{PENDING\_COMMITTED\_RESULT\_CARD} \\
+    GO / NO-GO & \texttt{PENDING\_COMMITTED\_RESULT\_CARD} \\
+    \bottomrule
+  \end{tabularx}
+  \caption{V0 结果卡。只有 committed result card 可以替换占位字段。}
+\end{table}
+
+每类结论都必须配真实 overlap 轨迹、interpolation curve 和失败案例。
+
+若 GO，可写：
+\begin{quote}
+在冻结 evaluation split 和阈值下，观察到跨 scene 稳定的双端有效、方向分离且内部
+插值变差事件。这支持对 camera repair velocity 使用 latent-conditioned model；不构成
+多个物理真轨迹的证明。
+\end{quote}
+
+若证据不足，应写：
+\begin{quote}
+当前运行未满足 eligibility、样本量或 provenance 门槛，不对修复速度分布作科学结论。
+\end{quote}
+
+\section{当前状态与下一次更新条件}
+
+\begin{warningbox}
+\texttt{protocol in progress; no scientific conclusion yet}
+\end{warningbox}
+
+下一次允许更新科学结果的条件是：实验分支提交完整 provenance、冻结阈值、逐 pair
+metrics、scene-level bootstrap、controls 和 decision card。届时只按冻结字段回填，
+不在文档分支重新挑阈值或筛样本。
+
+\bibliographystyle{plainnat}
+\bibliography{doc/references/camera_refiner_references}
+
+\end{document}
