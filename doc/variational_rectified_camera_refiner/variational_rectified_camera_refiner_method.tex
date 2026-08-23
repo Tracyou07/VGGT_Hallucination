@@ -1,0 +1,392 @@
+\documentclass[UTF8,a4paper,11pt]{ctexart}
+
+\usepackage{doc/references/vggt_vrfm_report}
+
+\hypersetup{
+  pdftitle={用 Variational Rectified Flow 融合 VGGT 多短窗修复方向},
+  pdfauthor={VGGT Camera Repair Research Notes}
+}
+\ReportHeaders{VGGT Camera Repair}{V-RFM Method Concept}
+
+\title{\bfseries\color{GlobalBlue}用 Variational Rectified Flow\\
+融合 VGGT 多短窗修复方向}
+\author{Concept Method Note}
+\date{2026-08-23\\[0.25em]
+\texttt{codex/camera\_solution\_space\_docs\_reframe}}
+
+\begin{document}
+
+\maketitle
+
+\begin{statusbox}
+\textbf{当前状态：}\texttt{protocol in progress; no scientific conclusion yet}。
+本文是条件方法设计。只有 V0 前置实验冻结为 \texttt{GO\_VRFM}，并且局部方向可以
+组成多个序列级 coherent targets，才进入正式实现。
+\end{statusbox}
+
+\begin{abstract}
+本文用通俗方式说明如何把 Variational Rectified Flow Matching（V-RFM）用于 VGGT
+长序列相机修复。一条 500 帧 global prediction 与九个长度 100、stride 50 的 local
+predictions 共同构成 condition。普通确定性 Rectified Flow 在相同 data--time location
+遇到多个目标速度时会用平方误差学习条件均值；V-RFM 引入一次采样、全序列保持的
+latent $z$，使同一可见状态可以产生多个 coherent camera-center repair velocities。
+第一版只生成 translation residual，rotation 与 FoV 保持 global 输出。V-RFM 是
+generator，不是 selector；训练 targets 也不能直接等同于 raw window outputs。本文给出
+接口、目标构造门槛、一个核心损失、训练/推理流程、baselines 和失败模式，不承诺具体
+网络宽度或性能。
+\end{abstract}
+
+\tableofcontents
+
+\section{三分钟版本}
+
+500 帧 global VGGT 看得远，却可能累积漂移；九个 100 帧 local windows 看得更局部，
+却会在 overlap 给出不同修复建议。最简单做法是平均，但如果一个候选向左、一个候选
+向右，两个方向各自都好，平均后可能原地不动或落进坏区域。
+
+普通 Rectified Flow（RF）在相同 noisy state、time 和 condition 上只输出一个速度。
+若训练中同一点出现多个目标方向，MSE 会压成条件均值。V-RFM 增加 $z$：
+\begin{equation}
+  v_\theta(r_t,t,c,z),
+\end{equation}
+不同 $z$ 可以表达不同修复方向。对一条长序列只采样一次 $z$，全程保持，避免帧间
+切换策略。
+
+\begin{warningbox}
+V-RFM 只负责生成多个 coherent repairs，不负责判断哪个窗口正确。raw local outputs
+也不是天然的训练 targets；它们必须经过独立验收并组装成完整序列 target set。
+\end{warningbox}
+
+\section{实际问题：global 看得远，local 看得细}
+
+设 global camera centers 为
+\begin{equation}
+  C^G=[c_0^G,\ldots,c_{499}^G]\in\mathbb R^{500\times3}.
+\end{equation}
+九个 local predictions 经过 prediction-only alignment 后得到
+$\widetilde C^{(k)}$ 及局部 residuals $D^{(k)}=\widetilde C^{(k)}-C^G$。它们只在各自
+覆盖帧上定义，相邻窗口在共享 50 帧提供 $d_L,d_R$。
+
+一维例子中，两个有效目标在 $-1$ 与 $+1$，单一 MSE 输出的均值是 0。相机轨迹里，
+冲突发生在 50 帧甚至整条序列的向量场上，可能表现为整体方向、时间形状或局部弯曲
+不同。只有 V0 确认“端点好、方向分开、中间变差”，这个直觉才被真实数据支持。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{4.3cm}X}
+    \toprule
+    V0 结果 & 方法决策 \\
+    \midrule
+    \texttt{NOT\_SUPPORTED} & 不做 V-RFM，先改候选或评价 \\
+    \texttt{SELECTOR\_PROBLEM} & 优先做窗口/候选 selector \\
+    \texttt{CONTINUOUS\_REDUNDANCY} & 优先 deterministic fusion \\
+    \texttt{MULTIMODAL\_}\newline\texttt{VELOCITY\_SUPPORTED} & 进入本文方法 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{方法选择由前置实验门控，而不是先决定用 V-RFM 再寻找理由。}
+\end{table}
+
+\section{普通 RF 与 V-RFM 的差别}
+
+\subsection{普通 RF 为什么平均}
+
+Rectified Flow 从 source residual $r_0$ 和 target residual $r_1$ 构造直线
+$r_t=(1-t)r_0+t r_1$，目标速度为 $r_1-r_0$\citep{liu2023flowstraight}。普通
+conditional RF 使用 $v_\theta(r_t,t,c)$。若不同 coupling 在相同 $(r_t,t,c)$ 给出
+不同速度，平方误差学习条件均值\citep{lipman2023flow}。
+
+这不表示 RF 无法生成多峰最终分布；问题更窄：同一 data--time location 上的多个速度
+被一个确定性向量替代，可能导致弯曲或平均折中。
+
+\subsection{V-RFM 给速度加身份}
+
+V-RFM 令 $p(v\mid r_t,t,c,z)$ 的均值由 $v_\theta(r_t,t,c,z)$ 给出。对 $z$ 积分后，
+同一位置可以有多个速度；轨迹在观测空间相交时，latent 仍区分其方向身份
+\citep{guo2025variational}。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    font=\small,
+    panel/.style={rounded corners,draw=GlobalBlue,fill=PaleBlue,
+      minimum width=7.1cm,minimum height=5.0cm},
+    point/.style={circle,fill=GlobalBlue,inner sep=2.3pt},
+    arrow/.style={-Latex,very thick}
+  ]
+    \node[panel] (rf) at (-4.0,0) {};
+    \node[panel,draw=VRFMPurple,fill=PalePurple] (vrfm) at (4.0,0) {};
+    \node[anchor=north,font=\bfseries,text=GlobalBlue] at (-4.0,2.25)
+      {普通 conditional RF};
+    \node[anchor=north,font=\bfseries,text=VRFMPurple] at (4.0,2.25)
+      {V-RFM};
+
+    \node[point] (p1) at (-4.0,-0.1) {};
+    \draw[arrow,LeftOrange] (-4.0,-0.1) -- (-5.35,1.25)
+      node[above left] {target A};
+    \draw[arrow,RightGreen] (-4.0,-0.1) -- (-2.65,1.25)
+      node[above right] {target B};
+    \draw[arrow,MeanGray] (-4.0,-0.1) -- (-4.0,1.25)
+      node[right] {MSE mean};
+    \node[align=center,text width=5.8cm] at (-4.0,-1.45)
+      {同一 $(r_t,t,c)$ 只能输出一个速度；\\冲突目标被压成条件均值};
+
+    \node[point,fill=VRFMPurple] (p2) at (4.0,-0.1) {};
+    \draw[arrow,VRFMPurple!70!LeftOrange] (4.0,-0.1) -- (2.65,1.25)
+      node[above left] {$z_1$: direction A};
+    \draw[arrow,VRFMPurple!70!RightGreen] (4.0,-0.1) -- (5.35,1.25)
+      node[above right] {$z_2$: direction B};
+    \node[align=center,text width=5.8cm] at (4.0,-1.45)
+      {相同可见状态在不同 $z$ 下\\保留不同 latent-conditioned velocities};
+  \end{tikzpicture}
+  \caption{普通 RF 与 V-RFM 的核心差异。图中 A/B 必须先是独立评价通过的有效速度，
+  不能用两个任意窗口输出代替。}
+  \label{fig:rf-vrfm}
+\end{figure}
+
+\subsection{训练 posterior、推理 prior 与序列级 latent}
+
+训练 recognition model 可看 target residual：
+$q_\phi(z\mid r_0,r_1,r_t,t,c)$。推理时 $r_1$ 不存在，第一版从固定
+$p(z)=\mathcal N(0,I)$ 采样。condition-dependent prior 可以作为后续扩展，但会增加
+prior-posterior matching 难度。
+
+一条 500 帧序列只采样一次 $z$，供所有帧、窗口覆盖和 flow times 使用。禁止每帧或
+每 overlap 重新采样，否则容易产生 temporal mode switching。
+
+\section{VGGT 条件输入与输出}
+
+\subsection{保留所有 local evidence}
+
+condition encoder 接收：
+\begin{enumerate}
+  \item global camera centers $C^G$；
+  \item 九个 aligned local camera trajectories；
+  \item coverage masks；
+  \item alignment confidence、scale 与 eligibility features；
+  \item 可选 VGGT camera/image tokens；
+  \item frame position 与 window ID embeddings。
+\end{enumerate}
+
+对 $N=500,K=9$，一个直观张量接口是：
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+global centers & $[N,3]$ \\
+aligned local centers & $[K,N,3]$，未覆盖处填零 \\
+coverage mask & $[K,N]$ \\
+alignment features & $[K,F_a]$ \\
+camera features & $[N,F_c]$，可选 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+不能在输入模型前把九个 local trajectories 平均成一个，否则关键差异已经被抹掉。
+
+\subsection{第一版只生成 camera-center residual}
+
+模型输出 $\widehat R\in\mathbb R^{500\times3}$，最终
+\begin{equation}
+  \widehat C=C^G+\widehat R.
+\end{equation}
+rotation 和 FoV 保持 global VGGT 输出。这样直接对齐 V0 的 translation 证据，并减少
+表示变量。只有第一版过门槛后，才分别扩展 rotation/FoV。
+
+\section{最关键的开放问题：target 从哪里来}
+
+\subsection{多个窗口不是天然的多个 target}
+
+若训练集有唯一 GT trajectory，则 GT-aligned residual 是一个确定 target。condition 中
+有多个 local windows，并不会自动让 target 多模态。只用唯一 GT residual 时，V-RFM
+可能成为不必要的随机模型。
+
+直接把所有 local residuals 当 targets 同样错误：里面可能有坏窗口、gauge 伪差或
+时序不连续。V-RFM 会学习喂给它的分布，不会自动清洗标签。
+
+\subsection{MVP 离线 target builder}
+
+V0 通过后，训练前增加一个不参与推理的 builder：
+\begin{enumerate}
+  \item 每个 overlap 只保留冻结 evaluator 通过的 residual endpoints；
+  \item 用预注册 coverage 与时序连续性规则组装 500 帧候选；
+  \item 从不同 coherent assignments 或优化初始化得到多个 full-sequence residuals；
+  \item 用同一独立 evaluator 验收完整轨迹；
+  \item 去除 gauge copies、近重复和不连续项；
+  \item 得到 $\mathcal R_s=\{R_s^{(1)},\ldots,R_s^{(M_s)}\}$。
+\end{enumerate}
+
+训练从 $\mathcal R_s$ 采样 $r_1$。如果大多数 scene 最终只有一个有效 full-sequence
+target，就没有足够理由训练多模态 V-RFM。
+
+\begin{keybox}
+Pairwise V0 只是第一道门。八个 overlap 的局部选择还必须证明能组成多个完整、连贯、
+独立评价有效的 sequence targets。这是正式训练前的第二道门。
+\end{keybox}
+
+\section{一个核心训练目标}
+
+从有效 target set 采样 $r_1$，从 source distribution 采样 $r_0$，再采样 $t$ 并构造
+$r_t$。教学性目标为
+\begin{equation}
+\boxed{
+\mathcal L=
+\mathbb E\!\left[
+\mathbb E_{z\sim q_\phi}
+\left\|v_\theta(r_t,t,c,z)-(r_1-r_0)\right\|_2^2
++\beta D_{\mathrm{KL}}\!\left(
+q_\phi(z\mid r_0,r_1,r_t,t,c)\,\|\,p(z)\right)
+\right].}
+\label{eq:vrfm-objective}
+\end{equation}
+
+第一项让不同 $z$ 重建不同目标速度，第二项缩小训练 posterior 与推理 prior 的距离。
+具体 $\beta$、latent dimension、网络宽度、solver 与 time sampling 留给未来实现和消融。
+
+\section{训练与推理流程}
+
+\begin{figure}[htbp]
+  \centering
+  \resizebox{\textwidth}{!}{%
+  \begin{tikzpicture}[
+    font=\footnotesize,
+    block/.style={rounded corners,draw=GlobalBlue,fill=PaleBlue,align=center,
+      text width=2.65cm,minimum height=13mm},
+    local/.style={rounded corners,draw=LeftOrange,fill=PaleOrange,align=center,
+      text width=2.65cm,minimum height=13mm},
+    latent/.style={rounded corners,draw=VRFMPurple,fill=PalePurple,align=center,
+      text width=2.65cm,minimum height=13mm},
+    score/.style={rounded corners,draw=RightGreen,fill=PaleGreen,align=center,
+      text width=2.65cm,minimum height=13mm},
+    arrow/.style={-Latex,thick,draw=MeanGray}
+  ]
+    \node[block] (global) at (0,1.5) {500-frame\\global VGGT};
+    \node[local,right=8mm of global] (locals) {nine 100-frame\\local VGGT windows};
+    \node[block,right=8mm of locals] (align) {prediction-only\\alignment + coverage};
+    \node[block,right=8mm of align] (cond) {condition encoder\\保留全部 local evidence};
+    \node[latent,right=8mm of cond] (velocity) {$v_\theta(r_t,t,c,z)$\\sequence-level $z$};
+    \node[score,right=8mm of velocity] (score) {camera residual samples\\+ independent scorer};
+
+    \node[local,below=14mm of align] (builder) {offline target builder\\validated $\mathcal R_s$};
+    \node[latent,below=14mm of cond] (posterior) {训练：posterior\\可看 target $r_1$};
+    \node[latent,below=14mm of velocity] (prior) {推理：prior\\只采样一次 $z$};
+
+    \draw[arrow] (global) -- (locals);
+    \draw[arrow] (locals) -- (align);
+    \draw[arrow] (align) -- (cond);
+    \draw[arrow] (cond) -- (velocity);
+    \draw[arrow] (velocity) -- (score);
+    \draw[arrow,dashed] (align) -- (builder);
+    \draw[arrow,dashed] (builder) -- (posterior);
+    \draw[arrow,dashed] (posterior) -- node[above]{train} (velocity);
+    \draw[arrow,dashed] (prior) -- node[right]{infer} (velocity);
+  \end{tikzpicture}}
+  \caption{VGGT--V-RFM 的条件、训练与推理流程。Target builder 只在离线训练数据构造中
+  使用；推理 prior 不看 GT 或 target。Independent scorer 位于 generator 之后。}
+  \label{fig:pipeline}
+\end{figure}
+
+\subsection{训练}
+
+读取冻结 global/local predictions，从已验收 $\mathcal R_s$ 采样 $r_1$，采样 $r_0,t$，
+编码全部 condition，posterior 采样一次序列级 $z$，再优化式~\eqref{eq:vrfm-objective}。
+所有 residual 在 global prediction gauge 中；coverage mask 防止填零位置被当作观测；
+loss 按有效帧和 scene 归一化。
+
+必须监控 posterior collapse：KL 是否接近零、改变 $z$ 是否改变 coherent trajectory、
+target identities 是否使用不同 latent regions、diversity 是否只是高频噪声，以及多样
+样本是否通过独立 evaluator。不能只看总 loss。
+
+\subsection{推理}
+
+运行一次 global 与九次 local VGGT，完成 prediction-only alignment，编码 condition，
+采样 $r_0$ 和一次 $z$，完整积分得到 $\widehat R$。重复少量 $(r_0,z)$ 得到 samples，
+再由不使用 GT 的 deployable scorer 或下游任务排序。
+
+若没有可靠 scorer，可以把多样本交给人工或下游，但不能声称系统已经自动找到正确
+轨迹。
+
+\section{Generator 与 selector 的边界}
+
+V-RFM 回答“已知有效目标确实多模态时，如何生成不被均值压扁的 coherent repairs”。
+它不回答“哪条轨迹最符合真实相机运动”。后一个问题仍需图像重投影、track/depth/
+point consistency、VGGT confidence、下游重建质量或学习 scorer。
+
+scorer 必须与 target generator 分开，否则会形成生成器自己给自己判对的循环论证。
+如果 V0 主要是 selector，一步到位做 selector 更简单；如果内部平均安全，deterministic
+fusion 更高效。
+
+\section{Baselines、消融与失败模式}
+
+\subsection{必须比较的 baselines}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash\bfseries}p{4.5cm}
+    >{\raggedright\arraybackslash}X}
+    \toprule
+    模型 & 回答的问题 \\
+    \midrule
+    Raw global VGGT & 不修复基准 \\
+    Mean / weighted fusion & 简单平均是否足够 \\
+    Deterministic Transformer & 强确定性模型能否利用全部 local evidence \\
+    Ordinary conditional RF & 没有 velocity latent 的连续生成是否足够 \\
+    V-RFM & 显式多模态 velocity 是否有额外价值 \\
+    V-RFM no camera features & VGGT camera/image features 是否必要 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+关键消融包括 sequence-level vs per-window/per-frame $z$、all-local vs pre-averaged input、
+standard prior vs future conditional prior、unique GT vs validated multi-target set、无 alignment
+confidence、无 independent scorer、latent dimension 和 solver steps。
+
+主要指标不是“样本越多越好”，而是 best-of-$K$、scorer-selected、coverage、invalid rate、
+trajectory smoothness、ATE/RTE、mode collapse 和计算成本。
+
+\subsection{失败模式}
+
+\begin{longtable}{>{\raggedright\arraybackslash\bfseries}p{3.6cm}
+  >{\raggedright\arraybackslash}p{5.1cm}
+  >{\raggedright\arraybackslash}p{5.8cm}}
+  \toprule
+  失败 & 表现 & 优先处理 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  失败 & 表现 & 优先处理 \\
+  \midrule
+  \endhead
+  候选标签有错 & 多样本很多但大多无效 & 修 evaluator/target builder \\
+  唯一 sequence target & latent 不被使用 & 回到 deterministic refiner \\
+  Posterior collapse & 不同 $z$ 产生相同轨迹 & 检查 condition、capacity、KL schedule \\
+  Prior-posterior gap & 训练重建好，推理样本差 & 改 prior matching，不先堆网络 \\
+  Temporal switching & 窗口边界出现轨迹跳变 & sequence-level $z$ 与全序列网络 \\
+  Diversity = noise & 样本不同但几何都差 & 独立 scorer 与合法性约束 \\
+  Scorer 同源偏差 & generator 利用 evaluator 漏洞 & 增加独立几何/下游评价 \\
+  \bottomrule
+\end{longtable}
+
+\section{进入条件与当前状态}
+
+正式实现前必须满足：
+\begin{enumerate}
+  \item V0 result card 为 \texttt{GO\_VRFM}；
+  \item thresholds、manifest、run/artifact hashes 已冻结；
+  \item pairwise 有效方向能组成多个 sequence-level coherent targets；
+  \item target builder 与 scorer 的角色和信息访问分开；
+  \item deterministic Transformer 与 ordinary RF baselines 已定义；
+  \item GT 不进入推理 condition 或 deployable scorer。
+\end{enumerate}
+
+\begin{warningbox}
+\texttt{protocol in progress; no scientific conclusion yet}
+\end{warningbox}
+
+因此本文不表示 V-RFM 已被选定。若前置实验支持 selector 或 deterministic 路线，本文
+保留为被门控否决的方法设计记录。
+
+\bibliographystyle{plainnat}
+\bibliography{doc/references/camera_refiner_references}
+
+\end{document}
