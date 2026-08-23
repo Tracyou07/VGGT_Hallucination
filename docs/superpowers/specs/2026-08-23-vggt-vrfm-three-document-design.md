@@ -1,8 +1,8 @@
 # VGGT 多短窗修复与 V-RFM 三文档设计
 
-> 日期：2026-08-23  
-> 文档分支：`codex/camera_solution_space_docs_reframe`  
-> 理论基线：`codex/camera_solution_space_01_theory_foundation@cc1d8ac`  
+> 日期：2026-08-23
+> 文档分支：`codex/camera_solution_space_docs_reframe`
+> 理论基线：`codex/camera_solution_space_01_theory_foundation@cc1d8ac`
 > 状态：已批准的文档架构；尚未改写或生成正式 PDF
 
 ## 1. 目标
@@ -88,7 +88,7 @@ VGGT 中是否存在需要建模的修复速度歧义？
 
 建议标题：
 
-> **多个短上下文 VGGT 预测是否产生多模态相机修复速度？**  
+> **多个短上下文 VGGT 预测是否产生多模态相机修复速度？**
 > *Do Overlapping Short-Context VGGT Predictions Induce Multimodal Camera-Repair Velocities?*
 
 这是三份文档中最详细的一份，承担可执行、可复现的实验协议和结果报告。它不介绍完整 V-RFM 网络。
