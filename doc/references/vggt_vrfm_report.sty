@@ -1,0 +1,74 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{doc/references/vggt_vrfm_report}[2026/08/23 Shared VGGT V-RFM report style]
+
+\RequirePackage[left=2.25cm,right=2.25cm,top=2.25cm,bottom=2.35cm]{geometry}
+\RequirePackage{amsmath,amssymb,mathtools,bm}
+\RequirePackage{booktabs,tabularx,longtable,array,multirow}
+\RequirePackage{enumitem}
+\RequirePackage{xcolor}
+\RequirePackage{graphicx}
+\RequirePackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,fit,shapes.geometric}
+\RequirePackage{hyperref}
+\RequirePackage{xurl}
+\RequirePackage[numbers,sort&compress]{natbib}
+\RequirePackage{fancyhdr}
+
+\definecolor{GlobalBlue}{HTML}{17365D}
+\definecolor{LeftOrange}{HTML}{D97904}
+\definecolor{RightGreen}{HTML}{3B7D44}
+\definecolor{MeanGray}{HTML}{6B7280}
+\definecolor{VRFMPurple}{HTML}{7E57C2}
+\definecolor{AccentBlue}{HTML}{2F75B5}
+\definecolor{PaleBlue}{HTML}{EAF2F8}
+\definecolor{PaleOrange}{HTML}{FFF3E0}
+\definecolor{PaleGreen}{HTML}{EAF5EC}
+\definecolor{PalePurple}{HTML}{F1EAF8}
+\definecolor{DarkGray}{HTML}{404040}
+
+% Compatibility names used by the original theory report.
+\colorlet{DeepBlue}{GlobalBlue}
+\colorlet{AccentOrange}{LeftOrange}
+\colorlet{AccentGreen}{RightGreen}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=GlobalBlue,
+  citecolor=RightGreen,
+  urlcolor=AccentBlue
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[C]{\thepage}
+\setlength{\headheight}{14pt}
+
+\setlist[itemize]{leftmargin=2em,itemsep=0.25em,topsep=0.35em}
+\setlist[enumerate]{leftmargin=2.2em,itemsep=0.25em,topsep=0.35em}
+\renewcommand{\arraystretch}{1.22}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.25em}
+\setlength{\emergencystretch}{2em}
+
+\newcommand{\ReportHeaders}[2]{%
+  \fancyhead[L]{\small #1}%
+  \fancyhead[R]{\small #2}%
+}
+
+\newenvironment{statusbox}
+  {\begin{center}\begin{minipage}{0.94\textwidth}\small\color{DarkGray}
+   \noindent\textcolor{LeftOrange}{\rule{\linewidth}{1.2pt}}\par\noindent}
+  {\par\noindent\textcolor{LeftOrange}{\rule{\linewidth}{1.2pt}}
+   \end{minipage}\end{center}}
+
+\newenvironment{keybox}
+  {\begin{center}\begin{minipage}{0.94\textwidth}\small\color{DarkGray}
+   \noindent\textcolor{AccentBlue}{\rule{\linewidth}{1.2pt}}\par\noindent}
+  {\par\noindent\textcolor{AccentBlue}{\rule{\linewidth}{1.2pt}}
+   \end{minipage}\end{center}}
+
+\newenvironment{warningbox}
+  {\begin{center}\begin{minipage}{0.94\textwidth}\small\color{DarkGray}
+   \noindent\textcolor{VRFMPurple}{\rule{\linewidth}{1.2pt}}\par\noindent}
+  {\par\noindent\textcolor{VRFMPurple}{\rule{\linewidth}{1.2pt}}
+   \end{minipage}\end{center}}

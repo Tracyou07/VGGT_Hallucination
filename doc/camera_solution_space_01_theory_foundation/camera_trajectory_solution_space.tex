@@ -1,26 +1,6 @@
 \documentclass[UTF8,a4paper,11pt]{ctexart}
 
-\usepackage[left=2.25cm,right=2.25cm,top=2.25cm,bottom=2.35cm]{geometry}
-\usepackage{amsmath,amssymb,mathtools,bm}
-\usepackage{booktabs,tabularx,longtable,array,multirow}
-\usepackage{enumitem}
-\usepackage{xcolor}
-\usepackage{graphicx}
-\usepackage{tikz}
-\usetikzlibrary{arrows.meta,positioning,calc,fit,shapes.geometric}
-\usepackage{hyperref}
-\usepackage{xurl}
-\usepackage[numbers,sort&compress]{natbib}
-\usepackage{fancyhdr}
-
-\definecolor{DeepBlue}{HTML}{17365D}
-\definecolor{AccentBlue}{HTML}{2F75B5}
-\definecolor{PaleBlue}{HTML}{EAF2F8}
-\definecolor{AccentOrange}{HTML}{D97904}
-\definecolor{PaleOrange}{HTML}{FFF3E0}
-\definecolor{AccentGreen}{HTML}{3B7D44}
-\definecolor{PaleGreen}{HTML}{EAF5EC}
-\definecolor{DarkGray}{HTML}{404040}
+\usepackage{doc/references/vggt_vrfm_report}
 
 \hypersetup{
   colorlinks=true,
@@ -31,18 +11,7 @@
   pdfauthor={Camera Solution Space 01}
 }
 
-\pagestyle{fancy}
-\fancyhf{}
-\fancyhead[L]{\small Camera Solution Space 01}
-\fancyhead[R]{\small Theory Foundation}
-\fancyfoot[C]{\thepage}
-\setlength{\headheight}{14pt}
-
-\setlist[itemize]{leftmargin=2em,itemsep=0.25em,topsep=0.35em}
-\setlist[enumerate]{leftmargin=2.2em,itemsep=0.25em,topsep=0.35em}
-\renewcommand{\arraystretch}{1.22}
-\setlength{\parindent}{2em}
-\setlength{\parskip}{0.25em}
+\ReportHeaders{Camera Solution Space 01}{Theory Foundation}
 
 \newcommand{\SE}{\mathrm{SE}}
 \newcommand{\SO}{\mathrm{SO}}
@@ -58,19 +27,6 @@
 \newcommand{\rank}{\operatorname{rank}}
 \newcommand{\Law}{\operatorname{Law}}
 \newcommand{\checkeditem}{\item[\textcolor{AccentGreen}{$\checkmark$}]}
-\setlength{\emergencystretch}{2em}
-
-\newenvironment{statusbox}
-  {\begin{center}\begin{minipage}{0.94\textwidth}\small\color{DarkGray}
-   \noindent\textcolor{AccentOrange}{\rule{\linewidth}{1.2pt}}\par\noindent}
-  {\par\noindent\textcolor{AccentOrange}{\rule{\linewidth}{1.2pt}}
-   \end{minipage}\end{center}}
-
-\newenvironment{keybox}
-  {\begin{center}\begin{minipage}{0.94\textwidth}\small\color{DarkGray}
-   \noindent\textcolor{AccentBlue}{\rule{\linewidth}{1.2pt}}\par\noindent}
-  {\par\noindent\textcolor{AccentBlue}{\rule{\linewidth}{1.2pt}}
-   \end{minipage}\end{center}}
 
 \title{\bfseries\color{DeepBlue}固定观测下相机轨迹的可辨识性、\\近最优集合几何与连通性\\[0.5em]
 \large Camera Solution Space 01 --- Theory Foundation}
@@ -854,6 +810,6 @@ Hessian 有小特征值 & 候选弱方向 & 存在连续解流形\\
 本身。这份报告的价值不是给出一个过早答案，而是规定什么证据足以改变答案。
 
 \bibliographystyle{plainnat}
-\bibliography{doc/camera_solution_space_01_theory_foundation/references}
+\bibliography{doc/references/camera_refiner_references}
 
 \end{document}
