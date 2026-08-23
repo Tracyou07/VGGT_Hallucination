@@ -45,8 +45,8 @@ def _fixture_bytes(
         payload.extend(struct.pack("<16f", *_matrix(float(frame_index + 1))))
         payload.extend(struct.pack("<QQ", 100 + frame_index, 200 + frame_index))
         payload.extend(struct.pack("<Q", len(color) if color_size is None else color_size))
-        payload.extend(color)
         payload.extend(struct.pack("<Q", len(depth)))
+        payload.extend(color)
         payload.extend(depth)
     return bytes(payload) + suffix
 
@@ -71,11 +71,11 @@ class SensIndexTests(unittest.TestCase):
         self.assertEqual(len(index.frames), 2)
         self.assertEqual(index.frames[0].timestamp_color_us, 100)
         self.assertEqual(index.frames[0].timestamp_depth_us, 200)
-        self.assertEqual(index.frames[0].color_data_offset, 398)
+        self.assertEqual(index.frames[0].color_data_offset, 406)
         self.assertEqual(index.frames[0].depth_data_offset, 409)
         self.assertEqual(index.frames[0].next_record_offset, 413)
         self.assertEqual(index.frames[1].record_offset, 413)
-        self.assertEqual(index.frames[1].color_data_offset, 501)
+        self.assertEqual(index.frames[1].color_data_offset, 509)
         self.assertEqual(index.frames[1].depth_data_offset, 513)
         self.assertEqual(index.frames[1].next_record_offset, 518)
         self.assertFalse(hasattr(index.frames[0], "color_payload"))

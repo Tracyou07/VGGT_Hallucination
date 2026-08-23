@@ -91,14 +91,11 @@ def _validate_size(size: int, field: str, maximum: int) -> None:
         raise SensFormatError(f"{field}: declared size {size} exceeds limit {maximum}")
 
 
-def _skip_payload(stream: BinaryIO, file_size: int, size: int, field: str) -> int:
-    start = stream.tell()
+def _validate_payload_range(file_size: int, start: int, size: int, field: str) -> None:
     _validate_size(size, field, MAX_PAYLOAD_BYTES)
     end = start + size
     if end > file_size:
         raise SensTruncationError(f"{field}: declared end {end} exceeds file size {file_size}")
-    stream.seek(end)
-    return start
 
 
 def index_sens(path: str | Path) -> SensIndex:
@@ -147,9 +144,13 @@ def index_sens(path: str | Path) -> SensIndex:
             timestamp_color_us = _read_struct(stream, "<Q", f"{context} timestamp_color_us")[0]
             timestamp_depth_us = _read_struct(stream, "<Q", f"{context} timestamp_depth_us")[0]
             color_size = _read_struct(stream, "<Q", f"{context} color_size")[0]
-            color_data_offset = _skip_payload(stream, file_size, color_size, f"{context} color payload")
             depth_size = _read_struct(stream, "<Q", f"{context} depth_size")[0]
-            depth_data_offset = _skip_payload(stream, file_size, depth_size, f"{context} depth payload")
+            color_data_offset = stream.tell()
+            depth_data_offset = color_data_offset + color_size
+            next_record_offset = depth_data_offset + depth_size
+            _validate_payload_range(file_size, color_data_offset, color_size, f"{context} color payload")
+            _validate_payload_range(file_size, depth_data_offset, depth_size, f"{context} depth payload")
+            stream.seek(next_record_offset)
             frames.append(
                 SensFrame(
                     frame_index=frame_index,
@@ -161,7 +162,7 @@ def index_sens(path: str | Path) -> SensIndex:
                     color_data_offset=color_data_offset,
                     depth_size=depth_size,
                     depth_data_offset=depth_data_offset,
-                    next_record_offset=stream.tell(),
+                    next_record_offset=next_record_offset,
                 )
             )
         if stream.tell() != file_size:

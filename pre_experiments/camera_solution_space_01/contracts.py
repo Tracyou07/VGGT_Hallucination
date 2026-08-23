@@ -24,12 +24,14 @@ def _validate_json_value(value: Any, path: str = "$") -> None:
         for index, child in enumerate(value):
             _validate_json_value(child, f"{path}[{index}]")
         return
-    if isinstance(value, Mapping):
+    if isinstance(value, dict):
         for key, child in value.items():
             if not isinstance(key, str):
                 raise ContractError(f"{path}: mapping keys must be strings")
             _validate_json_value(child, f"{path}.{key}")
         return
+    if isinstance(value, Mapping):
+        raise ContractError(f"{path}: JSON objects must use native dict, got {type(value).__name__}")
     raise ContractError(f"{path}: unsupported canonical JSON value {type(value).__name__}")
 
 

@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+from types import MappingProxyType
 import unittest
 
 from pre_experiments.camera_solution_space_01.contracts import (
@@ -19,6 +20,18 @@ EXPECTED_CALIBRATION = [
     "scene0631_01", "scene0606_01", "scene0619_00", "scene0071_00",
     "scene0056_00", "scene0571_00", "scene0177_01", "scene0409_01",
 ]
+EXPECTED_SCENES = (
+    "scene0000_00", "scene0013_02", "scene0029_01", "scene0042_02", "scene0056_00",
+    "scene0071_00", "scene0084_01", "scene0096_00", "scene0109_00", "scene0121_01",
+    "scene0136_01", "scene0150_00", "scene0164_01", "scene0177_01", "scene0194_00",
+    "scene0207_01", "scene0221_01", "scene0238_00", "scene0254_01", "scene0267_00",
+    "scene0280_00", "scene0294_02", "scene0309_00", "scene0325_01", "scene0340_01",
+    "scene0353_02", "scene0367_01", "scene0380_02", "scene0395_00", "scene0409_01",
+    "scene0421_02", "scene0435_03", "scene0451_01", "scene0466_01", "scene0477_00",
+    "scene0493_01", "scene0509_01", "scene0525_00", "scene0540_02", "scene0555_00",
+    "scene0571_00", "scene0582_02", "scene0593_00", "scene0606_01", "scene0619_00",
+    "scene0631_01", "scene0648_00", "scene0663_01", "scene0675_00", "scene0691_00",
+)
 
 
 class CanonicalJsonTests(unittest.TestCase):
@@ -36,6 +49,10 @@ class CanonicalJsonTests(unittest.TestCase):
                 with self.assertRaises(ContractError):
                     canonical_json_bytes(value)
 
+    def test_rejects_non_dict_mappings_with_contract_error(self):
+        with self.assertRaisesRegex(ContractError, "native dict"):
+            canonical_json_bytes(MappingProxyType({"value": 1}))
+
     def test_schema_validation_requires_exact_schema_string(self):
         document = {"schema": "camera_solution_space/example/v1", "value": 1}
         validate_schema(document, "camera_solution_space/example/v1")
@@ -51,10 +68,7 @@ class CanonicalJsonTests(unittest.TestCase):
 class ScanNetSplitTests(unittest.TestCase):
     def test_official_scene_list_and_frozen_split_reconstruct_exactly(self):
         scene_lines = (CONFIGURATION_DIRECTORY / "fastvggt_scannet50.txt").read_text(encoding="utf-8").splitlines()
-        self.assertEqual(len(scene_lines), 50)
-        self.assertEqual(len(set(scene_lines)), 50)
-        self.assertEqual(scene_lines[:3], ["scene0000_00", "scene0013_02", "scene0029_01"])
-        self.assertEqual(scene_lines[-3:], ["scene0663_01", "scene0675_00", "scene0691_00"])
+        self.assertEqual(tuple(scene_lines), EXPECTED_SCENES)
 
         split = json.loads((CONFIGURATION_DIRECTORY / "scannet50_split_v1.json").read_text(encoding="utf-8"))
         self.assertEqual(split["schema"], "camera_solution_space_scannet50_split/v1")
