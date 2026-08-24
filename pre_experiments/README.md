@@ -1,5 +1,19 @@
 # Round 2 Method Pre-experiment
 
+## 当前入口：CVA02
+
+当前正在推进的前置实验是 Camera Velocity Ambiguity 02。它使用独立的协议、
+输出和结论边界，主入口为：
+
+- [`CVA02 当前状态`](../docs/camera_velocity_ambiguity_02_status.md)
+- [`CVA02 冻结设计`](../docs/camera_velocity_ambiguity_02_design.md)
+- [`CVA02 执行计划`](../docs/superpowers/plans/2026-08-24-camera-velocity-ambiguity-02.md)
+
+实现包预期位于 `pre_experiments/camera_velocity_ambiguity_02/`，由协议、输入门控、
+预测、几何证据和报告模块逐步建立。ScanNet 完整性校验和 calibration gate 未通过
+前，不运行正式 GPU 推理。旧的 `local_global_consistency/` 是继承工具和历史实验，
+不是 CVA02 当前结果目录。
+
 `study_type: method_pre_experiment`
 
 `common/` contains the minimal shared runtime used by
