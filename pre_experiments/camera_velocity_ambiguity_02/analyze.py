@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Mapping, Sequence
 
+import numpy as np
+
 from pre_experiments.camera_velocity_ambiguity_02.contracts import (
     EvidenceSource,
     canonical_json_digest,
@@ -85,9 +87,19 @@ def analyze_pair_records(
     }
 
 
+def _json_native(value: object) -> object:
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Mapping):
+        return {str(key): _json_native(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_native(item) for item in value]
+    return value
+
+
 def _jsonl_bytes(rows: Sequence[Mapping[str, object]]) -> bytes:
     return "".join(
-        json.dumps(dict(row), sort_keys=True, separators=(",", ":")) + "\n"
+        json.dumps(_json_native(dict(row)), sort_keys=True, separators=(",", ":")) + "\n"
         for row in rows
     ).encode("utf-8")
 

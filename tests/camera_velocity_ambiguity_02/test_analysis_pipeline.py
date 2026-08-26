@@ -5,6 +5,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
+import numpy as np
+
 from pre_experiments.camera_velocity_ambiguity_02.analyze import (
     analyze_pair_records,
     publish_scene_records,
@@ -67,12 +69,20 @@ class AnalysisPipelineTest(unittest.TestCase):
                 privileged_rows=[self.privileged],
                 rgbd_rows=[self.rgbd],
                 decision_rows=[{"sample_id": self.prediction["sample_id"], "event_class": "X"}],
+                control_rows=[
+                    {
+                        "sample_id": self.prediction["sample_id"],
+                        "direction_evaluable": np.bool_(True),
+                        "score": np.float64(0.5),
+                    }
+                ],
             )
             self.assertEqual(manifest["counts"]["prediction_only"], 1)
             prediction_text = (Path(directory) / "prediction_only.jsonl").read_text()
             privileged_text = (Path(directory) / "privileged_labels.jsonl").read_text()
             self.assertNotIn("endpoint", prediction_text)
             self.assertIn("left_endpoint_valid", privileged_text)
+            self.assertIn('"direction_evaluable":true', (Path(directory) / "controls.jsonl").read_text())
             loaded = json.loads((Path(directory) / "records_manifest.json").read_text())
             self.assertEqual(loaded["manifest_digest"], manifest["manifest_digest"])
 
