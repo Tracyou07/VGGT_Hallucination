@@ -528,6 +528,14 @@ integrity marker gate, calibration-before-development, pointer/log directories,
 no environment creation, no checkpoint download, no CPU formal mode and no
 large artifact export.
 
+Also require the runner to enforce a one-scene smoke gate before the full
+calibration cohort.  The smoke scene is the first frozen calibration scene and
+uses the exact production frame selection, global/local inference, artifact,
+geometry, oracle, RGB-D and control paths.  A matching authenticated smoke
+completion sidecar is required before the runner may expand to all ten
+calibration scenes.  The calibration run must resume and reuse the completed
+smoke scene rather than infer it a second time.
+
 **Step 2: Implement**
 
 Defaults:
@@ -539,6 +547,8 @@ CKPT_DIR=/data/yjh/share/pretrained/VGGT-1B
 RESULT_ROOT=/data/output/camera_velocity_ambiguity
 CONDA_ENV=/home/ubuntu/anaconda3/envs/vggt-gx
 DEVICE=cuda
+SMOKE_SCENE_LIMIT=1
+CALIBRATION_SCENE_LIMIT=10
 ```
 
 Use a dedicated optional dependency extra for evo/scipy/matplotlib. Document
@@ -587,23 +597,33 @@ verified_completion.json = authenticated
 H20 disk/GPU/process preflight = PASS
 ```
 
-**Step 4: Calibration only**
+**Step 4: One-scene production smoke**
 
-Run the 10-scene calibration stage, inspect manifests and controls, then freeze
-the policy. No development scene may be opened during threshold selection.
+Run the first frozen calibration scene through the complete production path.
+Require exact global/local call counts, reloadable artifacts, matching frame and
+pair identities, finite Camera Tokens/poses/energies, passing controls, valid
+provenance and an authenticated smoke completion sidecar.  Any failure stops
+the runner before the other nine scenes are opened.
 
-**Step 5: Apply GO/STOP gate**
+**Step 5: Calibration only**
+
+Resume from the smoke output and run the exact 10-scene calibration stage,
+inspect manifests and controls, then freeze the policy.  The first scene must
+be reused without duplicate inference.  No development scene may be opened
+during threshold selection.
+
+**Step 6: Apply GO/STOP gate**
 
 Continue to the 40-scene development evaluation only if calibration artifacts
 are complete, all negative controls pass, frozen policy validation succeeds and
 no protocol violation occurred.
 
-**Step 6: Development and decision**
+**Step 7: Development and decision**
 
 Run development without threshold overrides, generate scalar outputs and all
 figures, select exactly one conclusion, and state V-RFM `GO / NO-GO`.
 
-**Step 7: Final verification**
+**Step 8: Final verification**
 
 Record commit, config hash, data manifest, split-v2, input run IDs, scene counts,
 pair counts, exclusion reasons, bootstrap seed/sample count and the fact that
