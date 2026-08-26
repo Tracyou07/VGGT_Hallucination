@@ -51,6 +51,24 @@ class SelectedSensorDataTest(unittest.TestCase):
                 observation_hw=(20, 25),
             )
 
+    def test_accepts_the_second_authenticated_scannet_calibration_profile(self) -> None:
+        color = np.array(
+            [[1170.188, 0.0, 647.75, 0.0], [0.0, 1170.188, 483.75, 0.0], [0, 0, 1, 0], [0, 0, 0, 1]]
+        )
+        depth = np.array(
+            [[577.8706, 0.0, 319.5, 0.0], [0.0, 577.8706, 239.5, 0.0], [0, 0, 1, 0], [0, 0, 0, 1]]
+        )
+        result = observation_calibration(
+            color_intrinsic=color,
+            depth_intrinsic=depth,
+            color_extrinsic=np.eye(4),
+            depth_extrinsic=np.eye(4),
+            color_hw=(968, 1296),
+            depth_hw=(480, 640),
+            observation_hw=(120, 160),
+        )
+        self.assertAlmostEqual(result[1, 1], 144.46765, places=5)
+
 
 if __name__ == "__main__":
     unittest.main()

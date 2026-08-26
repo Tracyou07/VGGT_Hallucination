@@ -86,7 +86,10 @@ def observation_calibration(
     color_at_depth = color_k[:3, :3].copy()
     color_at_depth[0] *= dw / cw
     color_at_depth[1] *= dh / ch
-    if not np.allclose(color_at_depth, depth_k[:3, :3], atol=1.0, rtol=2e-3):
+    # ScanNet-50 contains two authenticated calibration profiles.  The second
+    # differs by 0.413% in the resized vertical focal length because 968 color
+    # rows map to a nominal 480-row registered depth raster.
+    if not np.allclose(color_at_depth, depth_k[:3, :3], atol=0.5, rtol=5e-3):
         raise ValueError("color/depth intrinsics do not describe registered rasters")
     result = depth_k[:3, :3].copy()
     result[0] *= ow / dw
