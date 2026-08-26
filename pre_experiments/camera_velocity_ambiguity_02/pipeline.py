@@ -70,6 +70,7 @@ from pre_experiments.common.model_io import find_checkpoint, resolve_device
 
 ROOT = Path(__file__).resolve().parents[2]
 RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,127}")
+COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 
 
 def endpoint_validities(
@@ -90,6 +91,25 @@ def provisional_smoke_policy() -> EventPolicy:
         normalized_separation_min=1e-4,
         barrier_margin=1e-5,
     )
+
+
+def resolve_prediction_commit(run_manifest: Path, current_commit: str) -> str:
+    """Keep already-produced model artifacts bound to their original code."""
+    if COMMIT_PATTERN.fullmatch(current_commit) is None:
+        raise ValueError("current_commit must be a full lowercase git commit")
+    path = Path(run_manifest)
+    if not path.is_file():
+        return current_commit
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("existing run manifest is invalid") from error
+    if not isinstance(payload, dict):
+        raise ValueError("existing run manifest must be an object")
+    value = payload.get("prediction_git_commit", payload.get("git_commit"))
+    if not isinstance(value, str) or COMMIT_PATTERN.fullmatch(value) is None:
+        raise ValueError("existing run has no valid prediction git commit")
+    return value
 
 
 def _sha256_file(path: Path) -> str:
@@ -486,16 +506,18 @@ def run_stage(args: argparse.Namespace) -> Path:
         run_scene_predictions,
     )
 
+    run_root = args.result_root / args.run_id
+    run_manifest = run_root / "manifests" / "run.json"
+    prediction_commit = resolve_prediction_commit(run_manifest, commit)
     context = PredictionContext(
         run_id=args.run_id,
         checkpoint_sha256=checkpoint_sha,
-        git_commit=commit,
+        git_commit=prediction_commit,
         protocol_digest=protocol.config_digest,
     )
-    run_root = args.result_root / args.run_id
     run_root.mkdir(parents=True, exist_ok=True)
     atomic_write_json(
-        run_root / "manifests" / "run.json",
+        run_manifest,
         {
             "schema": "camera_velocity_ambiguity_02.run.v1",
             "run_id": args.run_id,
@@ -505,6 +527,7 @@ def run_stage(args: argparse.Namespace) -> Path:
             "input_digest": verified.marker_sha256,
             "checkpoint_sha256": checkpoint_sha,
             "git_commit": commit,
+            "prediction_git_commit": prediction_commit,
             "device": args.device,
         },
     )
