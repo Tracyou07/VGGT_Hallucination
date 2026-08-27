@@ -421,7 +421,7 @@ def run_alpha_scan(args: argparse.Namespace) -> Path:
     if not isinstance(checkpoint_sha256, str) or len(checkpoint_sha256) != 64:
         raise ValueError("source run has no authenticated checkpoint digest")
 
-    prediction_root = args.run_root / "prediction_only" / "alpha_scan"
+    prediction_root = args.run_root / "prediction_only" / "alpha_scan_full_context"
     prediction_records: list[dict[str, object]] = []
     head = None
     for index, source in enumerate(sources):
@@ -459,12 +459,12 @@ def run_alpha_scan(args: argparse.Namespace) -> Path:
         del head
 
     prediction_manifest_path = (
-        args.run_root / "manifests" / "alpha_scan_prediction_manifest.json"
+        args.run_root / "manifests" / "alpha_scan_full_context_prediction_manifest.json"
     )
     _atomic_json(
         prediction_manifest_path,
         {
-            "schema": "variational_camera_latent.alpha_scan_prediction_manifest.v1",
+            "schema": "variational_camera_latent.alpha_scan_full_context_prediction_manifest.v1",
             "scene_count": 10,
             "overlap_count": 80,
             "alphas": list(DEFAULT_ALPHAS),
@@ -473,7 +473,7 @@ def run_alpha_scan(args: argparse.Namespace) -> Path:
         },
     )
 
-    privileged_root = args.run_root / "privileged_labels" / "alpha_scan"
+    privileged_root = args.run_root / "privileged_labels" / "alpha_scan_full_context"
     privileged_records: list[dict[str, object]] = []
     privileged_paths: list[Path] = []
     for index, (source, prediction) in enumerate(zip(sources, prediction_records)):
@@ -501,25 +501,25 @@ def run_alpha_scan(args: argparse.Namespace) -> Path:
         print(f"[vrfm] alpha-scan privileged {index + 1}/10 {scene}", flush=True)
 
     privileged_manifest_path = (
-        args.run_root / "manifests" / "alpha_scan_privileged_manifest.json"
+        args.run_root / "manifests" / "alpha_scan_full_context_privileged_manifest.json"
     )
     _atomic_json(
         privileged_manifest_path,
         {
-            "schema": "variational_camera_latent.alpha_scan_privileged_manifest.v1",
+            "schema": "variational_camera_latent.alpha_scan_full_context_privileged_manifest.v1",
             "scene_count": 10,
             "overlap_count": 80,
             "records": privileged_records,
         },
     )
-    report_path = args.run_root / "reports" / "alpha_scan_report.json"
+    report_path = args.run_root / "reports" / "alpha_scan_full_context_report.json"
     report = write_alpha_scan_report(
         privileged_paths,
         report_path,
         min_improvement=args.alpha_min_improvement,
     )
     verified = {
-        "schema": "variational_camera_latent.alpha_scan_verified_completion.v1",
+        "schema": "variational_camera_latent.alpha_scan_full_context_verified_completion.v1",
         "scene_count": 10,
         "overlap_count": 80,
         "diagnosis": report["diagnosis"],
@@ -529,7 +529,9 @@ def run_alpha_scan(args: argparse.Namespace) -> Path:
         "phase1_completion_sha256": _sha256_file(args.run_root / "verified_completion.json"),
         "git_commit": read_git_commit(ROOT),
     }
-    write_completion(args.run_root / "alpha_scan_verified_completion.json", verified)
+    write_completion(
+        args.run_root / "alpha_scan_full_context_verified_completion.json", verified
+    )
     return args.run_root
 
 

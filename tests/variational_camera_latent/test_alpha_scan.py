@@ -83,7 +83,8 @@ class AlphaScanTests(unittest.TestCase):
         class TokenTranslationHead:
             def decode_pose_tokens(self, tokens, *, num_iterations):
                 raw = torch.zeros((*tokens.shape[:2], 9), device=tokens.device)
-                raw[..., 0] = tokens[..., 0]
+                sequence_mean = tokens[..., 0].mean(dim=1, keepdim=True)
+                raw[..., 0] = tokens[..., 0] + sequence_mean
                 raw[..., 3] = 1.0
                 return [raw] * num_iterations
 
@@ -106,14 +107,15 @@ class AlphaScanTests(unittest.TestCase):
         arrays = module.load_alpha_scan_candidates(destination)
 
         np.testing.assert_array_equal(arrays["alphas"], [0.0, 0.1, 1.0])
+        self.assertEqual(int(arrays["decode_context_frames"]), 500)
         self.assertEqual(arrays["decoded_camera_raw"].shape, (8, 2, 3, 50, 9))
         self.assertEqual(arrays["decoded_camera_c2w"].shape, (8, 2, 3, 50, 4, 4))
         np.testing.assert_array_equal(
             arrays["decoded_camera_c2w"][:, 0, 0],
             np.load(self.source, allow_pickle=False)["overlap_long_c2w"],
         )
-        np.testing.assert_allclose(arrays["decoded_camera_raw"][:, 0, 2, :, 0], 1.0)
-        np.testing.assert_allclose(arrays["decoded_camera_raw"][:, 1, 2, :, 0], 2.0)
+        np.testing.assert_allclose(arrays["decoded_camera_raw"][:, 0, 2, :, 0], 1.1)
+        np.testing.assert_allclose(arrays["decoded_camera_raw"][:, 1, 2, :, 0], 2.2)
         self.assertFalse(
             any("gt" in name.lower() or "privileged" in name.lower() for name in arrays)
         )

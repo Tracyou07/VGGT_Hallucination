@@ -26,6 +26,7 @@ _PREDICTION_MEMBERS = {
     "source_sample_ids",
     "overlap_frame_ids",
     "span_starts",
+    "decode_context_frames",
     "decoded_camera_raw",
     "decoded_camera_c2w",
     "endpoint_delta_rms",
@@ -110,6 +111,7 @@ def _validate_prediction(arrays: dict[str, np.ndarray]) -> None:
         "source_sample_ids": (8,),
         "overlap_frame_ids": (8, 50),
         "span_starts": (8,),
+        "decode_context_frames": (),
         "decoded_camera_raw": (8, 2, count, 50, 9),
         "decoded_camera_c2w": (8, 2, count, 50, 4, 4),
         "endpoint_delta_rms": (8, 2),
@@ -123,6 +125,11 @@ def _validate_prediction(arrays: dict[str, np.ndarray]) -> None:
         raise ValueError("alpha-scan sides must be left and right")
     if arrays["source_sample_ids"].dtype.kind != "U":
         raise ValueError("alpha-scan sample IDs must be Unicode")
+    if (
+        not np.issubdtype(arrays["decode_context_frames"].dtype, np.integer)
+        or int(arrays["decode_context_frames"]) != 500
+    ):
+        raise ValueError("alpha-scan candidates must be decoded in the full 500-frame context")
     if arrays["checkpoint_sha256"].dtype.kind != "U" or arrays[
         "source_shard_sha256"
     ].dtype.kind != "U":
@@ -165,6 +172,7 @@ def generate_alpha_scan_candidates(
     if "overlap_long_c2w" not in source:
         raise ValueError("alpha scan requires source long-window camera predictions")
     device_value = torch.device(device)
+    full_tokens = torch.from_numpy(source["global_camera_tokens"]).to(device_value)
     long_tokens = torch.from_numpy(source["overlap_long_tokens"]).to(device_value)
     endpoints = (
         torch.from_numpy(source["overlap_left_tokens"]).to(device_value),
@@ -176,10 +184,26 @@ def generate_alpha_scan_candidates(
         for side_index, endpoint in enumerate(endpoints):
             for alpha_index, alpha in enumerate(alpha_values):
                 mixed = torch.lerp(long_tokens, endpoint, float(alpha))
-                decoded = decode_camera_tokens(camera_head, mixed)
+                sequences = full_tokens[None].expand(8, -1, -1).clone()
+                for overlap, span_start in enumerate(source["span_starts"]):
+                    overlap_start = int(span_start) + 50
+                    sequences[overlap, overlap_start : overlap_start + 50] = mixed[
+                        overlap
+                    ]
+                decoded_full = decode_camera_tokens(camera_head, sequences)
+                decoded = torch.stack(
+                    [
+                        decoded_full[
+                            overlap,
+                            int(span_start) + 50 : int(span_start) + 100,
+                        ]
+                        for overlap, span_start in enumerate(source["span_starts"])
+                    ]
+                )
                 raw[:, side_index, alpha_index] = decoded.float().cpu().numpy()
-                decoded_c2w = pose_encoding_to_c2w(decoded).double().cpu().numpy()
-                c2w[:, side_index, alpha_index] = decoded_c2w
+                c2w[:, side_index, alpha_index] = (
+                    pose_encoding_to_c2w(decoded).double().cpu().numpy()
+                )
     c2w[:, :, 0] = source["overlap_long_c2w"][:, None]
     delta = np.stack(
         (
@@ -194,6 +218,7 @@ def generate_alpha_scan_candidates(
         "source_sample_ids": source["sample_ids"].copy(),
         "overlap_frame_ids": source["overlap_frame_ids"].copy(),
         "span_starts": source["span_starts"].copy(),
+        "decode_context_frames": np.asarray(500, dtype=np.int64),
         "decoded_camera_raw": raw,
         "decoded_camera_c2w": c2w,
         "endpoint_delta_rms": np.sqrt(np.mean(delta * delta, axis=(2, 3))),
