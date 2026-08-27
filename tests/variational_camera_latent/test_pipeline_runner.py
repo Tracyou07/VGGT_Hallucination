@@ -6,6 +6,7 @@ import unittest
 
 from pre_experiments.variational_camera_latent.pipeline import (
     load_exact_completion,
+    parse_args,
     write_completion,
 )
 
@@ -36,6 +37,22 @@ class PipelineRunnerTests(unittest.TestCase):
             self.assertIsNone(
                 load_exact_completion(path, {**payload, "upstream": "b" * 64})
             )
+
+    def test_pipeline_exposes_resumable_alpha_scan_stage(self) -> None:
+        try:
+            args = parse_args(
+                [
+                    "--stage",
+                    "alpha-scan",
+                    "--run-root",
+                    "/data/yjh/output/variational_camera_latent/fixture",
+                ]
+            )
+        except SystemExit:
+            self.fail("pipeline does not expose the alpha-scan stage")
+
+        self.assertEqual(args.stage, "alpha-scan")
+        self.assertEqual(args.alpha_min_improvement, 0.01)
 
 
 if __name__ == "__main__":

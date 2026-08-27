@@ -11,6 +11,14 @@ import torch
 
 from pre_experiments.common.contracts import read_git_commit
 
+from .alpha_scan import (
+    DEFAULT_ALPHAS,
+    generate_alpha_scan_candidates,
+    load_alpha_scan_candidates,
+    load_alpha_scan_privileged,
+    write_alpha_scan_privileged_sidecar,
+    write_alpha_scan_report,
+)
 from .candidates import (
     analyze_candidate_shard,
     generate_deterministic_candidates,
@@ -24,7 +32,7 @@ from .privileged import (
     write_privileged_scene_sidecar,
 )
 from .report import summarize_run
-from .source import build_scene_source_shard, write_source_manifest
+from .source import build_scene_source_shard, load_source_shard, write_source_manifest
 from .train import TrainConfig, train_models
 
 
@@ -401,6 +409,130 @@ def publish_report(args: argparse.Namespace) -> Path:
     return args.run_root
 
 
+def run_alpha_scan(args: argparse.Namespace) -> Path:
+    """Diagnose whether short-window directions help at a smaller latent step."""
+    if args.scene_limit != 10:
+        raise ValueError("alpha-scan stage requires exactly ten scenes")
+    if not (args.run_root / "verified_completion.json").is_file():
+        raise ValueError("alpha scan requires a verified Phase 1 run")
+    _, sources = _source_manifest(args.run_root)
+    source_run_manifest = _read_json(args.source_run / "manifests" / "run.json")
+    checkpoint_sha256 = source_run_manifest.get("checkpoint_sha256")
+    if not isinstance(checkpoint_sha256, str) or len(checkpoint_sha256) != 64:
+        raise ValueError("source run has no authenticated checkpoint digest")
+
+    prediction_root = args.run_root / "prediction_only" / "alpha_scan"
+    prediction_records: list[dict[str, object]] = []
+    head = None
+    for index, source in enumerate(sources):
+        scene = str(source["scene"])
+        source_path = Path(source["path"])
+        destination = prediction_root / f"{scene}.npz"
+        if destination.is_file():
+            arrays = load_alpha_scan_candidates(destination)
+            if str(arrays["checkpoint_sha256"]) != checkpoint_sha256:
+                raise ValueError("existing alpha-scan candidate checkpoint does not match")
+            if str(arrays["source_shard_sha256"]) != _sha256_file(source_path):
+                raise ValueError("existing alpha-scan candidate source does not match")
+        else:
+            if head is None:
+                head = _camera_head(args.checkpoint_dir, args.device)
+            generate_alpha_scan_candidates(
+                source_path,
+                destination,
+                camera_head=head,
+                checkpoint_sha256=checkpoint_sha256,
+                device=args.device,
+                alphas=DEFAULT_ALPHAS,
+            )
+            arrays = load_alpha_scan_candidates(destination)
+        source_arrays = load_source_shard(source_path)
+        if not np.array_equal(
+            arrays["source_sample_ids"], source_arrays["sample_ids"]
+        ):
+            raise ValueError("alpha-scan candidate sample IDs do not match source")
+        prediction_records.append(
+            {"scene": scene, "path": str(destination), "sha256": _sha256_file(destination)}
+        )
+        print(f"[vrfm] alpha-scan decode {index + 1}/10 {scene}", flush=True)
+    if head is not None:
+        del head
+
+    prediction_manifest_path = (
+        args.run_root / "manifests" / "alpha_scan_prediction_manifest.json"
+    )
+    _atomic_json(
+        prediction_manifest_path,
+        {
+            "schema": "variational_camera_latent.alpha_scan_prediction_manifest.v1",
+            "scene_count": 10,
+            "overlap_count": 80,
+            "alphas": list(DEFAULT_ALPHAS),
+            "checkpoint_sha256": checkpoint_sha256,
+            "records": prediction_records,
+        },
+    )
+
+    privileged_root = args.run_root / "privileged_labels" / "alpha_scan"
+    privileged_records: list[dict[str, object]] = []
+    privileged_paths: list[Path] = []
+    for index, (source, prediction) in enumerate(zip(sources, prediction_records)):
+        scene = str(source["scene"])
+        destination = privileged_root / f"{scene}.npz"
+        if destination.is_file():
+            arrays = load_alpha_scan_privileged(destination)
+            source_arrays = load_source_shard(Path(source["path"]))
+            if not np.array_equal(
+                arrays["sample_ids"], source_arrays["sample_ids"]
+            ):
+                raise ValueError("existing alpha-scan sidecar sample IDs do not match")
+        else:
+            write_alpha_scan_privileged_sidecar(
+                Path(source["path"]),
+                Path(prediction["path"]),
+                args.prepared_root / scene,
+                destination,
+            )
+            load_alpha_scan_privileged(destination)
+        privileged_paths.append(destination)
+        privileged_records.append(
+            {"scene": scene, "path": str(destination), "sha256": _sha256_file(destination)}
+        )
+        print(f"[vrfm] alpha-scan privileged {index + 1}/10 {scene}", flush=True)
+
+    privileged_manifest_path = (
+        args.run_root / "manifests" / "alpha_scan_privileged_manifest.json"
+    )
+    _atomic_json(
+        privileged_manifest_path,
+        {
+            "schema": "variational_camera_latent.alpha_scan_privileged_manifest.v1",
+            "scene_count": 10,
+            "overlap_count": 80,
+            "records": privileged_records,
+        },
+    )
+    report_path = args.run_root / "reports" / "alpha_scan_report.json"
+    report = write_alpha_scan_report(
+        privileged_paths,
+        report_path,
+        min_improvement=args.alpha_min_improvement,
+    )
+    verified = {
+        "schema": "variational_camera_latent.alpha_scan_verified_completion.v1",
+        "scene_count": 10,
+        "overlap_count": 80,
+        "diagnosis": report["diagnosis"],
+        "prediction_manifest_sha256": _sha256_file(prediction_manifest_path),
+        "privileged_manifest_sha256": _sha256_file(privileged_manifest_path),
+        "report_sha256": _sha256_file(report_path),
+        "phase1_completion_sha256": _sha256_file(args.run_root / "verified_completion.json"),
+        "git_commit": read_git_commit(ROOT),
+    }
+    write_completion(args.run_root / "alpha_scan_verified_completion.json", verified)
+    return args.run_root
+
+
 def verify_completed_run(run_root: Path) -> Path:
     run_root = Path(run_root)
     source = _read_json(run_root / "manifests" / "source_manifest.json")
@@ -461,6 +593,8 @@ def run_stage(args: argparse.Namespace) -> Path:
         return build_privileged_sidecars(args)
     if args.stage == "report":
         return publish_report(args)
+    if args.stage == "alpha-scan":
+        return run_alpha_scan(args)
     if args.stage == "verify":
         return verify_completed_run(args.run_root)
     raise ValueError(f"unsupported stage: {args.stage}")
@@ -468,7 +602,19 @@ def run_stage(args: argparse.Namespace) -> Path:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage", choices=("source", "smoke", "calibration", "privileged", "report", "verify"), required=True)
+    parser.add_argument(
+        "--stage",
+        choices=(
+            "source",
+            "smoke",
+            "calibration",
+            "privileged",
+            "report",
+            "alpha-scan",
+            "verify",
+        ),
+        required=True,
+    )
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--scene-limit", type=int, default=10)
     parser.add_argument(
@@ -498,6 +644,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--checkpoint-interval", type=int, default=50)
     parser.add_argument("--samples", type=int, default=32)
     parser.add_argument("--heun-steps", type=int, default=16)
+    parser.add_argument("--alpha-min-improvement", type=float, default=0.01)
     return parser.parse_args(argv)
 
 
