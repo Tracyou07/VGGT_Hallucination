@@ -1,6 +1,6 @@
 # CVA02 当前状态
 
-更新时间：2026-08-24 13:13（下载状态快照；重新检查前不要把下面的计数当作实时值）
+更新时间：2026-08-27（VRFM Phase 1 与 20-Q 正式零假设实验完成）
 
 ## 1. 权威身份
 
@@ -12,7 +12,11 @@
 | H20 工作树 | `/home/ubuntu/yjh/vggt/.worktrees/camera_velocity_ambiguity_02_pre_experiment` |
 | H20 数据 | `/data/yjh/share/datasets/ScanNet` |
 | H20 权重 | `/data/yjh/share/pretrained/VGGT-1B/model.safetensors` |
-| H20 输出 | `/data/output/camera_velocity_ambiguity/<run_id>/` |
+| H20 输出 | `/data/yjh/output/camera_velocity_ambiguity/<run_id>/` |
+
+当前后续实验分支为 `codex/vrfm-random-null20`，HEAD
+`e7f178587b9d80ebf730e9f6e3c2266d49b8b64b`；VRFM 正式输出位于
+`/data/yjh/output/variational_camera_latent/vrfm_camera_20260827T044926Z/`。
 
 CVA02 继承 015 的相机分支加载、100/50 sliding windows、schema 校验、
 prediction-only Sim(3) 和原子产物写入，但不继承旧的 GT 重对齐评价、
@@ -92,14 +96,24 @@ scannet50_resume_20260824_131151.err.log
 | 部分 | 责任 | 当前状态 |
 |---|---|---|
 | CVA02 现象验证 | 500/100/50 prediction、冻结 oracle、RGB-D 与分类 | 10-scene calibration 已完成 |
-| VRFM Phase 1 数据 | long-only inference、左右短窗等权 teacher、固定 segment-z | 实现完成，待 H20 smoke/calibration |
-| Prediction-only 数据 | source shards、VRFM raw candidates、deterministic baseline | 独立目录与 SHA-256 manifest |
+| VRFM Phase 1 数据 | long-only inference、左右短窗等权 teacher、固定 segment-z | 1-scene smoke 与 10-scene calibration 已完成 |
+| Prediction-only 数据 | source shards、VRFM raw candidates、deterministic baseline | manifest、SHA-256 与最终 verify 通过 |
 | Privileged sidecar | GT pose、冻结 Sim(3)、candidate error | 物理隔离，仅 sample ID 关联 |
-| H20 集成 | 1-scene smoke 自动扩到 10 scenes、最终 verify | runner 已实现 |
+| 完整上下文步长扫描 | 短窗与 VRFM residual 的方向/幅度诊断 | 已完成 |
+| 20-Q 结构化随机零假设 | 20 个随机正交变换、固定 oracle 预算 | 200+200 产物与独立完整审计通过 |
 
 VRFM Phase 1 输出固定为 `/data/yjh/output/variational_camera_latent/<run_id>/`。
 它只修正独立 50-frame overlap，不在本阶段拼接完整 500-frame 轨迹；弱信号仍是
 技术成功，不能把 two-means 结果直接宣称为离散多模态。
+
+完整结果见
+[`2026-08-27 Phase 1 报告`](reports/2026-08-27-variational-camera-latent-phase1-report.md)。
+当前证据更符合“场景相关的连续方向与小步修正”，不支持稳定的少数离散分支。
+原始 VRFM 方向在 20-Q 对照中排名 18/21，不能声称其坐标方向具有特殊训练归因。
+
+下一项是 prediction-only 候选排序 smoke：训练时用独立 privileged sidecar
+提供效用排序，推理时只读取长窗口 latent、候选 residual 与步长。先验证 held-out
+场景上是否存在可学习选择信号，再决定是否扩到 50 场景和 quality-weighted VRFM。
 
 ## 6. 如何更新本页
 

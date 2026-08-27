@@ -10,6 +10,7 @@
 |---|---|---|---|
 | [`camera_velocity_ambiguity_02_status.md`](camera_velocity_ambiguity_02_status.md) | 当前分支、门控、数据和下一步 | 当前入口 | 是，状态信息 |
 | [`camera_velocity_ambiguity_02_design.md`](camera_velocity_ambiguity_02_design.md) | 理论问题、证据边界和实验定义 | 冻结设计 | 是，协议依据 |
+| [`reports/2026-08-27-variational-camera-latent-phase1-report.md`](reports/2026-08-27-variational-camera-latent-phase1-report.md) | VRFM、步长扫描与 20-Q 正式结果 | 当前实验报告 | 是，数值与结论依据 |
 | [`superpowers/plans/2026-08-24-camera-velocity-ambiguity-02.md`](superpowers/plans/2026-08-24-camera-velocity-ambiguity-02.md) | 14 个实现任务和三人分工 | 执行计划 | 是，实施依据 |
 | [`pre_experiments/README.md`](../pre_experiments/README.md) | 前置实验代码语义和当前入口 | 代码说明 | 仅作为运行说明 |
 | `pre_experiments/camera_velocity_ambiguity_02/` | CVA02 协议、输入、预测和几何代码 | 随任务逐步建立 | 通过测试后才可用 |
@@ -45,7 +46,7 @@ CVA02 的固定身份、ScanNet 完整性门控、H20 路径和结论资格以�
 ```text
 /data/yjh/share/datasets/ScanNet
 /data/yjh/share/pretrained/VGGT-1B/model.safetensors
-/data/output/camera_velocity_ambiguity/<run_id>/
+/data/yjh/output/camera_velocity_ambiguity/<run_id>/
 ```
 
 ## 4. 过程记录与数值证据
