@@ -54,7 +54,11 @@ ScanNet 下载器使用修复后的幂等上传重试逻辑：每次上传重试
 final 文件，避免“服务端已 rename、客户端因 SSH 断线误判失败”。本次修复的
 下载/校验回归测试共 6 项，已通过。
 
-最近一次快照：
+2026-08-26 已完成 ScanNet-50 严格校验：H20 为 50 scenes / 100 assets，
+总计 37,587,327,416 bytes，`verified_completion.json` 通过本地与远端
+Content-Length/SHA-256 核对。
+
+历史下载快照（已完成，不再作为当前门控）：
 
 ```text
 Downloader PID: 33292
@@ -62,7 +66,7 @@ State: 67 uploaded / 16 downloading / 17 queued
 H20 files: 26 sens + 41 ply
 /data: 186 GiB available
 stderr: 0 bytes
-verified_completion.json: not yet available
+verified_completion.json: completed and verified on H20
 ```
 
 下载日志位于本地 `.codex_runtime/`：
@@ -87,13 +91,15 @@ scannet50_resume_20260824_131151.err.log
 
 | 部分 | 责任 | 当前状态 |
 |---|---|---|
-| Tasks 1–4 | Person A：协议、输入、frame/artifact、prediction runner | 协议实现待开始 |
-| Tasks 5–9 | Person B：几何、oracle、RGB-D、事件和统计 | 等待接口冻结 |
-| Tasks 10–12 | Person C：FastVGGT 严格 vendoring、adapter、plot、报告 | 等待接口冻结 |
-| Tasks 13–14 | Joint：集成、H20 运行、最终审计 | 等待前置任务 |
+| CVA02 现象验证 | 500/100/50 prediction、冻结 oracle、RGB-D 与分类 | 10-scene calibration 已完成 |
+| VRFM Phase 1 数据 | long-only inference、左右短窗等权 teacher、固定 segment-z | 实现完成，待 H20 smoke/calibration |
+| Prediction-only 数据 | source shards、VRFM raw candidates、deterministic baseline | 独立目录与 SHA-256 manifest |
+| Privileged sidecar | GT pose、冻结 Sim(3)、candidate error | 物理隔离，仅 sample ID 关联 |
+| H20 集成 | 1-scene smoke 自动扩到 10 scenes、最终 verify | runner 已实现 |
 
-CPU-only 先行顺序为 protocol → input gate → artifact schema → prediction
-runner → geometry/evidence；不得用真实 ScanNet 或 GPU 单元测试绕过接口。
+VRFM Phase 1 输出固定为 `/data/yjh/output/variational_camera_latent/<run_id>/`。
+它只修正独立 50-frame overlap，不在本阶段拼接完整 500-frame 轨迹；弱信号仍是
+技术成功，不能把 two-means 结果直接宣称为离散多模态。
 
 ## 6. 如何更新本页
 

@@ -179,3 +179,82 @@ def write_privileged_scene_sidecar(
         np.savez_compressed(handle, **arrays)
     temporary.replace(destination)
     return PrivilegedShardRecord(scene, destination, 8, samples, _sha256_file(destination))
+
+
+def write_privileged_deterministic_sidecar(
+    source_path: Path,
+    deterministic_path: Path,
+    prepared_scene_root: Path,
+    destination: Path,
+) -> PrivilegedShardRecord:
+    """Evaluate the no-z deterministic baseline in its own privileged sidecar."""
+    source = load_source_shard(source_path)
+    if "global_pred_c2w" not in source or "overlap_long_c2w" not in source:
+        raise ValueError("source shard lacks prediction poses required by the frozen oracle")
+    try:
+        with np.load(Path(deterministic_path), allow_pickle=False) as archive:
+            deterministic = {name: np.asarray(archive[name]).copy() for name in archive.files}
+    except (OSError, ValueError, KeyError) as error:
+        raise ValueError("invalid deterministic candidate shard") from error
+    required = {
+        "corrected_camera_tokens",
+        "source_long_tokens",
+        "source_sample_ids",
+        "span_starts",
+        "checkpoint_sha256",
+        "decoded_camera_c2w",
+    }
+    if set(deterministic) != required:
+        raise ValueError("deterministic candidate members do not match the no-z schema")
+    if deterministic["decoded_camera_c2w"].shape != (8, 50, 4, 4):
+        raise ValueError("deterministic decoded cameras have invalid shape")
+    if not np.array_equal(deterministic["source_sample_ids"], source["sample_ids"]):
+        raise ValueError("deterministic and source sample IDs do not match")
+    gt_ids, gt_c2w = _load_prepared_gt(prepared_scene_root)
+    if not np.array_equal(gt_ids, source["global_frame_ids"]):
+        raise ValueError("prepared GT and source frame IDs do not match")
+    scene = str(source["sample_ids"][0]).split(":", 1)[0]
+    oracle = fit_frozen_oracle(
+        scene,
+        source["global_frame_ids"],
+        source["global_pred_c2w"],
+        gt_c2w,
+    )
+    gt_overlap = np.empty((8, 50, 4, 4), dtype=np.float64)
+    baseline_rms = np.empty(8, dtype=np.float64)
+    candidate_rms = np.empty((8, 1), dtype=np.float64)
+    for overlap, frame_ids in enumerate(source["overlap_frame_ids"]):
+        indices = np.searchsorted(gt_ids, frame_ids)
+        if not np.array_equal(gt_ids[indices], frame_ids):
+            raise ValueError("overlap frame IDs are absent from prepared GT")
+        gt_overlap[overlap] = gt_c2w[indices]
+        baseline_rms[overlap] = evaluate_with_frozen_oracle(
+            oracle, source["overlap_long_c2w"][overlap], gt_overlap[overlap]
+        ).rms_translation_error
+        candidate_rms[overlap, 0] = evaluate_with_frozen_oracle(
+            oracle, deterministic["decoded_camera_c2w"][overlap], gt_overlap[overlap]
+        ).rms_translation_error
+    denominator = np.maximum(baseline_rms[:, None], np.finfo(np.float64).eps)
+    relative = (baseline_rms[:, None] - candidate_rms) / denominator
+    arrays = {
+        "sample_ids": source["sample_ids"].copy(),
+        "gt_frame_ids": source["overlap_frame_ids"].copy(),
+        "gt_c2w": gt_overlap,
+        "baseline_rms": baseline_rms,
+        "candidate_rms": candidate_rms,
+        "relative_improvement": relative,
+        "best_candidate_index": np.zeros(8, dtype=np.int64),
+        "best_candidate_rms": candidate_rms[:, 0].copy(),
+        "oracle_scale": np.asarray(oracle.scale, dtype=np.float64),
+        "oracle_rotation": np.asarray(oracle.rotation, dtype=np.float64),
+        "oracle_translation": np.asarray(oracle.translation, dtype=np.float64),
+        "oracle_digest": np.asarray(oracle.transform_digest, dtype="U64"),
+    }
+    _validate(arrays)
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    with temporary.open("wb") as handle:
+        np.savez_compressed(handle, **arrays)
+    temporary.replace(destination)
+    return PrivilegedShardRecord(scene, destination, 8, 1, _sha256_file(destination))

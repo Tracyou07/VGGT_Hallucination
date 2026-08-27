@@ -31,12 +31,18 @@ def summarize_run(
     improvements = np.asarray(privileged.get("best_relative_improvements"), dtype=np.float64)
     if improvements.ndim != 1 or improvements.size < 1 or not np.isfinite(improvements).all():
         raise ValueError("privileged manifest has invalid best_relative_improvements")
+    deterministic = np.asarray(
+        privileged.get("deterministic_relative_improvements"), dtype=np.float64
+    )
+    if deterministic.shape != improvements.shape or not np.isfinite(deterministic).all():
+        raise ValueError("privileged manifest has invalid deterministic improvements")
     z_sensitivity = float(prediction.get("z_sensitivity", 0.0))
     ratio = float(prediction.get("median_one_to_two_sse_ratio", 1.0))
     if not np.isfinite([z_sensitivity, ratio]).all() or z_sensitivity < 0.0 or ratio < 1.0:
         raise ValueError("prediction manifest has invalid diversity metrics")
     positive = int(np.count_nonzero(improvements > 0.0))
     median_improvement = float(np.median(improvements))
+    deterministic_median = float(np.median(deterministic))
     if median_improvement >= 0.05 and positive >= max(3, len(improvements) // 4) and ratio >= 1.1:
         signal = "PROMISING"
     elif z_sensitivity > 1e-6 or positive > 0 or ratio > 1.0 + 1e-6:
@@ -52,6 +58,8 @@ def summarize_run(
         "z_sensitivity": z_sensitivity,
         "median_one_to_two_sse_ratio": ratio,
         "median_best_relative_improvement": median_improvement,
+        "median_deterministic_relative_improvement": deterministic_median,
+        "vrfm_minus_deterministic_improvement": median_improvement - deterministic_median,
         "positive_overlap_count": positive,
         "limitations": [
             "Phase 1 evaluates independent 50-frame overlaps and does not stitch a 500-frame trajectory.",
