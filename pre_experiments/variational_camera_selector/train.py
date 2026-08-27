@@ -271,7 +271,10 @@ def train_selectors(config: SelectorTrainConfig) -> SelectorTrainingResult:
         raise ValueError("CUDA selector training was requested but CUDA is unavailable")
     _seed_all(config.seed)
     dataset = SelectorTrainingDataset(
-        config.prediction_manifest, config.privileged_manifest, roles=("train",)
+        config.prediction_manifest,
+        config.privileged_manifest,
+        roles=("train",),
+        scenes=config.train_scenes,
     )
     if tuple(dataset.scenes) != tuple(config.train_scenes):
         raise ValueError("training dataset scenes do not match the frozen requested split")

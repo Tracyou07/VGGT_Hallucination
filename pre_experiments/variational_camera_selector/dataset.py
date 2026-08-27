@@ -199,6 +199,7 @@ class PredictionCandidateDataset:
         binding_manifest: Path,
         *,
         roles: Sequence[str] | None = None,
+        scenes: Sequence[str] | None = None,
     ) -> None:
         payload = _read_json(binding_manifest, "candidate binding manifest")
         if payload.get("alphas") != list(DEFAULT_ALPHAS):
@@ -210,9 +211,25 @@ class PredictionCandidateDataset:
             label="candidate binding manifest",
         )
         selected_roles = _normalize_roles(roles)
-        self.records = [record for record in records if str(record["role"]) in selected_roles]
+        selected_scenes = None if scenes is None else tuple(scenes)
+        if selected_scenes is not None and (
+            not selected_scenes
+            or len(set(selected_scenes)) != len(selected_scenes)
+            or any(not isinstance(scene, str) or not scene for scene in selected_scenes)
+        ):
+            raise ValueError("scenes must be a non-empty unique sequence when provided")
+        self.records = [
+            record
+            for record in records
+            if str(record["role"]) in selected_roles
+            and (selected_scenes is None or str(record["scene"]) in selected_scenes)
+        ]
         if not self.records:
             raise ValueError("candidate binding manifest has no records for the selected roles")
+        if selected_scenes is not None and tuple(
+            str(record["scene"]) for record in self.records
+        ) != selected_scenes:
+            raise ValueError("candidate binding manifest does not contain the requested scene order")
         self.scenes = tuple(str(record["scene"]) for record in self.records)
         self.roles = tuple(str(record["role"]) for record in self.records)
         self.binding_manifest = Path(binding_manifest)
@@ -376,9 +393,10 @@ class SelectorTrainingDataset:
         privileged_manifest: Path,
         *,
         roles: Sequence[str] = ("train",),
+        scenes: Sequence[str] | None = None,
     ) -> None:
         self.prediction_dataset = PredictionCandidateDataset(
-            prediction_manifest, roles=roles
+            prediction_manifest, roles=roles, scenes=scenes
         )
         payload = _read_json(privileged_manifest, "privileged binding manifest")
         records = _validate_manifest_records(

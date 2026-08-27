@@ -20,10 +20,14 @@ from pre_experiments.variational_camera_selector.train import (
 
 
 class _FakeTrainingDataset:
-    def __init__(self, prediction_manifest: Path, privileged_manifest: Path, *, roles):
+    def __init__(
+        self, prediction_manifest: Path, privileged_manifest: Path, *, roles, scenes
+    ):
         if tuple(roles) != ("train",):
             raise AssertionError("training must request only the train role")
-        self.scenes = ("scene0000_00",)
+        if tuple(scenes) != ("scene0000_00",):
+            raise AssertionError("training must request only the configured scenes")
+        self.scenes = tuple(scenes)
         self.roles = ("train",)
         self.groups = [self._group(index) for index in range(8)]
 
