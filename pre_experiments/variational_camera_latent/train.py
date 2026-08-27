@@ -131,12 +131,14 @@ def _checkpoint_payload(
     deterministic: DeterministicRFMModel,
     vrfm_optimizer: torch.optim.Optimizer,
     deterministic_optimizer: torch.optim.Optimizer,
+    model_config: dict[str, int],
 ) -> dict[str, object]:
     return {
         "schema": "variational_camera_latent.training_checkpoint.v1",
         "step": step,
         "config_digest": config_digest,
         "source_digest": source_digest,
+        "model_config": model_config,
         "vrfm": vrfm.state_dict(),
         "posterior": posterior.state_dict(),
         "deterministic": deterministic.state_dict(),
@@ -281,6 +283,12 @@ def train_models(config: TrainConfig) -> TrainingResult:
                     deterministic=deterministic,
                     vrfm_optimizer=vrfm_optimizer,
                     deterministic_optimizer=deterministic_optimizer,
+                    model_config={
+                        "d_model": config.d_model,
+                        "z_dim": config.z_dim,
+                        "layers": config.layers,
+                        "heads": config.heads,
+                    },
                 ),
             )
             _atomic_json(

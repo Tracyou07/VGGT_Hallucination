@@ -13,3 +13,14 @@ class SourceShardRecord:
     path: Path
     overlap_count: int
     sha256: str
+
+
+@dataclass(frozen=True)
+class CandidateShardRecord:
+    """Published raw VRFM samples for one scene."""
+
+    scene: str
+    path: Path
+    overlap_count: int
+    sample_count: int
+    sha256: str
