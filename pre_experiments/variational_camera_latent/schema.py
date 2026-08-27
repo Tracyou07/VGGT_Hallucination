@@ -18,6 +18,7 @@ SOURCE_REQUIRED_MEMBERS = {
     "span_starts",
     "sample_ids",
 }
+SOURCE_OPTIONAL_MEMBERS = {"global_pred_c2w", "overlap_long_c2w"}
 _FORBIDDEN_NAME_PARTS = ("gt", "ground_truth", "privileged", "depth", "error")
 
 
@@ -37,7 +38,7 @@ def validate_source_shard(arrays: Mapping[str, np.ndarray]) -> None:
     if forbidden:
         raise ValueError(f"source shard may not contain GT or privileged members: {forbidden}")
     missing = SOURCE_REQUIRED_MEMBERS - names
-    extra = names - SOURCE_REQUIRED_MEMBERS
+    extra = names - SOURCE_REQUIRED_MEMBERS - SOURCE_OPTIONAL_MEMBERS
     if missing or extra:
         raise ValueError(
             f"source shard members mismatch; missing={sorted(missing)}, extra={sorted(extra)}"
@@ -84,6 +85,20 @@ def validate_source_shard(arrays: Mapping[str, np.ndarray]) -> None:
         if not np.issubdtype(value.dtype, np.floating) or not np.isfinite(value).all():
             raise ValueError(f"{name} must contain finite floating-point values")
 
+    if ("global_pred_c2w" in normalized) != ("overlap_long_c2w" in normalized):
+        raise ValueError("prediction pose members must be provided together")
+    if "global_pred_c2w" in normalized:
+        global_c2w = normalized["global_pred_c2w"]
+        overlap_c2w = normalized["overlap_long_c2w"]
+        if global_c2w.shape != (500, 4, 4) or overlap_c2w.shape != (8, 50, 4, 4):
+            raise ValueError("prediction c2w members have invalid shapes")
+        if not np.isfinite(global_c2w).all() or not np.isfinite(overlap_c2w).all():
+            raise ValueError("prediction c2w members must be finite")
+        if not np.allclose(global_c2w[:, 3, :], [0.0, 0.0, 0.0, 1.0]):
+            raise ValueError("global_pred_c2w must be homogeneous")
+        if not np.allclose(overlap_c2w[..., 3, :], [0.0, 0.0, 0.0, 1.0]):
+            raise ValueError("overlap_long_c2w must be homogeneous")
+
     expected_starts = np.arange(0, 400, 50, dtype=np.int64)
     if span_starts.shape != (8,) or not np.array_equal(span_starts, expected_starts):
         raise ValueError("span_starts must be [0, 50, ..., 350]")
@@ -106,3 +121,8 @@ def validate_source_shard(arrays: Mapping[str, np.ndarray]) -> None:
             raise ValueError(f"overlap {index} right tokens do not match the right teacher")
         if not np.array_equal(overlap_long[index], global_tokens[start : start + 50]):
             raise ValueError(f"overlap {index} long tokens do not match global context")
+        if "global_pred_c2w" in normalized and not np.array_equal(
+            normalized["overlap_long_c2w"][index],
+            normalized["global_pred_c2w"][start : start + 50],
+        ):
+            raise ValueError(f"overlap {index} long poses do not match global prediction")

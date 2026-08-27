@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from .camera import decode_camera_tokens
+from .camera import decode_camera_tokens, pose_encoding_to_c2w
 from .clustering import two_means
 from .contracts import CandidateShardRecord
 from .flow import heun_sample
@@ -38,7 +38,7 @@ def _sha256_file(path: Path) -> str:
 
 def _validate_candidate_arrays(arrays: dict[str, np.ndarray]) -> None:
     missing = _REQUIRED - set(arrays)
-    extra = set(arrays) - _REQUIRED - {"decoded_camera_raw"}
+    extra = set(arrays) - _REQUIRED - {"decoded_camera_raw", "decoded_camera_c2w"}
     if missing or extra:
         raise ValueError(f"candidate members mismatch; missing={sorted(missing)}, extra={sorted(extra)}")
     if any(np.asarray(value).dtype.hasobject for value in arrays.values()):
@@ -63,6 +63,8 @@ def _validate_candidate_arrays(arrays: dict[str, np.ndarray]) -> None:
         raise ValueError("checkpoint_sha256 must be a Unicode scalar")
     if "decoded_camera_raw" in arrays and arrays["decoded_camera_raw"].shape != (8, z.shape[1], 50, 9):
         raise ValueError("decoded_camera_raw has an invalid shape")
+    if "decoded_camera_c2w" in arrays and arrays["decoded_camera_c2w"].shape != (8, z.shape[1], 50, 4, 4):
+        raise ValueError("decoded_camera_c2w has an invalid shape")
     for name, value in arrays.items():
         array = np.asarray(value)
         if np.issubdtype(array.dtype, np.floating) and not np.isfinite(array).all():
@@ -164,6 +166,7 @@ def generate_scene_candidates(
     cluster_ids = np.empty((8, samples), dtype=np.int64)
     centers = np.empty((8, 2, 50, 2048), dtype=np.float32)
     decoded = None if camera_head is None else np.empty((8, samples, 50, 9), dtype=np.float32)
+    decoded_c2w = None if camera_head is None else np.empty((8, samples, 50, 4, 4), dtype=np.float32)
 
     with torch.no_grad():
         for overlap in range(8):
@@ -190,7 +193,10 @@ def generate_scene_candidates(
             cluster_ids[overlap] = clustered.labels
             centers[overlap] = clustered.centers.reshape(2, 50, 2048)
             if decoded is not None:
-                decoded[overlap] = decode_camera_tokens(camera_head, output).float().cpu().numpy()
+                raw = decode_camera_tokens(camera_head, output)
+                decoded[overlap] = raw.float().cpu().numpy()
+                assert decoded_c2w is not None
+                decoded_c2w[overlap] = pose_encoding_to_c2w(raw).float().cpu().numpy()
 
     arrays: dict[str, np.ndarray] = {
         "z": z_values,
@@ -205,6 +211,8 @@ def generate_scene_candidates(
     }
     if decoded is not None:
         arrays["decoded_camera_raw"] = decoded
+        assert decoded_c2w is not None
+        arrays["decoded_camera_c2w"] = decoded_c2w
     destination = Path(destination)
     _save_candidate_shard(destination, arrays)
     scene = str(source["sample_ids"][0]).split(":", 1)[0]

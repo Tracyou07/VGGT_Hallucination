@@ -6,6 +6,7 @@ import torch
 
 from pre_experiments.variational_camera_latent.camera import (
     decode_camera_tokens,
+    pose_encoding_to_c2w,
     run_latent_preflight,
 )
 
@@ -49,6 +50,17 @@ class CameraCompatibilityTests(unittest.TestCase):
     def test_decode_rejects_malformed_token_shape_before_head(self) -> None:
         with self.assertRaisesRegex(ValueError, "2048"):
             decode_camera_tokens(RecordingCameraHead(), torch.zeros(1, 50, 32))
+
+    def test_pose_encoding_conversion_returns_homogeneous_c2w(self) -> None:
+        raw = torch.zeros(2, 3, 9)
+        raw[..., 3] = 1.0
+
+        c2w = pose_encoding_to_c2w(raw)
+
+        self.assertEqual(c2w.shape, (2, 3, 4, 4))
+        torch.testing.assert_close(
+            c2w[..., 3, :], torch.tensor([0.0, 0.0, 0.0, 1.0]).expand(2, 3, 4)
+        )
 
 
 if __name__ == "__main__":

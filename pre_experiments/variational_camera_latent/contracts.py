@@ -24,3 +24,14 @@ class CandidateShardRecord:
     overlap_count: int
     sample_count: int
     sha256: str
+
+
+@dataclass(frozen=True)
+class PrivilegedShardRecord:
+    """Physically separated GT/error sidecar for one candidate shard."""
+
+    scene: str
+    path: Path
+    overlap_count: int
+    sample_count: int
+    sha256: str

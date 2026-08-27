@@ -141,6 +141,10 @@ def build_scene_source_shard(
         "overlap_right_tokens": overlap_right,
         "span_starts": span_starts,
         "sample_ids": sample_ids,
+        "global_pred_c2w": global_arrays["pred_c2w_raw"].astype(np.float64),
+        "overlap_long_c2w": np.stack(
+            [global_arrays["pred_c2w_raw"][start + 50 : start + 100] for start in span_starts]
+        ).astype(np.float64),
     }
     save_source_shard(destination, arrays)
     return SourceShardRecord(

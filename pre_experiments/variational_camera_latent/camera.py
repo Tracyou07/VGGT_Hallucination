@@ -4,6 +4,35 @@ from typing import Any
 
 import torch
 from torch import Tensor, nn
+from vggt.utils.pose_enc import pose_encoding_to_extri_intri
+
+
+def pose_encoding_to_c2w(raw_pose_encoding: Tensor) -> Tensor:
+    """Convert raw Camera Head pose encodings to homogeneous camera-to-world matrices."""
+    if (
+        not isinstance(raw_pose_encoding, Tensor)
+        or raw_pose_encoding.ndim != 3
+        or raw_pose_encoding.shape[-1] != 9
+        or not torch.isfinite(raw_pose_encoding).all()
+    ):
+        raise ValueError("raw pose encoding must be finite with shape [batch, frames, 9]")
+    w2c_3x4, _ = pose_encoding_to_extri_intri(
+        raw_pose_encoding, build_intrinsics=False
+    )
+    bottom = torch.zeros(
+        (*w2c_3x4.shape[:2], 1, 4),
+        dtype=w2c_3x4.dtype,
+        device=w2c_3x4.device,
+    )
+    bottom[..., 0, 3] = 1.0
+    w2c = torch.cat((w2c_3x4, bottom), dim=-2)
+    try:
+        c2w = torch.linalg.inv(w2c)
+    except RuntimeError as error:
+        raise ValueError("Camera Head produced non-invertible extrinsics") from error
+    if not torch.isfinite(c2w).all():
+        raise ValueError("Camera Head produced non-finite camera matrices")
+    return c2w
 
 
 def decode_camera_tokens(
