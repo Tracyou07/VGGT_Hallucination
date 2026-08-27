@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -10,6 +11,10 @@ from pre_experiments.variational_camera_selector import pipeline
 
 
 class SelectorPipelineTests(unittest.TestCase):
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
     def test_privileged_stage_requires_signed_prediction_barrier(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -58,6 +63,95 @@ class SelectorPipelineTests(unittest.TestCase):
             self.assertEqual(first, second)
             with self.assertRaisesRegex(ValueError, "immutable JSON"):
                 pipeline.write_exact_json(path, {**payload, "digest": "b" * 64})
+
+    def test_score_barrier_rejects_missing_selection_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = Path(directory)
+            manifests = run_root / "manifests"
+            manifests.mkdir()
+            records = []
+            for scene in pipeline.FROZEN_VALIDATION_SCENES:
+                score_path = run_root / f"{scene}.score.npz"
+                score_path.write_bytes(b"sealed-score")
+                records.append(
+                    {
+                        "scene": scene,
+                        "path": str(score_path),
+                        "sha256": self._sha256(score_path),
+                        "selection_path": str(run_root / f"{scene}.selection.npz"),
+                        "selection_sha256": "a" * 64,
+                    }
+                )
+            manifest_path = manifests / "score_manifest.json"
+            pipeline.write_exact_json(
+                manifest_path,
+                {
+                    "schema": "variational_camera_selector.score_manifest.v1",
+                    "validation_scenes": list(pipeline.FROZEN_VALIDATION_SCENES),
+                    "records": records,
+                },
+            )
+            pipeline.write_exact_json(
+                manifests / "score_complete.json",
+                {
+                    "schema": "variational_camera_selector.score_complete.v1",
+                    "validation_scenes": list(pipeline.FROZEN_VALIDATION_SCENES),
+                    "score_manifest_sha256": self._sha256(manifest_path),
+                },
+            )
+
+            with mock.patch.object(pipeline, "load_score_shard", return_value={}):
+                with self.assertRaisesRegex(ValueError, "selection"):
+                    pipeline._require_score_barrier(run_root)
+
+    def test_score_barrier_rejects_selection_bound_to_another_score(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_root = Path(directory)
+            manifests = run_root / "manifests"
+            manifests.mkdir()
+            records = []
+            for scene in pipeline.FROZEN_VALIDATION_SCENES:
+                score_path = run_root / f"{scene}.score.npz"
+                selection_path = run_root / f"{scene}.selection.npz"
+                score_path.write_bytes(b"sealed-score")
+                selection_path.write_bytes(b"sealed-selection")
+                records.append(
+                    {
+                        "scene": scene,
+                        "path": str(score_path),
+                        "sha256": self._sha256(score_path),
+                        "selection_path": str(selection_path),
+                        "selection_sha256": self._sha256(selection_path),
+                    }
+                )
+            manifest_path = manifests / "score_manifest.json"
+            pipeline.write_exact_json(
+                manifest_path,
+                {
+                    "schema": "variational_camera_selector.score_manifest.v1",
+                    "validation_scenes": list(pipeline.FROZEN_VALIDATION_SCENES),
+                    "records": records,
+                },
+            )
+            pipeline.write_exact_json(
+                manifests / "score_complete.json",
+                {
+                    "schema": "variational_camera_selector.score_complete.v1",
+                    "validation_scenes": list(pipeline.FROZEN_VALIDATION_SCENES),
+                    "score_manifest_sha256": self._sha256(manifest_path),
+                },
+            )
+
+            with (
+                mock.patch.object(pipeline, "load_score_shard", return_value={}),
+                mock.patch.object(
+                    pipeline,
+                    "load_selection_shard",
+                    return_value={"score_sha256": "b" * 64},
+                ),
+            ):
+                with self.assertRaisesRegex(ValueError, "bind"):
+                    pipeline._require_score_barrier(run_root)
 
     def test_auto_stage_calls_every_barrier_in_order(self) -> None:
         args = pipeline.parse_args(

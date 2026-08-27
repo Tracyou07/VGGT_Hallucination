@@ -10,6 +10,7 @@ import torch
 
 from pre_experiments.variational_camera_latent.alpha_scan import DEFAULT_ALPHAS
 from pre_experiments.variational_camera_selector.dataset import CandidateGroup
+from pre_experiments.variational_camera_selector import evaluate as selector_evaluate
 from pre_experiments.variational_camera_selector.evaluate import (
     load_score_shard,
     score_scene_candidates,
@@ -19,10 +20,11 @@ from pre_experiments.variational_camera_selector.model import CandidateRanker
 
 
 class _FakePredictionDataset:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, frames: int = 3) -> None:
         self.scene = "scene0325_01"
         self.scenes = (self.scene,)
         self.roles = ("validation",)
+        self.frames = frames
         self.binding_manifest = root / "candidate_binding_manifest.json"
         self.binding_manifest.write_text('{"fixture":"scores"}\n', encoding="utf-8")
 
@@ -46,7 +48,7 @@ class _FakePredictionDataset:
             [f"{self.scene}:overlap_{index:03d}:choice_{choice}" for choice in range(225)],
             dtype="U96",
         )
-        delta = np.zeros((225, 3, 2048), dtype=np.float32)
+        delta = np.zeros((225, self.frames, 2048), dtype=np.float32)
         delta[:, :, 0] = alphas[:, None]
         return CandidateGroup(
             scene=self.scene,
@@ -55,7 +57,7 @@ class _FakePredictionDataset:
             sample_id=f"{self.scene}:overlap_{index:03d}",
             span_start=index * 50,
             global_tokens=np.zeros((4, 2048), dtype=np.float32),
-            x0=np.zeros((3, 2048), dtype=np.float32),
+            x0=np.zeros((self.frames, 2048), dtype=np.float32),
             delta_tokens=delta,
             alphas=alphas,
             z=z,
@@ -74,6 +76,7 @@ class SelectorEvaluationTests(unittest.TestCase):
         self.dataset = _FakePredictionDataset(self.root)
         self.checkpoint = self.root / "latest.pt"
         self.output = self.root / "scores.npz"
+        self.selection_output = self.root / "selections.npz"
         torch.manual_seed(9)
         model_config = {"d_model": 4, "z_dim": 2, "input_dim": 2048, "span_count": 8}
         full = CandidateRanker(**model_config, include_global_context=True)
@@ -121,17 +124,61 @@ class SelectorEvaluationTests(unittest.TestCase):
             )
         )
 
+    def test_selection_shard_materializes_selected_corrected_latents_without_labels(self) -> None:
+        score_scene_candidates(
+            self.dataset,
+            "scene0325_01",
+            self.checkpoint,
+            self.output,
+            device="cpu",
+        )
+        writer = getattr(selector_evaluate, "write_scene_selections", None)
+        loader = getattr(selector_evaluate, "load_selection_shard", None)
+        self.assertIsNotNone(writer, "selection materializer is missing")
+        self.assertIsNotNone(loader, "selection loader is missing")
+        assert writer is not None and loader is not None
+
+        path = writer(
+            _FakePredictionDataset(self.root, frames=50),
+            "scene0325_01",
+            self.output,
+            self.selection_output,
+        )
+        arrays = loader(path)
+        scores = load_score_shard(self.output)
+
+        self.assertEqual(arrays["full_context_corrected_camera_tokens"].shape, (8, 50, 2048))
+        self.assertEqual(arrays["residual_only_corrected_camera_tokens"].shape, (8, 50, 2048))
+        for overlap in range(8):
+            selected = int(scores["full_context_selected_indices"][overlap])
+            expected = float(scores["alphas"][overlap, selected])
+            np.testing.assert_allclose(
+                arrays["full_context_corrected_camera_tokens"][overlap, :, 0],
+                expected,
+            )
+        self.assertFalse(
+            any(
+                fragment in name.lower()
+                for name in arrays
+                for fragment in ("gt", "quality", "error", "depth", "utility", "privileged")
+            )
+        )
+
     def test_privileged_summary_uses_overlap_then_scene_units(self) -> None:
         fixtures = []
-        for scene, shift in (("scene0325_01", 0.02), ("scene0675_00", 0.03)):
+        for scene_index, scene in enumerate(("scene0325_01", "scene0675_00")):
+            scores = np.arange(scene_index * 8, scene_index * 8 + 8, dtype=np.float64)
+            utilities = 0.02 + 0.01 * scores
             fixtures.append(
                 {
                     "scene": scene,
-                    "full_context_utility": np.full(8, shift),
-                    "residual_only_utility": np.full(8, shift / 2),
+                    "full_context_utility": utilities,
+                    "full_context_selected_score": scores,
+                    "residual_only_utility": utilities / 2,
+                    "residual_only_selected_score": -scores,
                     "random_utility": np.zeros(8),
                     "noop_utility": np.zeros(8),
-                    "oracle_utility": np.full(8, shift + 0.05),
+                    "oracle_utility": utilities + 0.05,
                     "full_context_oracle_rank": np.ones(8, dtype=np.int64),
                     "full_context_spearman": np.full(8, 0.25),
                 }
@@ -145,6 +192,13 @@ class SelectorEvaluationTests(unittest.TestCase):
         self.assertEqual(report["classification"], "LEARNABLE_SIGNAL")
         self.assertEqual(report["full_context"]["positive_over_1pct_count"], 16)
         self.assertEqual(len(report["per_scene"]), 2)
+        self.assertIn("score_utility_calibration", report["full_context"])
+        curve = report["full_context"]["score_utility_calibration"]
+        self.assertEqual([row["count"] for row in curve], [4, 4, 4, 4])
+        np.testing.assert_allclose(
+            [row["observed_utility_mean"] for row in curve],
+            [0.035, 0.075, 0.115, 0.155],
+        )
 
 
 if __name__ == "__main__":

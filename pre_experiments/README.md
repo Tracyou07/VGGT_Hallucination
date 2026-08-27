@@ -6,7 +6,10 @@
 one no-op plus 32 frozen VRFM directions at seven nonzero step sizes. Long-window inputs and
 candidate scores are physically separated from GT utility sidecars. The H20 entry point is
 `scripts/h20/run_variational_camera_selector.sh`; formal outputs are written only below
-`/data/yjh/output/variational_camera_selector/<run_id>`.
+`/data/yjh/output/variational_camera_selector/<run_id>`. Each validation scene exports both
+prediction-only score grids and the actually selected corrected Camera latents; the privileged
+report additionally records score-to-utility calibration without copying labels into those
+prediction-only artifacts.
 
 ## 当前入口：CVA02
 

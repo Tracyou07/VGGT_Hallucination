@@ -17,6 +17,7 @@ from .model import CandidateRanker
 
 
 SCORE_SCHEMA = "variational_camera_selector.prediction_scores.v1"
+SELECTION_SCHEMA = "variational_camera_selector.prediction_selections.v1"
 EVALUATION_SCHEMA = "variational_camera_selector.privileged_evaluation.v1"
 _CHECKPOINT_SCHEMA = "variational_camera_selector.training_checkpoint.v1"
 _SCORE_MEMBERS = {
@@ -48,6 +49,30 @@ _FORBIDDEN_SCORE_PARTS = (
     "error",
     "utility",
 )
+_SELECTION_MEMBERS = {
+    "scene",
+    "role",
+    "source_sample_ids",
+    "span_starts",
+    "full_context_selected_indices",
+    "residual_only_selected_indices",
+    "full_context_choice_ids",
+    "residual_only_choice_ids",
+    "full_context_alphas",
+    "residual_only_alphas",
+    "full_context_z",
+    "residual_only_z",
+    "full_context_scores",
+    "residual_only_scores",
+    "full_context_corrected_camera_tokens",
+    "residual_only_corrected_camera_tokens",
+    "source_sha256",
+    "candidate_sha256",
+    "residual_prediction_sha256",
+    "binding_manifest_sha256",
+    "checkpoint_sha256",
+    "score_sha256",
+}
 _EVALUATION_MEMBERS = {
     "scene",
     "role",
@@ -58,6 +83,8 @@ _EVALUATION_MEMBERS = {
     "oracle_selected_indices",
     "full_context_utility",
     "residual_only_utility",
+    "full_context_selected_score",
+    "residual_only_selected_score",
     "random_utility",
     "noop_utility",
     "oracle_utility",
@@ -275,6 +302,131 @@ def load_score_shard(path: Path) -> dict[str, np.ndarray]:
     return arrays
 
 
+def write_scene_selections(
+    dataset: PredictionCandidateDataset,
+    scene: str,
+    score_path: Path,
+    destination: Path,
+) -> Path:
+    """Materialize the two selected corrected latents without loading any label sidecar."""
+    scores = load_score_shard(score_path)
+    if dataset.scenes.count(scene) != 1 or str(scores["scene"]) != scene:
+        raise ValueError("selection scene must occur exactly once and match its score shard")
+    if str(scores["binding_manifest_sha256"]) != _sha256_file(dataset.binding_manifest):
+        raise ValueError("selection score does not bind the prediction manifest")
+    scene_index = dataset.scenes.index(scene)
+    groups = [dataset[scene_index * 8 + overlap] for overlap in range(8)]
+    if [group.sample_id for group in groups] != scores["source_sample_ids"].tolist():
+        raise ValueError("selection groups do not match score sample IDs")
+
+    rows = np.arange(8)
+    full_indices = scores["full_context_selected_indices"].astype(np.int64)
+    residual_indices = scores["residual_only_selected_indices"].astype(np.int64)
+
+    def selected(name: str, indices: np.ndarray) -> dict[str, np.ndarray]:
+        corrected = np.stack(
+            [
+                groups[row].x0 + groups[row].delta_tokens[int(indices[row])]
+                for row in rows
+            ]
+        ).astype(np.float32)
+        return {
+            f"{name}_selected_indices": indices,
+            f"{name}_choice_ids": np.asarray(
+                [groups[row].choice_ids[int(indices[row])] for row in rows], dtype="U160"
+            ),
+            f"{name}_alphas": scores["alphas"][rows, indices].astype(np.float32),
+            f"{name}_z": scores["z"][rows, indices].astype(np.float32),
+            f"{name}_scores": scores[f"{name}_scores"][rows, indices].astype(np.float32),
+            f"{name}_corrected_camera_tokens": corrected,
+        }
+
+    arrays: dict[str, np.ndarray] = {
+        "scene": scores["scene"].copy(),
+        "role": scores["role"].copy(),
+        "source_sample_ids": scores["source_sample_ids"].copy(),
+        "span_starts": scores["span_starts"].copy(),
+        "source_sha256": scores["source_sha256"].copy(),
+        "candidate_sha256": scores["candidate_sha256"].copy(),
+        "residual_prediction_sha256": scores["residual_prediction_sha256"].copy(),
+        "binding_manifest_sha256": scores["binding_manifest_sha256"].copy(),
+        "checkpoint_sha256": scores["checkpoint_sha256"].copy(),
+        "score_sha256": np.asarray(_sha256_file(score_path), dtype="U64"),
+    }
+    arrays.update(selected("full_context", full_indices))
+    arrays.update(selected("residual_only", residual_indices))
+    _validate_selection_shard(arrays)
+    _atomic_npz(destination, arrays)
+    return Path(destination)
+
+
+def _validate_selection_shard(arrays: Mapping[str, np.ndarray]) -> None:
+    names = set(arrays)
+    forbidden = sorted(
+        name for name in names if any(part in name.lower() for part in _FORBIDDEN_SCORE_PARTS)
+    )
+    if forbidden:
+        raise ValueError(f"prediction selection shard contains forbidden members: {forbidden}")
+    if names != _SELECTION_MEMBERS:
+        raise ValueError("prediction selection shard members do not match the schema")
+    normalized = {name: np.asarray(value) for name, value in arrays.items()}
+    if any(value.dtype.hasobject for value in normalized.values()):
+        raise ValueError("prediction selection shard may not contain object arrays")
+    for name in ("scene", "role"):
+        if normalized[name].shape != () or normalized[name].dtype.kind != "U":
+            raise ValueError(f"prediction selection {name} must be a Unicode scalar")
+    if normalized["source_sample_ids"].shape != (8,) or normalized[
+        "source_sample_ids"
+    ].dtype.kind != "U":
+        raise ValueError("prediction selection sample IDs are invalid")
+    if normalized["span_starts"].shape != (8,) or not np.issubdtype(
+        normalized["span_starts"].dtype, np.integer
+    ):
+        raise ValueError("prediction selection spans are invalid")
+    for prefix in ("full_context", "residual_only"):
+        indices = normalized[f"{prefix}_selected_indices"]
+        if indices.shape != (8,) or not np.issubdtype(indices.dtype, np.integer) or np.any(
+            (indices < 0) | (indices >= 225)
+        ):
+            raise ValueError(f"prediction selection {prefix} indices are invalid")
+        if normalized[f"{prefix}_choice_ids"].shape != (8,) or normalized[
+            f"{prefix}_choice_ids"
+        ].dtype.kind != "U":
+            raise ValueError(f"prediction selection {prefix} choice IDs are invalid")
+        for suffix in ("alphas", "scores"):
+            value = normalized[f"{prefix}_{suffix}"]
+            if value.shape != (8,) or not np.issubdtype(value.dtype, np.floating) or not np.isfinite(
+                value
+            ).all():
+                raise ValueError(f"prediction selection {prefix} {suffix} are invalid")
+        z = normalized[f"{prefix}_z"]
+        if z.ndim != 2 or z.shape[0] != 8 or z.shape[1] < 1 or not np.isfinite(z).all():
+            raise ValueError(f"prediction selection {prefix} z is invalid")
+        corrected = normalized[f"{prefix}_corrected_camera_tokens"]
+        if corrected.shape != (8, 50, 2048) or corrected.dtype != np.float32 or not np.isfinite(
+            corrected
+        ).all():
+            raise ValueError(f"prediction selection {prefix} corrected latents are invalid")
+    for name in (
+        "source_sha256",
+        "candidate_sha256",
+        "residual_prediction_sha256",
+        "binding_manifest_sha256",
+        "checkpoint_sha256",
+        "score_sha256",
+    ):
+        if normalized[name].shape != () or normalized[name].dtype.kind != "U" or not _valid_digest(
+            str(normalized[name])
+        ):
+            raise ValueError(f"prediction selection {name} must be a SHA-256 scalar")
+
+
+def load_selection_shard(path: Path) -> dict[str, np.ndarray]:
+    arrays = _load_npz(path, "prediction selection shard")
+    _validate_selection_shard(arrays)
+    return arrays
+
+
 def _rankdata(values: np.ndarray) -> np.ndarray:
     values = np.asarray(values, dtype=np.float64)
     order = np.argsort(values, kind="mergesort")
@@ -393,6 +545,8 @@ def evaluate_scene_scores(
         "oracle_selected_indices": oracle_indices,
         "full_context_utility": utilities[rows, full_indices],
         "residual_only_utility": utilities[rows, residual_indices],
+        "full_context_selected_score": scores["full_context_scores"][rows, full_indices],
+        "residual_only_selected_score": scores["residual_only_scores"][rows, residual_indices],
         "random_utility": utilities[rows, random_indices],
         "noop_utility": np.zeros(8, dtype=np.float64),
         "oracle_utility": utilities[rows, oracle_indices],
@@ -438,6 +592,8 @@ def _validate_evaluation(arrays: Mapping[str, np.ndarray]) -> None:
     for name in (
         "full_context_utility",
         "residual_only_utility",
+        "full_context_selected_score",
+        "residual_only_selected_score",
         "random_utility",
         "noop_utility",
         "oracle_utility",
@@ -505,6 +661,8 @@ def summarize_calibration(
         for name in (
             "full_context_utility",
             "residual_only_utility",
+            "full_context_selected_score",
+            "residual_only_selected_score",
             "random_utility",
             "noop_utility",
             "oracle_utility",
@@ -577,6 +735,29 @@ def summarize_calibration(
             ),
         }
     )
+
+    def calibration_curve(score_name: str, utility_name: str) -> list[dict[str, float | int]]:
+        score_values = np.concatenate(vectors[score_name]).astype(np.float64)
+        utility_values = np.concatenate(vectors[utility_name]).astype(np.float64)
+        order = np.argsort(score_values, kind="mergesort")
+        return [
+            {
+                "bin": bin_index,
+                "count": int(len(indices)),
+                "predicted_score_mean": float(score_values[indices].mean()),
+                "observed_utility_mean": float(utility_values[indices].mean()),
+            }
+            for bin_index, indices in enumerate(np.array_split(order, 4))
+            if len(indices)
+        ]
+
+    full_metric["score_utility_calibration"] = calibration_curve(
+        "full_context_selected_score", "full_context_utility"
+    )
+    residual_metric = metric("residual_only_utility")
+    residual_metric["score_utility_calibration"] = calibration_curve(
+        "residual_only_selected_score", "residual_only_utility"
+    )
     classification_rows = [
         {
             "full_context_mean": float(row["full_context_mean"]),
@@ -595,7 +776,7 @@ def summarize_calibration(
         "random_seed": random_seed,
         "classification": classify_signal(classification_rows),
         "full_context": full_metric,
-        "residual_only": metric("residual_only_utility"),
+        "residual_only": residual_metric,
         "random": metric("random_utility"),
         "noop": metric("noop_utility"),
         "oracle": metric("oracle_utility"),

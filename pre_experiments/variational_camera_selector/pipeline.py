@@ -20,9 +20,11 @@ from .dataset import (
 from .evaluate import (
     evaluate_scene_scores,
     load_evaluation_sidecar,
+    load_selection_shard,
     load_score_shard,
     score_scene_candidates,
     summarize_calibration,
+    write_scene_selections,
 )
 from .schema import build_long_context_shard, write_prediction_binding_manifest
 from .train import (
@@ -576,8 +578,21 @@ def run_score(args: argparse.Namespace) -> Path:
     for scene in FROZEN_VALIDATION_SCENES:
         destination = run_root / "prediction_only/scores" / f"{scene}.npz"
         score_scene_candidates(dataset, scene, checkpoint, destination, device=args.device)
+        selection_destination = run_root / "prediction_only/selections" / f"{scene}.npz"
+        write_scene_selections(
+            dataset,
+            scene,
+            destination,
+            selection_destination,
+        )
         records.append(
-            {"scene": scene, "path": str(destination), "sha256": _sha256_file(destination)}
+            {
+                "scene": scene,
+                "path": str(destination),
+                "sha256": _sha256_file(destination),
+                "selection_path": str(selection_destination),
+                "selection_sha256": _sha256_file(selection_destination),
+            }
         )
     manifest_path, completion_path = _score_paths(run_root)
     write_exact_json(
@@ -600,7 +615,8 @@ def run_score(args: argparse.Namespace) -> Path:
         {
             "schema": _SCORE_COMPLETE_SCHEMA,
             "validation_scenes": list(FROZEN_VALIDATION_SCENES),
-            "prediction_artifact_count": 2,
+            "score_artifact_count": 2,
+            "selection_artifact_count": 2,
             "score_manifest_sha256": _sha256_file(manifest_path),
             "checkpoint_sha256": calibration["checkpoint_sha256"],
         },
@@ -631,7 +647,18 @@ def _require_score_barrier(
     _require_exact_validation_scenes(manifest.get("validation_scenes"))
     _verify_record_files(records, "score")
     for record in records:
-        load_score_shard(Path(str(record["path"])))
+        score_path = Path(str(record["path"]))
+        load_score_shard(score_path)
+        selection_path = Path(str(record.get("selection_path")))
+        if (
+            not selection_path.is_file()
+            or selection_path.is_symlink()
+            or _sha256_file(selection_path) != record.get("selection_sha256")
+        ):
+            raise ValueError(f"selection file digest does not match: {selection_path}")
+        selection = load_selection_shard(selection_path)
+        if str(selection["score_sha256"]) != _sha256_file(score_path):
+            raise ValueError("selection artifact does not bind its score artifact")
     return completion, records
 
 
@@ -796,6 +823,11 @@ def verify_completed_run(run_root: Path) -> dict[str, object]:
         "score",
     )
     _require_exact_files(
+        run_root / "prediction_only/selections",
+        [f"{scene}.npz" for scene in FROZEN_VALIDATION_SCENES],
+        "selection",
+    )
+    _require_exact_files(
         run_root / "privileged_labels/evaluation",
         [f"{scene}.npz" for scene in FROZEN_VALIDATION_SCENES],
         "evaluation",
@@ -839,6 +871,7 @@ def verify_completed_run(run_root: Path) -> dict[str, object]:
         "report_sha256": _sha256_file(report_path),
         "checkpoint_sha256": calibration["checkpoint_sha256"],
         "score_artifact_count": len(score_records),
+        "selection_artifact_count": len(score_records),
         "evaluation_artifact_count": len(evaluation_records),
     }
     write_exact_json(run_root / "verified_completion.json", completion)
