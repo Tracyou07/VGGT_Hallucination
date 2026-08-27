@@ -241,10 +241,10 @@ def generate_deterministic_candidates(
     with torch.no_grad():
         output = _heun_deterministic(model, x0, context, span, steps=steps)
         output_array = output.float().cpu().numpy()
-        decoded = (
-            None
-            if camera_head is None
-            else decode_camera_tokens(camera_head, output).float().cpu().numpy()
+        decoded = None if camera_head is None else decode_camera_tokens(camera_head, output)
+        decoded_array = None if decoded is None else decoded.float().cpu().numpy()
+        decoded_c2w = (
+            None if decoded is None else pose_encoding_to_c2w(decoded).float().cpu().numpy()
         )
     arrays: dict[str, np.ndarray] = {
         "corrected_camera_tokens": output_array,
@@ -253,8 +253,10 @@ def generate_deterministic_candidates(
         "span_starts": source["span_starts"].copy(),
         "checkpoint_sha256": np.asarray(_sha256_file(Path(checkpoint_path)), dtype="U64"),
     }
-    if decoded is not None:
-        arrays["decoded_camera_raw"] = decoded
+    if decoded_array is not None:
+        arrays["decoded_camera_raw"] = decoded_array
+        assert decoded_c2w is not None
+        arrays["decoded_camera_c2w"] = decoded_c2w
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".tmp")

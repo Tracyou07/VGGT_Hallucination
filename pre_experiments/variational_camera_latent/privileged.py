@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from pre_experiments.camera_velocity_ambiguity_02.frozen_oracle import (
     evaluate_with_frozen_oracle,
@@ -12,6 +13,7 @@ from pre_experiments.camera_velocity_ambiguity_02.frozen_oracle import (
 )
 
 from .candidates import load_candidate_shard
+from .camera import pose_encoding_to_c2w
 from .contracts import PrivilegedShardRecord
 from .source import load_source_shard
 
@@ -202,11 +204,22 @@ def write_privileged_deterministic_sidecar(
         "source_sample_ids",
         "span_starts",
         "checkpoint_sha256",
-        "decoded_camera_c2w",
     }
-    if set(deterministic) != required:
+    decoded_members = {"decoded_camera_raw", "decoded_camera_c2w"}
+    if not required.issubset(deterministic) or not set(deterministic).issubset(
+        required | decoded_members
+    ) or not (set(deterministic) & decoded_members):
         raise ValueError("deterministic candidate members do not match the no-z schema")
-    if deterministic["decoded_camera_c2w"].shape != (8, 50, 4, 4):
+    if "decoded_camera_c2w" in deterministic:
+        deterministic_c2w = deterministic["decoded_camera_c2w"]
+    else:
+        raw = deterministic["decoded_camera_raw"]
+        if raw.shape != (8, 50, 9) or not np.isfinite(raw).all():
+            raise ValueError("deterministic decoded pose encodings have invalid shape or values")
+        deterministic_c2w = (
+            pose_encoding_to_c2w(torch.from_numpy(raw)).double().cpu().numpy()
+        )
+    if deterministic_c2w.shape != (8, 50, 4, 4):
         raise ValueError("deterministic decoded cameras have invalid shape")
     if not np.array_equal(deterministic["source_sample_ids"], source["sample_ids"]):
         raise ValueError("deterministic and source sample IDs do not match")
@@ -232,7 +245,7 @@ def write_privileged_deterministic_sidecar(
             oracle, source["overlap_long_c2w"][overlap], gt_overlap[overlap]
         ).rms_translation_error
         candidate_rms[overlap, 0] = evaluate_with_frozen_oracle(
-            oracle, deterministic["decoded_camera_c2w"][overlap], gt_overlap[overlap]
+            oracle, deterministic_c2w[overlap], gt_overlap[overlap]
         ).rms_translation_error
     denominator = np.maximum(baseline_rms[:, None], np.finfo(np.float64).eps)
     relative = (baseline_rms[:, None] - candidate_rms) / denominator

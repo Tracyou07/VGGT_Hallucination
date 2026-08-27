@@ -5,6 +5,7 @@ from pathlib import Path
 import unittest
 
 import numpy as np
+import torch
 
 from pre_experiments.variational_camera_latent.candidates import (
     analyze_candidate_shard,
@@ -105,16 +106,25 @@ class CandidateTests(unittest.TestCase):
     def test_deterministic_baseline_exports_one_candidate_without_fake_z(self) -> None:
         path = self.root / "deterministic.npz"
 
+        class IdentityHead:
+            def decode_pose_tokens(self, tokens, *, num_iterations):
+                raw = torch.zeros((*tokens.shape[:2], 9), device=tokens.device)
+                raw[..., 3] = 1.0
+                return [raw] * num_iterations
+
         record = generate_deterministic_candidates(
             self.source,
             self.checkpoint,
             path,
             steps=2,
             device="cpu",
+            camera_head=IdentityHead(),
         )
         with np.load(record.path, allow_pickle=False) as archive:
             self.assertNotIn("z", archive.files)
             self.assertEqual(archive["corrected_camera_tokens"].shape, (8, 50, 2048))
+            self.assertEqual(archive["decoded_camera_raw"].shape, (8, 50, 9))
+            self.assertEqual(archive["decoded_camera_c2w"].shape, (8, 50, 4, 4))
 
     def test_two_means_separates_literal_two_cloud_fixture(self) -> None:
         features = np.asarray([[0.0], [0.1], [9.9], [10.0]], dtype=np.float32)

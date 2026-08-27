@@ -134,6 +134,8 @@ class PrivilegedReportTests(unittest.TestCase):
 
         deterministic_path = self.root / "prediction_only" / "deterministic.npz"
         with deterministic_path.open("wb") as handle:
+            deterministic_raw = np.zeros((8, 50, 9), dtype=np.float32)
+            deterministic_raw[..., 3] = 1.0
             np.savez_compressed(
                 handle,
                 corrected_camera_tokens=np.zeros((8, 50, 2048), dtype=np.float32),
@@ -141,7 +143,7 @@ class PrivilegedReportTests(unittest.TestCase):
                 source_sample_ids=sample_ids,
                 span_starts=np.arange(0, 400, 50, dtype=np.int64),
                 checkpoint_sha256=np.asarray("f" * 64, dtype="U64"),
-                decoded_camera_c2w=overlap_c2w,
+                decoded_camera_raw=deterministic_raw,
             )
         deterministic_record = write_privileged_deterministic_sidecar(
             source_path,
