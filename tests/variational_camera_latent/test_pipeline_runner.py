@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import inspect
 import tempfile
 from pathlib import Path
+import subprocess
 import unittest
 
+import numpy as np
+
+from pre_experiments.variational_camera_latent import pipeline as pipeline_module
 from pre_experiments.variational_camera_latent.pipeline import (
     load_exact_completion,
     parse_args,
+    run_stage,
     write_completion,
 )
 
@@ -69,6 +75,109 @@ class PipelineRunnerTests(unittest.TestCase):
 
         self.assertEqual(args.stage, "vrfm-residual-alpha-scan")
         self.assertEqual(args.residual_scan_batch_size, 8)
+
+    def test_pipeline_exposes_resumable_matched_random_ablation_stage(self) -> None:
+        try:
+            args = parse_args(
+                [
+                    "--stage",
+                    "matched-random-ablation",
+                    "--run-root",
+                    "/data/yjh/output/variational_camera_latent/fixture",
+                ]
+            )
+        except SystemExit:
+            self.fail("pipeline does not expose the matched random ablation stage")
+
+        self.assertEqual(args.stage, "matched-random-ablation")
+        self.assertEqual(args.matched_random_batch_size, 8)
+        self.assertEqual(args.matched_random_seed, 20260827)
+
+    def test_matched_random_stage_dispatches_to_its_fail_closed_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            args = parse_args(
+                [
+                    "--stage",
+                    "matched-random-ablation",
+                    "--run-root",
+                    directory,
+                    "--scene-limit",
+                    "1",
+                ]
+            )
+
+            with self.assertRaisesRegex(
+                ValueError, "matched random ablation requires exactly ten scenes"
+            ):
+                run_stage(args)
+
+    def test_matched_random_budget_rejects_shards_without_exactly_32_samples(self) -> None:
+        candidate = {"z": np.zeros((8, 31, 16), dtype=np.float32)}
+        prediction = {"z": np.zeros((8, 31, 16), dtype=np.float32)}
+        privileged = {"candidate_rms": np.zeros((8, 31, 8), dtype=np.float64)}
+
+        with self.assertRaisesRegex(
+            ValueError, "exactly 32 samples per overlap"
+        ):
+            pipeline_module._require_matched_random_sample_budget(
+                candidate,
+                prediction,
+                privileged,
+            )
+
+    def test_provenance_rejects_a_dirty_git_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            tracked = root / "tracked.txt"
+            tracked.write_text("clean\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Codex Test",
+                    "-c",
+                    "user.email=codex@example.invalid",
+                    "commit",
+                    "-qm",
+                    "fixture",
+                ],
+                cwd=root,
+                check=True,
+            )
+
+            commit = pipeline_module._require_clean_git_checkout(root)
+            self.assertEqual(len(commit), 40)
+            tracked.write_text("dirty\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "clean git checkout"):
+                pipeline_module._require_clean_git_checkout(root)
+
+    def test_control_identity_can_only_depend_on_prediction_only_manifests(self) -> None:
+        parameters = inspect.signature(
+            pipeline_module._matched_random_transform_identity
+        ).parameters
+        self.assertEqual(
+            set(parameters),
+            {
+                "source_manifest_sha256",
+                "candidate_manifest_sha256",
+                "vrfm_prediction_manifest_sha256",
+            },
+        )
+        self.assertFalse(
+            any(
+                forbidden in name
+                for name in parameters
+                for forbidden in ("privileged", "report", "completion", "gt")
+            )
+        )
+
+    def test_prediction_manifest_is_sealed_before_privileged_artifacts_are_loaded(self) -> None:
+        source = inspect.getsource(pipeline_module.run_matched_random_ablation)
+        seal = source.index("_atomic_json(prediction_manifest_path")
+        privileged_load = source.index("load_vrfm_residual_privileged")
+        self.assertGreater(privileged_load, seal)
 
 
 if __name__ == "__main__":

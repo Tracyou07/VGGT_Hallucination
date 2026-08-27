@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 from typing import Sequence
 
 import numpy as np
@@ -27,6 +28,13 @@ from .candidates import (
     load_candidate_shard,
 )
 from .contracts import SourceShardRecord
+from .matched_random_ablation import (
+    generate_matched_random_ablation,
+    load_matched_random_ablation,
+    load_matched_random_privileged,
+    write_matched_random_privileged_sidecar,
+    write_matched_random_report,
+)
 from .privileged import (
     load_privileged_sidecar,
     write_privileged_deterministic_sidecar,
@@ -59,6 +67,26 @@ def _sha256_file(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _require_clean_git_checkout(repo_root: Path) -> str:
+    status = subprocess.run(
+        [
+            "git",
+            "-c",
+            "safe.directory=*",
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    if status.stdout.strip():
+        raise ValueError("matched random provenance requires a clean git checkout")
+    return read_git_commit(repo_root)
 
 
 def _atomic_json(path: Path, payload: object) -> None:
@@ -118,6 +146,53 @@ def _source_scene_order(source_run: Path) -> list[str]:
     if len(set(scenes[:10])) != 10:
         raise ValueError("authenticated source run scene identities are not unique")
     return list(scenes[:10])
+
+
+def _require_matched_random_sample_budget(
+    candidate: dict[str, np.ndarray],
+    vrfm_prediction: dict[str, np.ndarray],
+    vrfm_privileged: dict[str, np.ndarray] | None = None,
+) -> None:
+    candidate_z = np.asarray(candidate.get("z"))
+    prediction_z = np.asarray(vrfm_prediction.get("z"))
+    if (
+        candidate_z.ndim != 3
+        or candidate_z.shape[:2] != (8, 32)
+        or prediction_z.ndim != 3
+        or prediction_z.shape[:2] != (8, 32)
+    ):
+        raise ValueError(
+            "matched random ablation requires exactly 32 samples per overlap"
+        )
+    if vrfm_privileged is not None:
+        candidate_rms = np.asarray(vrfm_privileged.get("candidate_rms"))
+        if candidate_rms.shape != (8, 32, len(DEFAULT_ALPHAS)):
+            raise ValueError(
+                "matched random ablation requires exactly 32 samples per overlap"
+            )
+
+
+def _matched_random_transform_identity(
+    *,
+    source_manifest_sha256: str,
+    candidate_manifest_sha256: str,
+    vrfm_prediction_manifest_sha256: str,
+) -> str:
+    for value in (
+        source_manifest_sha256,
+        candidate_manifest_sha256,
+        vrfm_prediction_manifest_sha256,
+    ):
+        if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+            raise ValueError("matched random transform inputs must be SHA-256 digests")
+    return _canonical_digest(
+        {
+            "schema": "variational_camera_latent.matched_random_transform_identity.v1",
+            "source_manifest_sha256": source_manifest_sha256,
+            "candidate_manifest_sha256": candidate_manifest_sha256,
+            "vrfm_prediction_manifest_sha256": vrfm_prediction_manifest_sha256,
+        }
+    )
 
 
 def build_sources(args: argparse.Namespace) -> Path:
@@ -852,6 +927,550 @@ def run_vrfm_residual_alpha_scan(args: argparse.Namespace) -> Path:
     return args.run_root
 
 
+def run_matched_random_ablation(args: argparse.Namespace) -> Path:
+    """Run one shared orthogonal structured-null pilot against frozen VRFM outputs."""
+    if args.scene_limit != 10:
+        raise ValueError("matched random ablation requires exactly ten scenes")
+    if args.matched_random_batch_size < 1:
+        raise ValueError("matched random ablation batch size must be positive")
+    if (
+        isinstance(args.matched_random_seed, bool)
+        or args.matched_random_seed < 0
+        or args.matched_random_seed >= 2**63
+    ):
+        raise ValueError("matched random ablation seed must be in [0, 2**63)")
+    if (
+        not np.isfinite(args.alpha_min_improvement)
+        or args.alpha_min_improvement <= 0.0
+    ):
+        raise ValueError("matched random minimum improvement must be positive")
+
+    run_root = args.run_root.resolve()
+    source_manifest_path = run_root / "manifests" / "source_manifest.json"
+    source_manifest, source_records = _source_manifest(run_root)
+    source_completion = _load_signed_completion(
+        run_root / "manifests" / "source_complete.json",
+        schema="variational_camera_latent.source_complete.v1",
+    )
+    source_manifest_sha256 = _sha256_file(source_manifest_path)
+    if source_completion.get("source_manifest_sha256") != source_manifest_sha256:
+        raise ValueError("source completion does not bind the current source manifest")
+    source_run_completion_path = args.source_run / "manifests" / "calibration_complete.json"
+    source_run_completion_sha256 = _sha256_file(source_run_completion_path)
+    if (
+        Path(str(source_completion.get("source_run"))).resolve()
+        != args.source_run.resolve()
+        or source_completion.get("source_run_digest")
+        != source_run_completion_sha256
+        or source_manifest.get("source_run_digest")
+        != source_run_completion_sha256
+    ):
+        raise ValueError("source shards are not bound to the requested CVA02 source run")
+
+    candidate_manifest_path = (
+        run_root / "manifests" / "calibration_prediction_manifest.json"
+    )
+    candidate_manifest = _read_json(candidate_manifest_path)
+    candidate_records = candidate_manifest.get("records")
+    if (
+        candidate_manifest.get("schema")
+        != "variational_camera_latent.calibration_prediction_manifest.v1"
+        or candidate_manifest.get("stage") != "calibration"
+        or candidate_manifest.get("samples") != 32
+        or not isinstance(candidate_records, list)
+        or len(candidate_records) != 10
+        or any(not isinstance(row, dict) for row in candidate_records)
+    ):
+        raise ValueError("calibration prediction manifest is incomplete")
+    candidate_manifest_sha256 = _sha256_file(candidate_manifest_path)
+    calibration_completion = _load_signed_completion(
+        run_root / "manifests" / "calibration_complete.json",
+        schema="variational_camera_latent.calibration_complete.v1",
+    )
+    if (
+        calibration_completion.get("prediction_manifest_sha256")
+        != candidate_manifest_sha256
+        or calibration_completion.get("source_manifest_sha256")
+        != source_manifest_sha256
+    ):
+        raise ValueError("calibration completion does not bind current inputs")
+    phase1_prediction = _read_json(run_root / "manifests" / "prediction_manifest.json")
+    if phase1_prediction.get("records") != candidate_records:
+        raise ValueError("verified Phase 1 and calibration candidate records differ")
+
+    vrfm_prediction_manifest_path = (
+        run_root
+        / "manifests"
+        / "vrfm_residual_alpha_scan_full_context_prediction_manifest.json"
+    )
+    vrfm_prediction_manifest = _read_json(vrfm_prediction_manifest_path)
+    vrfm_prediction_records = vrfm_prediction_manifest.get("records")
+    if (
+        vrfm_prediction_manifest.get("schema")
+        != "variational_camera_latent.vrfm_residual_alpha_scan_full_context_prediction_manifest.v1"
+        or vrfm_prediction_manifest.get("scene_count") != 10
+        or vrfm_prediction_manifest.get("overlap_count") != 80
+        or vrfm_prediction_manifest.get("samples_per_overlap") != 32
+        or vrfm_prediction_manifest.get("direction_count") != 2560
+        or vrfm_prediction_manifest.get("grid_cell_count") != 20480
+        or vrfm_prediction_manifest.get("unique_pose_candidate_count") != 18000
+        or vrfm_prediction_manifest.get("alphas") != list(DEFAULT_ALPHAS)
+        or vrfm_prediction_manifest.get("decode_context_frames") != 500
+        or vrfm_prediction_manifest.get("camera_iterations") != 4
+        or vrfm_prediction_manifest.get("source_manifest_sha256")
+        != source_manifest_sha256
+        or vrfm_prediction_manifest.get("candidate_manifest_sha256")
+        != candidate_manifest_sha256
+        or not isinstance(vrfm_prediction_records, list)
+        or len(vrfm_prediction_records) != 10
+        or any(not isinstance(row, dict) for row in vrfm_prediction_records)
+    ):
+        raise ValueError("verified VRFM prediction manifest is invalid")
+    vrfm_prediction_manifest_sha256 = _sha256_file(vrfm_prediction_manifest_path)
+    upstream_vrfm_commit = vrfm_prediction_manifest.get("producer_git_commit")
+    if (
+        not isinstance(upstream_vrfm_commit, str)
+        or len(upstream_vrfm_commit) != 40
+        or any(character not in "0123456789abcdef" for character in upstream_vrfm_commit)
+    ):
+        raise ValueError("VRFM prediction manifest producer commit is invalid")
+
+    source_run_manifest = _read_json(args.source_run / "manifests" / "run.json")
+    if (
+        source_run_manifest.get("schema") != "camera_velocity_ambiguity_02.run.v1"
+        or source_run_manifest.get("run_id") != args.source_run.name
+    ):
+        raise ValueError("source run identity does not match its directory")
+    camera_head_checkpoint_sha256 = source_run_manifest.get("checkpoint_sha256")
+    if (
+        not isinstance(camera_head_checkpoint_sha256, str)
+        or len(camera_head_checkpoint_sha256) != 64
+        or vrfm_prediction_manifest.get("camera_head_checkpoint_sha256")
+        != camera_head_checkpoint_sha256
+    ):
+        raise ValueError("source and VRFM Camera Head checkpoints do not match")
+    if _sha256_file(find_checkpoint(args.checkpoint_dir)) != camera_head_checkpoint_sha256:
+        raise ValueError("local Camera Head checkpoint digest does not match source run")
+
+    scenes = [str(row.get("scene")) for row in source_records]
+    if (
+        len(set(scenes)) != 10
+        or candidate_manifest.get("scenes") != scenes
+        or _source_scene_order(args.source_run) != scenes
+    ):
+        raise ValueError("matched random scene identities or order do not match")
+    transform_identity_sha256 = _matched_random_transform_identity(
+        source_manifest_sha256=source_manifest_sha256,
+        candidate_manifest_sha256=candidate_manifest_sha256,
+        vrfm_prediction_manifest_sha256=vrfm_prediction_manifest_sha256,
+    )
+    producer_git_commit = _require_clean_git_checkout(ROOT)
+
+    prediction_root = run_root / "prediction_only" / "matched_random_ablation_full_context"
+    prediction_records: list[dict[str, object]] = []
+    expected_transform_sha256: str | None = None
+    head = None
+    for index, records in enumerate(
+        zip(
+            source_records,
+            candidate_records,
+            vrfm_prediction_records,
+        )
+    ):
+        source_record, candidate_record, vrfm_record = records
+        scene = scenes[index]
+        if any(row.get("scene") != scene for row in records):
+            raise ValueError("matched random upstream scene order differs")
+        source_path = Path(str(source_record.get("path")))
+        candidate_path = Path(str(candidate_record.get("path")))
+        vrfm_prediction_path = Path(str(vrfm_record.get("path")))
+        expected_paths = (
+            (source_path, run_root / "prediction_only" / "source" / f"{scene}.npz"),
+            (
+                candidate_path,
+                run_root / "prediction_only" / "calibration_candidates" / f"{scene}.npz",
+            ),
+            (
+                vrfm_prediction_path,
+                run_root
+                / "prediction_only"
+                / "vrfm_residual_alpha_scan_full_context"
+                / f"{scene}.npz",
+            ),
+        )
+        if any(path.resolve() != expected.resolve() for path, expected in expected_paths):
+            raise ValueError("matched random upstream artifact path is outside its contract")
+        for row, path, label in (
+            (source_record, source_path, "source"),
+            (candidate_record, candidate_path, "candidate"),
+            (vrfm_record, vrfm_prediction_path, "VRFM prediction"),
+        ):
+            if row.get("sha256") != _sha256_file(path):
+                raise ValueError(f"{label} shard digest does not match its manifest")
+        if (
+            vrfm_record.get("source_shard_sha256") != source_record.get("sha256")
+            or vrfm_record.get("candidate_shard_sha256")
+            != candidate_record.get("sha256")
+        ):
+            raise ValueError("VRFM prediction record does not bind source and candidate")
+
+        source = load_source_shard(source_path)
+        candidate = load_candidate_shard(candidate_path)
+        vrfm_prediction = load_vrfm_residual_alpha_scan(vrfm_prediction_path)
+        _require_matched_random_sample_budget(
+            candidate,
+            vrfm_prediction,
+        )
+        if (
+            not np.array_equal(candidate["source_sample_ids"], source["sample_ids"])
+            or not np.array_equal(vrfm_prediction["source_sample_ids"], source["sample_ids"])
+            or not np.array_equal(vrfm_prediction["z"], candidate["z"])
+            or not np.array_equal(
+                vrfm_prediction["sample_seeds"], candidate["sample_seeds"]
+            )
+            or not np.array_equal(
+                vrfm_prediction["latent_cluster_ids"],
+                candidate["latent_cluster_ids"],
+            )
+            or str(vrfm_prediction["producer_git_commit"])
+            != upstream_vrfm_commit
+        ):
+            raise ValueError("VRFM scene artifacts are not paired to current inputs")
+
+        destination = prediction_root / f"{scene}.npz"
+        if destination.is_file():
+            arrays = load_matched_random_ablation(destination)
+        else:
+            if head is None:
+                head = _camera_head(args.checkpoint_dir, args.device)
+            generate_matched_random_ablation(
+                source_path,
+                candidate_path,
+                vrfm_prediction_path,
+                destination,
+                camera_head=head,
+                camera_head_checkpoint_sha256=camera_head_checkpoint_sha256,
+                producer_git_commit=producer_git_commit,
+                base_seed=args.matched_random_seed,
+                transform_identity_sha256=transform_identity_sha256,
+                device=args.device,
+                batch_size=args.matched_random_batch_size,
+            )
+            arrays = load_matched_random_ablation(destination)
+        expected_pairs = {
+            "source_shard_sha256": str(source_record.get("sha256")),
+            "candidate_shard_sha256": str(candidate_record.get("sha256")),
+            "paired_vrfm_prediction_sha256": str(vrfm_record.get("sha256")),
+            "vrfm_checkpoint_sha256": str(candidate["checkpoint_sha256"]),
+            "camera_head_checkpoint_sha256": camera_head_checkpoint_sha256,
+            "paired_vrfm_producer_git_commit": upstream_vrfm_commit,
+            "producer_git_commit": producer_git_commit,
+            "transform_identity_sha256": transform_identity_sha256,
+        }
+        for field, expected in expected_pairs.items():
+            if str(arrays[field]) != expected:
+                raise ValueError(f"existing matched random prediction does not bind {field}")
+        if (
+            int(arrays["base_seed"]) != args.matched_random_seed
+            or not np.array_equal(
+                arrays["alphas"], np.asarray(DEFAULT_ALPHAS, dtype=np.float64)
+            )
+            or not np.array_equal(arrays["source_sample_ids"], source["sample_ids"])
+            or not np.array_equal(arrays["z"], candidate["z"])
+            or not np.array_equal(arrays["sample_seeds"], candidate["sample_seeds"])
+            or not np.array_equal(
+                arrays["latent_cluster_ids"], candidate["latent_cluster_ids"]
+            )
+        ):
+            raise ValueError("existing matched random prediction metadata differs")
+        transform_sha256 = str(arrays["transform_sha256"])
+        if expected_transform_sha256 is None:
+            expected_transform_sha256 = transform_sha256
+        elif transform_sha256 != expected_transform_sha256:
+            raise ValueError("matched random scenes do not share one control transform")
+        prediction_records.append(
+            {
+                "scene": scene,
+                "path": str(destination),
+                "sha256": _sha256_file(destination),
+                "source_shard_sha256": str(source_record.get("sha256")),
+                "candidate_shard_sha256": str(candidate_record.get("sha256")),
+                "paired_vrfm_prediction_sha256": str(vrfm_record.get("sha256")),
+            }
+        )
+        print(f"[vrfm] matched-random decode {index + 1}/10 {scene}", flush=True)
+    if head is not None:
+        del head
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    assert expected_transform_sha256 is not None
+
+    prediction_manifest_path = (
+        run_root / "manifests" / "matched_random_ablation_full_context_prediction_manifest.json"
+    )
+    prediction_manifest_payload = {
+        "schema": "variational_camera_latent.matched_random_ablation_full_context_prediction_manifest.v1",
+        "scene_count": 10,
+        "overlap_count": 80,
+        "samples_per_overlap": 32,
+        "direction_count": 2560,
+        "grid_cell_count": 20480,
+        "unique_pose_candidate_count": 18000,
+        "alphas": list(DEFAULT_ALPHAS),
+        "decode_context_frames": 500,
+        "camera_iterations": 4,
+        "structured_null_replicate_count": 1,
+        "base_seed": args.matched_random_seed,
+        "transform_identity_sha256": transform_identity_sha256,
+        "transform_sha256": expected_transform_sha256,
+        "same_transform_across_scenes": True,
+        "preserves_feature_row_gram_geometry": True,
+        "producer_git_commit": producer_git_commit,
+        "camera_head_checkpoint_sha256": camera_head_checkpoint_sha256,
+        "source_manifest_sha256": source_manifest_sha256,
+        "candidate_manifest_sha256": candidate_manifest_sha256,
+        "paired_vrfm_prediction_manifest_sha256": vrfm_prediction_manifest_sha256,
+        "records": prediction_records,
+    }
+    if prediction_manifest_path.is_file() and _read_json(
+        prediction_manifest_path
+    ) != prediction_manifest_payload:
+        raise ValueError("existing matched random prediction manifest differs")
+    _atomic_json(prediction_manifest_path, prediction_manifest_payload)
+
+    # Prediction-only artifacts are now sealed.  Privileged validation starts
+    # below and cannot influence the shared control transform or decoded poses.
+    phase1_completion_path = run_root / "verified_completion.json"
+    phase1 = _load_signed_completion(
+        phase1_completion_path,
+        schema="variational_camera_latent.verified_completion.v1",
+    )
+    phase1_bindings = {
+        "prediction_manifest_sha256": run_root
+        / "manifests"
+        / "prediction_manifest.json",
+        "privileged_manifest_sha256": run_root
+        / "manifests"
+        / "privileged_manifest.json",
+        "report_sha256": run_root / "reports" / "exploration_report.json",
+    }
+    for field, path in phase1_bindings.items():
+        if phase1.get(field) != _sha256_file(path):
+            raise ValueError(f"verified Phase 1 does not bind {path}")
+
+    vrfm_privileged_manifest_path = (
+        run_root
+        / "manifests"
+        / "vrfm_residual_alpha_scan_full_context_privileged_manifest.json"
+    )
+    vrfm_privileged_manifest = _read_json(vrfm_privileged_manifest_path)
+    vrfm_privileged_records = vrfm_privileged_manifest.get("records")
+    if (
+        vrfm_privileged_manifest.get("schema")
+        != "variational_camera_latent.vrfm_residual_alpha_scan_full_context_privileged_manifest.v1"
+        or vrfm_privileged_manifest.get("scene_count") != 10
+        or vrfm_privileged_manifest.get("overlap_count") != 80
+        or vrfm_privileged_manifest.get("samples_per_overlap") != 32
+        or vrfm_privileged_manifest.get("prediction_manifest_sha256")
+        != vrfm_prediction_manifest_sha256
+        or not isinstance(vrfm_privileged_records, list)
+        or len(vrfm_privileged_records) != 10
+        or any(not isinstance(row, dict) for row in vrfm_privileged_records)
+    ):
+        raise ValueError("verified VRFM privileged manifest is invalid")
+    vrfm_privileged_manifest_sha256 = _sha256_file(vrfm_privileged_manifest_path)
+
+    vrfm_report_path = (
+        run_root / "reports" / "vrfm_residual_alpha_scan_full_context_report.json"
+    )
+    vrfm_completion_path = (
+        run_root / "vrfm_residual_alpha_scan_full_context_verified_completion.json"
+    )
+    vrfm_completion = _load_signed_completion(
+        vrfm_completion_path,
+        schema=(
+            "variational_camera_latent."
+            "vrfm_residual_alpha_scan_full_context_verified_completion.v1"
+        ),
+    )
+    expected_vrfm_completion = {
+        "scene_count": 10,
+        "overlap_count": 80,
+        "direction_count": 2560,
+        "grid_cell_count": 20480,
+        "unique_pose_candidate_count": 18000,
+        "prediction_manifest_sha256": vrfm_prediction_manifest_sha256,
+        "privileged_manifest_sha256": vrfm_privileged_manifest_sha256,
+        "report_sha256": _sha256_file(vrfm_report_path),
+        "phase1_completion_sha256": _sha256_file(phase1_completion_path),
+        "candidate_manifest_sha256": candidate_manifest_sha256,
+    }
+    for field, expected in expected_vrfm_completion.items():
+        if vrfm_completion.get(field) != expected:
+            raise ValueError(f"verified VRFM completion does not bind {field}")
+    if vrfm_completion.get("git_commit") != upstream_vrfm_commit:
+        raise ValueError("verified VRFM producer commit does not match")
+
+    privileged_root = run_root / "privileged_labels" / "matched_random_vs_vrfm"
+    privileged_records: list[dict[str, object]] = []
+    privileged_paths: list[Path] = []
+    for index, records in enumerate(
+        zip(
+            source_records,
+            candidate_records,
+            prediction_records,
+            vrfm_prediction_records,
+            vrfm_privileged_records,
+        )
+    ):
+        (
+            source_record,
+            candidate_record,
+            random_record,
+            vrfm_record,
+            vrfm_privileged_record,
+        ) = records
+        scene = scenes[index]
+        if any(row.get("scene") != scene for row in records):
+            raise ValueError("matched random privileged scene order differs")
+        source_path = Path(str(source_record["path"]))
+        candidate_path = Path(str(candidate_record["path"]))
+        random_prediction_path = Path(str(random_record["path"]))
+        vrfm_prediction_path = Path(str(vrfm_record["path"]))
+        vrfm_privileged_path = Path(str(vrfm_privileged_record["path"]))
+        expected_vrfm_privileged_path = (
+            run_root
+            / "privileged_labels"
+            / "vrfm_residual_alpha_scan_full_context"
+            / f"{scene}.npz"
+        )
+        if vrfm_privileged_path.resolve() != expected_vrfm_privileged_path.resolve():
+            raise ValueError("VRFM privileged artifact path is outside its contract")
+        if vrfm_privileged_record.get("sha256") != _sha256_file(
+            vrfm_privileged_path
+        ):
+            raise ValueError("VRFM privileged shard digest does not match its manifest")
+        source = load_source_shard(source_path)
+        candidate = load_candidate_shard(candidate_path)
+        vrfm_prediction = load_vrfm_residual_alpha_scan(vrfm_prediction_path)
+        vrfm_privileged = load_vrfm_residual_privileged(vrfm_privileged_path)
+        _require_matched_random_sample_budget(
+            candidate,
+            vrfm_prediction,
+            vrfm_privileged,
+        )
+        if (
+            not np.array_equal(
+                vrfm_privileged["source_sample_ids"], source["sample_ids"]
+            )
+            or str(vrfm_privileged["prediction_sha256"])
+            != vrfm_record.get("sha256")
+        ):
+            raise ValueError("VRFM privileged artifact is not paired to its prediction")
+        destination = privileged_root / f"{scene}.npz"
+        if destination.is_file():
+            arrays = load_matched_random_privileged(destination)
+        else:
+            write_matched_random_privileged_sidecar(
+                source_path,
+                random_prediction_path,
+                vrfm_prediction_path,
+                vrfm_privileged_path,
+                args.prepared_root / scene,
+                destination,
+            )
+            arrays = load_matched_random_privileged(destination)
+        expected_sidecar = {
+            "random_prediction_sha256": str(random_record["sha256"]),
+            "vrfm_prediction_sha256": str(vrfm_record["sha256"]),
+            "vrfm_privileged_sha256": str(vrfm_privileged_record["sha256"]),
+            "prepared_gt_sha256": prepared_gt_sha256(args.prepared_root / scene),
+        }
+        for field, expected in expected_sidecar.items():
+            if str(arrays[field]) != expected:
+                raise ValueError(f"existing matched random sidecar does not bind {field}")
+        if not np.array_equal(arrays["source_sample_ids"], source["sample_ids"]):
+            raise ValueError("matched random sidecar sample IDs differ from source")
+        privileged_paths.append(destination)
+        privileged_records.append(
+            {"scene": scene, "path": str(destination), "sha256": _sha256_file(destination)}
+        )
+        print(f"[vrfm] matched-random privileged {index + 1}/10 {scene}", flush=True)
+
+    privileged_manifest_path = (
+        run_root / "manifests" / "matched_random_vs_vrfm_privileged_manifest.json"
+    )
+    privileged_manifest_payload = {
+        "schema": "variational_camera_latent.matched_random_vs_vrfm_privileged_manifest.v1",
+        "scene_count": 10,
+        "overlap_count": 80,
+        "samples_per_overlap": 32,
+        "prediction_manifest_sha256": _sha256_file(prediction_manifest_path),
+        "paired_vrfm_prediction_manifest_sha256": vrfm_prediction_manifest_sha256,
+        "paired_vrfm_privileged_manifest_sha256": vrfm_privileged_manifest_sha256,
+        "records": privileged_records,
+    }
+    if privileged_manifest_path.is_file() and _read_json(
+        privileged_manifest_path
+    ) != privileged_manifest_payload:
+        raise ValueError("existing matched random privileged manifest differs")
+    _atomic_json(privileged_manifest_path, privileged_manifest_payload)
+
+    report_path = run_root / "reports" / "matched_random_vs_vrfm_pilot_report.json"
+    report = write_matched_random_report(
+        privileged_paths,
+        report_path,
+        min_improvement=args.alpha_min_improvement,
+    )
+    if (
+        report.get("scene_count") != 10
+        or report.get("inference_unit") != "scene"
+        or report.get("structured_null_replicate_count") != 1
+        or report.get("formal_training_attribution") is not False
+    ):
+        raise ValueError("matched random pilot report overstates or miscounts evidence")
+    paired_report = report.get("paired_comparison")
+    if not isinstance(paired_report, dict) or not isinstance(
+        paired_report.get("diagnosis"), str
+    ):
+        raise ValueError("matched random pilot report has no paired diagnosis")
+    if (
+        report.get("diagnosis_basis") != "scene_level"
+        or not isinstance(report.get("diagnosis"), str)
+    ):
+        raise ValueError("matched random pilot report has no scene-level diagnosis")
+    if _require_clean_git_checkout(ROOT) != producer_git_commit:
+        raise ValueError("matched random producer commit changed during execution")
+
+    completion_path = run_root / "matched_random_ablation_pilot_verified_completion.json"
+    unsigned = {
+        "schema": "variational_camera_latent.matched_random_ablation_pilot_verified_completion.v1",
+        "scene_count": 10,
+        "overlap_count": 80,
+        "direction_count_per_arm": 2560,
+        "grid_cell_count_per_arm": 20480,
+        "structured_null_replicate_count": 1,
+        "formal_training_attribution": False,
+        "diagnosis": report["diagnosis"],
+        "diagnosis_basis": "scene_level",
+        "min_improvement": float(args.alpha_min_improvement),
+        "base_seed": args.matched_random_seed,
+        "transform_identity_sha256": transform_identity_sha256,
+        "transform_sha256": expected_transform_sha256,
+        "prediction_manifest_sha256": _sha256_file(prediction_manifest_path),
+        "privileged_manifest_sha256": _sha256_file(privileged_manifest_path),
+        "report_sha256": _sha256_file(report_path),
+        "phase1_completion_sha256": _sha256_file(phase1_completion_path),
+        "vrfm_completion_sha256": _sha256_file(vrfm_completion_path),
+        "git_commit": producer_git_commit,
+    }
+    if load_exact_completion(completion_path, unsigned) is None:
+        if completion_path.exists():
+            raise ValueError("existing matched random completion differs")
+        write_completion(completion_path, unsigned)
+    return args.run_root
+
+
 def verify_completed_run(run_root: Path) -> Path:
     run_root = Path(run_root)
     source = _read_json(run_root / "manifests" / "source_manifest.json")
@@ -916,6 +1535,8 @@ def run_stage(args: argparse.Namespace) -> Path:
         return run_alpha_scan(args)
     if args.stage == "vrfm-residual-alpha-scan":
         return run_vrfm_residual_alpha_scan(args)
+    if args.stage == "matched-random-ablation":
+        return run_matched_random_ablation(args)
     if args.stage == "verify":
         return verify_completed_run(args.run_root)
     raise ValueError(f"unsupported stage: {args.stage}")
@@ -933,6 +1554,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "report",
             "alpha-scan",
             "vrfm-residual-alpha-scan",
+            "matched-random-ablation",
             "verify",
         ),
         required=True,
@@ -968,6 +1590,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--heun-steps", type=int, default=16)
     parser.add_argument("--alpha-min-improvement", type=float, default=0.01)
     parser.add_argument("--residual-scan-batch-size", type=int, default=8)
+    parser.add_argument("--matched-random-batch-size", type=int, default=8)
+    parser.add_argument("--matched-random-seed", type=int, default=20260827)
     return parser.parse_args(argv)
 
 
