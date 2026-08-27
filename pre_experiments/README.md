@@ -1,5 +1,13 @@
 # Round 2 Method Pre-experiment
 
+## Variational Camera latent candidate selector
+
+`pre_experiments.variational_camera_selector` trains a prediction-only listwise ranker over
+one no-op plus 32 frozen VRFM directions at seven nonzero step sizes. Long-window inputs and
+candidate scores are physically separated from GT utility sidecars. The H20 entry point is
+`scripts/h20/run_variational_camera_selector.sh`; formal outputs are written only below
+`/data/yjh/output/variational_camera_selector/<run_id>`.
+
 ## 当前入口：CVA02
 
 当前正在推进的前置实验是 Camera Velocity Ambiguity 02。它使用独立的协议、
