@@ -488,11 +488,21 @@ class SelectorPipelineTests(unittest.TestCase):
             verify_completed_run(self.tamper_score_digest())
 
 class SelectorH20RunnerTests(unittest.TestCase):
-    def test_runner_is_long_only_smoke_then_calibration(self):
-        text = RUNNER.read_text(encoding="utf-8")
-        self.assertLess(text.index("--stage smoke"), text.index("--stage calibration"))
-        self.assertNotIn("matched_random", text)
-        self.assertIn("/data/yjh/output/variational_camera_selector", text)
+    def test_wrong_identity_fails_before_python_is_called(self):
+        result, calls = self.run_with_fake_path(hostname="wrong-host", user="ubuntu")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call.startswith("python ") for call in calls))
+
+    def test_valid_preflight_calls_one_long_only_auto_stage(self):
+        result, calls = self.run_with_fake_path(
+            hostname="VM-0-11-ubuntu", user="ubuntu", free_gpu_mib=90000
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        python_calls = [call for call in calls if call.startswith("python ")]
+        self.assertEqual(len(python_calls), 1)
+        self.assertIn("--stage auto", python_calls[0])
+        self.assertIn("/data/yjh/output/variational_camera_selector", python_calls[0])
+        self.assertNotIn("matched_random", python_calls[0])
 ```
 
 - [ ] **Step 2: Run RED**
