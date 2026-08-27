@@ -54,6 +54,22 @@ class PipelineRunnerTests(unittest.TestCase):
         self.assertEqual(args.stage, "alpha-scan")
         self.assertEqual(args.alpha_min_improvement, 0.01)
 
+    def test_pipeline_exposes_resumable_vrfm_residual_alpha_scan_stage(self) -> None:
+        try:
+            args = parse_args(
+                [
+                    "--stage",
+                    "vrfm-residual-alpha-scan",
+                    "--run-root",
+                    "/data/yjh/output/variational_camera_latent/fixture",
+                ]
+            )
+        except SystemExit:
+            self.fail("pipeline does not expose the VRFM residual alpha scan stage")
+
+        self.assertEqual(args.stage, "vrfm-residual-alpha-scan")
+        self.assertEqual(args.residual_scan_batch_size, 8)
+
 
 if __name__ == "__main__":
     unittest.main()

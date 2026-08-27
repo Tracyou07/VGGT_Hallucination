@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from pre_experiments.common.contracts import read_git_commit
+from pre_experiments.common.model_io import find_checkpoint
 
 from .alpha_scan import (
     DEFAULT_ALPHAS,
@@ -34,6 +35,14 @@ from .privileged import (
 from .report import summarize_run
 from .source import build_scene_source_shard, load_source_shard, write_source_manifest
 from .train import TrainConfig, train_models
+from .vrfm_residual_scan import (
+    generate_vrfm_residual_alpha_scan,
+    load_vrfm_residual_alpha_scan,
+    load_vrfm_residual_privileged,
+    prepared_gt_sha256,
+    write_vrfm_residual_privileged_sidecar,
+    write_vrfm_residual_report,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -88,6 +97,16 @@ def _read_json(path: Path) -> dict[str, object]:
         raise ValueError(f"invalid JSON artifact: {path}") from error
     if not isinstance(payload, dict):
         raise ValueError(f"JSON artifact must be an object: {path}")
+    return payload
+
+
+def _load_signed_completion(path: Path, *, schema: str) -> dict[str, object]:
+    payload = _read_json(path)
+    completion_digest = payload.pop("completion_digest", None)
+    if payload.get("schema") != schema:
+        raise ValueError(f"completion schema does not match: {path}")
+    if completion_digest != _canonical_digest(payload):
+        raise ValueError(f"completion digest does not match: {path}")
     return payload
 
 
@@ -535,6 +554,304 @@ def run_alpha_scan(args: argparse.Namespace) -> Path:
     return args.run_root
 
 
+def run_vrfm_residual_alpha_scan(args: argparse.Namespace) -> Path:
+    """Re-evaluate every existing VRFM direction in full 500-frame context."""
+    if args.scene_limit != 10:
+        raise ValueError("VRFM residual alpha scan requires exactly ten scenes")
+    if args.residual_scan_batch_size < 1:
+        raise ValueError("VRFM residual alpha scan batch size must be positive")
+    if (
+        not np.isfinite(args.alpha_min_improvement)
+        or args.alpha_min_improvement <= 0.0
+    ):
+        raise ValueError("VRFM residual minimum improvement must be positive")
+    phase1_completion = args.run_root / "verified_completion.json"
+    phase1 = _load_signed_completion(
+        phase1_completion,
+        schema="variational_camera_latent.verified_completion.v1",
+    )
+    bound_artifacts = {
+        "prediction_manifest_sha256": args.run_root
+        / "manifests"
+        / "prediction_manifest.json",
+        "privileged_manifest_sha256": args.run_root
+        / "manifests"
+        / "privileged_manifest.json",
+        "report_sha256": args.run_root / "reports" / "exploration_report.json",
+    }
+    for field, path in bound_artifacts.items():
+        if phase1.get(field) != _sha256_file(path):
+            raise ValueError(f"verified Phase 1 does not bind {path}")
+    source_manifest, sources = _source_manifest(args.run_root)
+    source_manifest_path = args.run_root / "manifests" / "source_manifest.json"
+    source_completion = _load_signed_completion(
+        args.run_root / "manifests" / "source_complete.json",
+        schema="variational_camera_latent.source_complete.v1",
+    )
+    if source_completion.get("source_manifest_sha256") != _sha256_file(
+        source_manifest_path
+    ):
+        raise ValueError("source completion does not bind the current source manifest")
+    source_run_completion_path = args.source_run / "manifests" / "calibration_complete.json"
+    source_run_completion_sha256 = _sha256_file(source_run_completion_path)
+    if (
+        Path(str(source_completion.get("source_run"))).resolve()
+        != args.source_run.resolve()
+        or source_completion.get("source_run_digest")
+        != source_run_completion_sha256
+        or source_manifest.get("source_run_digest")
+        != source_run_completion_sha256
+    ):
+        raise ValueError("source shards are not bound to the requested CVA02 source run")
+    candidate_manifest_path = (
+        args.run_root / "manifests" / "calibration_prediction_manifest.json"
+    )
+    candidate_manifest = _read_json(candidate_manifest_path)
+    candidate_records = candidate_manifest.get("records")
+    if (
+        not isinstance(candidate_records, list)
+        or len(candidate_records) != 10
+        or any(not isinstance(row, dict) for row in candidate_records)
+    ):
+        raise ValueError("calibration prediction manifest is incomplete")
+    calibration_completion = _load_signed_completion(
+        args.run_root / "manifests" / "calibration_complete.json",
+        schema="variational_camera_latent.calibration_complete.v1",
+    )
+    if calibration_completion.get("prediction_manifest_sha256") != _sha256_file(
+        candidate_manifest_path
+    ) or calibration_completion.get("source_manifest_sha256") != _sha256_file(
+        source_manifest_path
+    ):
+        raise ValueError("calibration completion does not bind current inputs")
+    phase1_prediction = _read_json(
+        args.run_root / "manifests" / "prediction_manifest.json"
+    )
+    if phase1_prediction.get("records") != candidate_records:
+        raise ValueError("verified Phase 1 and calibration candidate records differ")
+    source_run_manifest = _read_json(args.source_run / "manifests" / "run.json")
+    if (
+        source_run_manifest.get("schema") != "camera_velocity_ambiguity_02.run.v1"
+        or source_run_manifest.get("run_id") != args.source_run.name
+    ):
+        raise ValueError("source run identity does not match its directory")
+    camera_head_checkpoint_sha256 = source_run_manifest.get("checkpoint_sha256")
+    if (
+        not isinstance(camera_head_checkpoint_sha256, str)
+        or len(camera_head_checkpoint_sha256) != 64
+    ):
+        raise ValueError("source run has no authenticated Camera Head checkpoint digest")
+    actual_camera_checkpoint_sha256 = _sha256_file(
+        find_checkpoint(args.checkpoint_dir)
+    )
+    if actual_camera_checkpoint_sha256 != camera_head_checkpoint_sha256:
+        raise ValueError("local Camera Head checkpoint digest does not match source run")
+    producer_git_commit = read_git_commit(ROOT)
+
+    prediction_root = (
+        args.run_root
+        / "prediction_only"
+        / "vrfm_residual_alpha_scan_full_context"
+    )
+    prediction_records: list[dict[str, object]] = []
+    head = None
+    expected_samples: int | None = None
+    for index, (source_record, candidate_record) in enumerate(
+        zip(sources, candidate_records)
+    ):
+        scene = str(source_record["scene"])
+        if candidate_record.get("scene") != scene:
+            raise ValueError("source and VRFM candidate scene order mismatch")
+        source_path = Path(source_record["path"])
+        candidate_path = Path(str(candidate_record["path"]))
+        if _sha256_file(source_path) != source_record.get("sha256"):
+            raise ValueError("source shard digest does not match its manifest")
+        if _sha256_file(candidate_path) != candidate_record.get("sha256"):
+            raise ValueError("VRFM candidate shard digest does not match its manifest")
+        original_candidate = load_candidate_shard(candidate_path)
+        samples = int(original_candidate["z"].shape[1])
+        if expected_samples is None:
+            expected_samples = samples
+        elif samples != expected_samples:
+            raise ValueError("VRFM candidate shards use different sample counts")
+        destination = prediction_root / f"{scene}.npz"
+        if destination.is_file():
+            arrays = load_vrfm_residual_alpha_scan(destination)
+            if not np.array_equal(
+                arrays["alphas"], np.asarray(DEFAULT_ALPHAS, dtype=np.float64)
+            ):
+                raise ValueError("existing VRFM residual alpha grid does not match")
+            if str(arrays["source_shard_sha256"]) != _sha256_file(source_path):
+                raise ValueError("existing VRFM residual output source digest does not match")
+            if str(arrays["candidate_shard_sha256"]) != _sha256_file(candidate_path):
+                raise ValueError("existing VRFM residual output candidate digest does not match")
+            if (
+                str(arrays["vrfm_checkpoint_sha256"])
+                != str(original_candidate["checkpoint_sha256"])
+            ):
+                raise ValueError("existing VRFM residual output checkpoint does not match")
+            if (
+                str(arrays["camera_head_checkpoint_sha256"])
+                != camera_head_checkpoint_sha256
+            ):
+                raise ValueError("existing VRFM residual Camera Head checkpoint does not match")
+            if str(arrays["producer_git_commit"]) != producer_git_commit:
+                raise ValueError("existing VRFM residual output was made by another commit")
+        else:
+            if head is None:
+                head = _camera_head(args.checkpoint_dir, args.device)
+            generate_vrfm_residual_alpha_scan(
+                source_path,
+                candidate_path,
+                destination,
+                camera_head=head,
+                camera_head_checkpoint_sha256=camera_head_checkpoint_sha256,
+                producer_git_commit=producer_git_commit,
+                device=args.device,
+                alphas=DEFAULT_ALPHAS,
+                batch_size=args.residual_scan_batch_size,
+            )
+            arrays = load_vrfm_residual_alpha_scan(destination)
+        source_arrays = load_source_shard(source_path)
+        if not np.array_equal(arrays["source_sample_ids"], source_arrays["sample_ids"]):
+            raise ValueError("VRFM residual output sample IDs do not match source")
+        prediction_records.append(
+            {
+                "scene": scene,
+                "path": str(destination),
+                "sha256": _sha256_file(destination),
+                "source_shard_sha256": _sha256_file(source_path),
+                "candidate_shard_sha256": _sha256_file(candidate_path),
+            }
+        )
+        print(
+            f"[vrfm] residual-alpha full-context decode {index + 1}/10 {scene}",
+            flush=True,
+        )
+    if head is not None:
+        del head
+    assert expected_samples is not None
+
+    prediction_manifest_path = (
+        args.run_root
+        / "manifests"
+        / "vrfm_residual_alpha_scan_full_context_prediction_manifest.json"
+    )
+    _atomic_json(
+        prediction_manifest_path,
+        {
+            "schema": "variational_camera_latent.vrfm_residual_alpha_scan_full_context_prediction_manifest.v1",
+            "scene_count": 10,
+            "overlap_count": 80,
+            "samples_per_overlap": expected_samples,
+            "direction_count": 80 * expected_samples,
+            "grid_cell_count": 80 * expected_samples * len(DEFAULT_ALPHAS),
+            "unique_pose_candidate_count": 80
+            * (1 + expected_samples * (len(DEFAULT_ALPHAS) - 1)),
+            "alphas": list(DEFAULT_ALPHAS),
+            "decode_context_frames": 500,
+            "camera_iterations": 4,
+            "producer_git_commit": producer_git_commit,
+            "camera_head_checkpoint_sha256": camera_head_checkpoint_sha256,
+            "source_manifest_sha256": _sha256_file(
+                args.run_root / "manifests" / "source_manifest.json"
+            ),
+            "candidate_manifest_sha256": _sha256_file(candidate_manifest_path),
+            "records": prediction_records,
+        },
+    )
+
+    privileged_root = (
+        args.run_root
+        / "privileged_labels"
+        / "vrfm_residual_alpha_scan_full_context"
+    )
+    privileged_records: list[dict[str, object]] = []
+    privileged_paths: list[Path] = []
+    for index, (source_record, prediction_record) in enumerate(
+        zip(sources, prediction_records)
+    ):
+        scene = str(source_record["scene"])
+        prediction_path = Path(str(prediction_record["path"]))
+        destination = privileged_root / f"{scene}.npz"
+        if destination.is_file():
+            arrays = load_vrfm_residual_privileged(destination)
+            if str(arrays["prediction_sha256"]) != _sha256_file(prediction_path):
+                raise ValueError("existing VRFM residual sidecar prediction digest does not match")
+            source_arrays = load_source_shard(Path(source_record["path"]))
+            if not np.array_equal(
+                arrays["source_sample_ids"], source_arrays["sample_ids"]
+            ):
+                raise ValueError("existing VRFM residual sidecar sample IDs do not match")
+            if str(arrays["prepared_gt_sha256"]) != prepared_gt_sha256(
+                args.prepared_root / scene
+            ):
+                raise ValueError("existing VRFM residual sidecar GT digest does not match")
+        else:
+            write_vrfm_residual_privileged_sidecar(
+                Path(source_record["path"]),
+                prediction_path,
+                args.prepared_root / scene,
+                destination,
+            )
+            load_vrfm_residual_privileged(destination)
+        privileged_paths.append(destination)
+        privileged_records.append(
+            {"scene": scene, "path": str(destination), "sha256": _sha256_file(destination)}
+        )
+        print(f"[vrfm] residual-alpha privileged {index + 1}/10 {scene}", flush=True)
+
+    privileged_manifest_path = (
+        args.run_root
+        / "manifests"
+        / "vrfm_residual_alpha_scan_full_context_privileged_manifest.json"
+    )
+    _atomic_json(
+        privileged_manifest_path,
+        {
+            "schema": "variational_camera_latent.vrfm_residual_alpha_scan_full_context_privileged_manifest.v1",
+            "scene_count": 10,
+            "overlap_count": 80,
+            "samples_per_overlap": expected_samples,
+            "prediction_manifest_sha256": _sha256_file(prediction_manifest_path),
+            "records": privileged_records,
+        },
+    )
+
+    report_path = (
+        args.run_root
+        / "reports"
+        / "vrfm_residual_alpha_scan_full_context_report.json"
+    )
+    report = write_vrfm_residual_report(
+        privileged_paths,
+        report_path,
+        min_improvement=args.alpha_min_improvement,
+    )
+    verified = {
+        "schema": "variational_camera_latent.vrfm_residual_alpha_scan_full_context_verified_completion.v1",
+        "scene_count": 10,
+        "overlap_count": 80,
+        "direction_count": 80 * expected_samples,
+        "grid_cell_count": 80 * expected_samples * len(DEFAULT_ALPHAS),
+        "unique_pose_candidate_count": 80
+        * (1 + expected_samples * (len(DEFAULT_ALPHAS) - 1)),
+        "diagnosis": report["diagnosis"],
+        "prediction_manifest_sha256": _sha256_file(prediction_manifest_path),
+        "privileged_manifest_sha256": _sha256_file(privileged_manifest_path),
+        "report_sha256": _sha256_file(report_path),
+        "phase1_completion_sha256": _sha256_file(phase1_completion),
+        "candidate_manifest_sha256": _sha256_file(candidate_manifest_path),
+        "git_commit": producer_git_commit,
+    }
+    write_completion(
+        args.run_root
+        / "vrfm_residual_alpha_scan_full_context_verified_completion.json",
+        verified,
+    )
+    return args.run_root
+
+
 def verify_completed_run(run_root: Path) -> Path:
     run_root = Path(run_root)
     source = _read_json(run_root / "manifests" / "source_manifest.json")
@@ -597,6 +914,8 @@ def run_stage(args: argparse.Namespace) -> Path:
         return publish_report(args)
     if args.stage == "alpha-scan":
         return run_alpha_scan(args)
+    if args.stage == "vrfm-residual-alpha-scan":
+        return run_vrfm_residual_alpha_scan(args)
     if args.stage == "verify":
         return verify_completed_run(args.run_root)
     raise ValueError(f"unsupported stage: {args.stage}")
@@ -613,6 +932,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "privileged",
             "report",
             "alpha-scan",
+            "vrfm-residual-alpha-scan",
             "verify",
         ),
         required=True,
@@ -647,6 +967,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--samples", type=int, default=32)
     parser.add_argument("--heun-steps", type=int, default=16)
     parser.add_argument("--alpha-min-improvement", type=float, default=0.01)
+    parser.add_argument("--residual-scan-batch-size", type=int, default=8)
     return parser.parse_args(argv)
 
 
