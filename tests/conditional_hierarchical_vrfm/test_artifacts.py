@@ -14,6 +14,7 @@ from pre_experiments.conditional_hierarchical_vrfm.artifacts import (
     load_teacher_artifact,
     load_latent_targets,
     save_teacher_artifact,
+    reuse_or_save_teacher_artifact,
     save_latent_targets,
 )
 
@@ -125,11 +126,17 @@ class LatentTargetArtifactTests(unittest.TestCase):
 
     def test_teacher_artifact_binds_formal_label_and_all_four_variants(self) -> None:
         path = self.path.with_name("teacher.npz")
-        digest = save_teacher_artifact(path, self.valid_teacher_arrays())
+        arrays = self.valid_teacher_arrays()
+        digest = reuse_or_save_teacher_artifact(path, arrays)
+        self.assertEqual(reuse_or_save_teacher_artifact(path, arrays), digest)
         loaded = load_teacher_artifact(path)
         self.assertEqual(len(digest), 64)
         self.assertEqual(loaded["fused_c2w"].shape, (4, 500, 4, 4))
         self.assertEqual(str(loaded["formal_label_sha256"]), "d" * 64)
+        mismatched = self.valid_teacher_arrays()
+        mismatched["source_sha256"] = np.asarray("0" * 64, dtype="U64")
+        with self.assertRaisesRegex(ValueError, "existing teacher artifact"):
+            reuse_or_save_teacher_artifact(path, mismatched)
 
     def test_teacher_artifact_rejects_non_so3_oracle(self) -> None:
         arrays = self.valid_teacher_arrays()

@@ -268,6 +268,28 @@ def save_teacher_artifact(path: Path, arrays: Mapping[str, np.ndarray]) -> str:
     return _sha256_file(target)
 
 
+def reuse_or_save_teacher_artifact(
+    path: Path, arrays: Mapping[str, np.ndarray]
+) -> str:
+    """Resume prepare only when an existing sidecar equals the expected payload."""
+    target = Path(path)
+    expected = {name: np.asarray(value) for name, value in arrays.items()}
+    _validate_teacher_artifact(expected)
+    if not target.exists():
+        return save_teacher_artifact(target, expected)
+    existing = load_teacher_artifact(target)
+    for name, value in expected.items():
+        candidate = existing[name]
+        equal = (
+            np.array_equal(candidate, value, equal_nan=True)
+            if np.issubdtype(value.dtype, np.floating)
+            else np.array_equal(candidate, value)
+        )
+        if candidate.dtype != value.dtype or candidate.shape != value.shape or not equal:
+            raise ValueError("existing teacher artifact does not match expected bytes/provenance")
+    return _sha256_file(target)
+
+
 def load_teacher_artifact(path: Path) -> dict[str, np.ndarray]:
     try:
         archive = np.load(Path(path), allow_pickle=False)

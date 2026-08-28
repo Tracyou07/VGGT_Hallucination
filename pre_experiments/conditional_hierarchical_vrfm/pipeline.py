@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import unittest
 from types import SimpleNamespace
 from typing import Mapping, Sequence
 
@@ -22,8 +23,8 @@ from pre_experiments.camera_velocity_ambiguity_02.frozen_oracle import FrozenOra
 from pre_experiments.conditional_hierarchical_vrfm.artifacts import (
     load_latent_targets,
     load_teacher_artifact,
+    reuse_or_save_teacher_artifact,
     save_latent_targets,
-    save_teacher_artifact,
 )
 from pre_experiments.conditional_hierarchical_vrfm.basis import canonical_basis_sha256
 from pre_experiments.conditional_hierarchical_vrfm.evaluate import (
@@ -46,12 +47,15 @@ from pre_experiments.conditional_hierarchical_vrfm.teacher import (
     summarize_teacher_upper_bound,
 )
 from pre_experiments.long_short_camera_head.data import (
+    LongContextRecord,
+    SceneRecord,
     load_long_context,
     load_source_records,
     publish_long_context,
 )
 from pre_experiments.long_short_camera_head.labels import load_privileged_labels
 from pre_experiments.long_short_camera_head.train import load_base_camera_head
+from pre_experiments.variational_camera_latent.source import load_source_shard
 
 
 LONG_MANIFEST_SCHEMA = "conditional_hierarchical_vrfm.long_context_manifest.v1"
@@ -62,12 +66,21 @@ CALIBRATION_SCHEMA = "conditional_hierarchical_vrfm.calibration_completion.v1"
 PREFLIGHT_SCHEMA = "conditional_hierarchical_vrfm.preflight_evidence.v1"
 TEACHER_MANIFEST_SCHEMA = "conditional_hierarchical_vrfm.teacher_manifest.v1"
 EXPECTED_SCENES = (
-    "scene0000_00", "scene0013_00", "scene0029_00", "scene0084_00",
-    "scene0121_00", "scene0207_00", "scene0280_00", "scene0325_00",
+    "scene0000_00", "scene0013_02", "scene0029_01", "scene0084_01",
+    "scene0121_01", "scene0207_01", "scene0280_00", "scene0325_01",
     "scene0675_00", "scene0691_00",
 )
+FROZEN_SPLIT_CONFIG_DIGEST = "81386f891b45ce8d2dc7706c9e64bf7783931d6eaf16154ff402beae13227fce"
+FROZEN_FORMAL_RUN_NAME = "long_short_head_formal_20260828T072407Z"
+FROZEN_FORMAL_GIT = "2476a59f583ce4c39bbe66dc65d6a8e5cddfb52e"
+FROZEN_BASE_CHECKPOINT_SHA256 = "f164acf60724910d8fe1578bb499d800850c7bb0948db7555c413f9fbe60467e"
 EXPECTED_TEACHER_COVERAGE = 0.89
 EXPECTED_TEACHER_UTILITY = 0.1293578271441714
+PREFLIGHT_SUITES = (
+    ("tests/conditional_hierarchical_vrfm", 62, 3),
+    ("tests/variational_camera_latent", 64, 1),
+    ("tests/long_short_camera_head", 39, 0),
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -105,6 +118,46 @@ def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
     temporary.replace(target)
 
 
+def _reuse_or_publish_json(path: Path, payload: Mapping[str, object], label: str) -> None:
+    expected = dict(payload)
+    _reject_existing_symlink_components(path)
+    if Path(path).exists():
+        if not Path(path).is_file() or _read_json(path) != expected:
+            raise ValueError(f"existing {label} does not match resumed publication")
+        return
+    _atomic_json(path, expected)
+
+
+def validate_frozen_scene_identity(config_path: Path) -> None:
+    """Cross-check the Task-4 cohort against the frozen CVA02 split identity."""
+    payload = _read_json(config_path)
+    cohorts = payload.get("cohorts")
+    calibration = cohorts.get("calibration") if isinstance(cohorts, Mapping) else None
+    scene_order = payload.get("scene_order")
+    if (
+        payload.get("config_digest") != FROZEN_SPLIT_CONFIG_DIGEST
+        or not isinstance(calibration, list)
+        or set(map(str, calibration)) != set(EXPECTED_SCENES)
+        or len(calibration) != len(EXPECTED_SCENES)
+        or not isinstance(scene_order, list)
+        or not set(EXPECTED_SCENES).issubset(set(map(str, scene_order)))
+    ):
+        raise ValueError("frozen calibration scene identity mismatch")
+
+
+def validate_source_scene_cohort(records: Sequence[object]) -> None:
+    scenes = [str(getattr(record, "scene", "")) for record in records]
+    roles = [str(getattr(record, "role", "")) for record in records]
+    if len(scenes) != 10 or len(set(scenes)) != 10 or set(scenes) != set(EXPECTED_SCENES):
+        raise ValueError("source manifest does not bind the exact ten calibration scenes")
+    expected_roles = {
+        scene: "validation" if scene in {"scene0325_01", "scene0675_00"} else "train"
+        for scene in EXPECTED_SCENES
+    }
+    if any(expected_roles[scene] != role for scene, role in zip(scenes, roles)):
+        raise ValueError("source scene roles must match the frozen eight/two split")
+
+
 def build_long_context_manifest(source_manifest: Mapping[str, object]) -> dict[str, object]:
     """Derive a manifest that can name only physical long-only files under the run root."""
     rows = source_manifest.get("records")
@@ -139,7 +192,63 @@ def _within(path: Path, root: Path) -> bool:
         return False
 
 
+def _reject_existing_symlink_components(path: Path) -> None:
+    lexical = Path(path).absolute()
+    for component in (lexical, *lexical.parents):
+        if component.exists() and component.is_symlink():
+            raise ValueError(f"publication path contains a symlink: {component}")
+
+
+def validate_long_context_publication_root(run_root: Path) -> Path:
+    """Reject lexical symlink/escape hazards before resolving a publication root."""
+    lexical_root = Path(run_root).absolute()
+    lexical_base = lexical_root / "prediction_only" / "long_context"
+    _reject_existing_symlink_components(lexical_base)
+    resolved_root = lexical_root.resolve()
+    resolved_base = lexical_base.resolve()
+    if not _within(resolved_base, resolved_root):
+        raise ValueError("long-context publication path escapes the run root")
+    return resolved_base
+
+
+def reuse_or_publish_long_context(
+    record: SceneRecord, destination: Path
+) -> LongContextRecord:
+    """Reuse only a byte-valid shard that exactly equals the source-derived payload."""
+    target = Path(destination)
+    _reject_existing_symlink_components(target)
+    if not target.exists():
+        return publish_long_context(record, target)
+    try:
+        existing = load_long_context(target)
+        source = load_source_shard(record.path)
+    except ValueError as error:
+        raise ValueError("existing long-context shard is invalid") from error
+    expected = {
+        "scene": np.asarray(record.scene, dtype="U32"),
+        "frame_ids": source["global_frame_ids"].astype(np.int64, copy=False),
+        "camera_tokens": source["global_camera_tokens"].astype(np.float32, copy=False),
+        "baseline_c2w": source["global_pred_c2w"].astype(np.float64, copy=False),
+        "source_sha256": np.asarray(record.sha256, dtype="U64"),
+    }
+    if any(
+        existing[name].dtype != value.dtype
+        or existing[name].shape != value.shape
+        or not np.array_equal(existing[name], value)
+        for name, value in expected.items()
+    ):
+        raise ValueError("existing long-context shard does not match expected bytes/provenance")
+    return LongContextRecord(
+        scene=record.scene,
+        role=record.role,
+        path=target,
+        sha256=sha256_file(target),
+        source_sha256=record.sha256,
+    )
+
+
 def audit_long_context_manifest(run_root: Path, manifest: Mapping[str, object]) -> None:
+    validate_long_context_publication_root(run_root)
     root = Path(run_root).resolve()
     if manifest.get("schema") != LONG_MANIFEST_SCHEMA:
         raise ValueError("long-context manifest schema mismatch")
@@ -190,6 +299,120 @@ def validate_variant_zero_against_formal(
         raise ValueError("rederived teacher variant zero differs from the formal label")
 
 
+def authenticate_formal_run(
+    formal_root: Path,
+    source_run: Path,
+    records: Sequence[object],
+    checkpoint_sha256: str,
+) -> dict[str, object]:
+    """Authenticate the full frozen formal-run chain before trusting any label shard."""
+    root = Path(formal_root).absolute()
+    _reject_existing_symlink_components(root)
+    if root.name != FROZEN_FORMAL_RUN_NAME or not root.is_dir():
+        raise ValueError("labels must come from the verified formal run")
+    root = root.resolve()
+    marker_path = root / "verified_completion.json"
+    manifest_path = root / "manifests" / "data_manifest.json"
+    if not marker_path.is_file() or not manifest_path.is_file():
+        raise ValueError("labels must come from the verified formal run")
+    marker = _read_json(marker_path)
+    manifest = _read_json(manifest_path)
+    marker_fields = {
+        "schema", "git_revision", "verifier_git_revision",
+        "source_manifest_sha256", "base_checkpoint_sha256", "config_sha256",
+        "data_manifest_sha256", "test_evidence_sha256", "stage_completion_sha256",
+        "scene_count", "train_scene_count", "locked_replay_scene_count",
+        "classification", "report_sha256", "artifacts", "inference_leakage_audit",
+        "formal_protocol_sha256",
+    }
+    manifest_fields = {
+        "schema", "git_revision", "source_run", "source_manifest_sha256",
+        "prepared_root", "checkpoint_dir", "base_checkpoint_sha256", "records",
+    }
+    if set(marker) != marker_fields or marker.get("schema") != "long_short_camera_head.verified_completion.v1":
+        raise ValueError("verified formal run completion schema mismatch")
+    if set(manifest) != manifest_fields or manifest.get("schema") != "long_short_camera_head.data_manifest.v1":
+        raise ValueError("verified formal run data manifest schema mismatch")
+    if sha256_file(manifest_path) != marker.get("data_manifest_sha256"):
+        raise ValueError("formal data manifest digest mismatch")
+    source_root = Path(source_run).resolve()
+    source_manifest = source_root / "manifests" / "source_manifest.json"
+    if not source_manifest.is_file():
+        raise ValueError("formal source manifest is unavailable")
+    source_manifest_sha = sha256_file(source_manifest)
+    identities = (
+        marker.get("git_revision") == FROZEN_FORMAL_GIT,
+        manifest.get("git_revision") == FROZEN_FORMAL_GIT,
+        marker.get("classification") == "NO_SOURCE_HEAD_SIGNAL",
+        marker.get("base_checkpoint_sha256") == FROZEN_BASE_CHECKPOINT_SHA256,
+        manifest.get("base_checkpoint_sha256") == FROZEN_BASE_CHECKPOINT_SHA256,
+        checkpoint_sha256 == FROZEN_BASE_CHECKPOINT_SHA256,
+        marker.get("source_manifest_sha256") == source_manifest_sha,
+        manifest.get("source_manifest_sha256") == source_manifest_sha,
+        Path(str(manifest.get("source_run"))).resolve() == source_root,
+        marker.get("scene_count") == 10,
+        marker.get("train_scene_count") == 8,
+        marker.get("locked_replay_scene_count") == 2,
+        bool(marker.get("inference_leakage_audit")),
+    )
+    if not all(identities):
+        raise ValueError("verified formal run identity mismatch")
+    validate_source_scene_cohort(records)
+    expected = {str(getattr(record, "scene")): record for record in records}
+    rows = manifest.get("records")
+    if not isinstance(rows, list) or len(rows) != 10:
+        raise ValueError("formal data manifest must bind ten scenes")
+    row_fields = {
+        "scene", "role", "source_path", "source_sha256", "long_context_path",
+        "long_context_sha256", "privileged_path", "privileged_sha256",
+        "teacher_frame_count",
+    }
+    labels: dict[str, Path] = {}
+    for row in rows:
+        if not isinstance(row, Mapping) or set(row) != row_fields:
+            raise ValueError("formal data manifest record schema mismatch")
+        scene = str(row["scene"])
+        if scene not in expected or scene in labels:
+            raise ValueError("formal data manifest scene cohort mismatch")
+        record = expected[scene]
+        if row["role"] != getattr(record, "role") or row["source_sha256"] != getattr(record, "sha256"):
+            raise ValueError("formal source record binding mismatch")
+        record_path = getattr(record, "path", None)
+        if record_path is not None:
+            actual_source = Path(record_path)
+            if (
+                actual_source.is_symlink()
+                or not actual_source.is_file()
+                or Path(str(row["source_path"])).resolve() != actual_source.resolve()
+                or sha256_file(actual_source) != row["source_sha256"]
+            ):
+                raise ValueError("formal source record binding mismatch")
+        label = root / "data" / "privileged_labels" / f"{scene}.npz"
+        _reject_existing_symlink_components(label)
+        if (
+            Path(str(row["privileged_path"])).resolve() != label.resolve()
+            or not label.is_file()
+            or sha256_file(label) != row["privileged_sha256"]
+        ):
+            raise ValueError("formal privileged label digest/path mismatch")
+        arrays = load_privileged_labels(label)
+        if (
+            str(arrays["scene"]) != scene
+            or str(arrays["source_sha256"]) != row["source_sha256"]
+            or str(arrays["checkpoint_sha256"]) != checkpoint_sha256
+            or int(np.count_nonzero(arrays["teacher_weight"])) != row["teacher_frame_count"]
+        ):
+            raise ValueError("formal privileged label semantic binding mismatch")
+        labels[scene] = label
+    if set(labels) != set(EXPECTED_SCENES):
+        raise ValueError("formal data manifest scene cohort mismatch")
+    return {
+        "labels": labels,
+        "completion_sha256": sha256_file(marker_path),
+        "data_manifest_sha256": sha256_file(manifest_path),
+        "source_manifest_sha256": source_manifest_sha,
+        "formal_root": root,
+    }
 def _teacher_arrays(
     teacher: TeacherVariantSet,
     formal: Mapping[str, np.ndarray],
@@ -227,18 +450,6 @@ def _teacher_arrays(
     }
 
 
-def _locate_formal_label(root: Path, scene: str) -> Path:
-    base = Path(root).resolve()
-    fixed = (
-        base / "data" / "privileged_labels" / f"{scene}.npz",
-        base / "privileged_labels" / f"{scene}.npz",
-    )
-    candidates = [path for path in fixed if path.is_file() and not path.is_symlink()]
-    if len(candidates) != 1:
-        raise ValueError(f"formal label must resolve uniquely for {scene}")
-    return candidates[0]
-
-
 def _current_git() -> tuple[str, str]:
     try:
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -254,16 +465,80 @@ def _validate_git(expected: str) -> None:
         raise ValueError("pipeline requires the exact clean Git commit")
 
 
+def preflight_source_inventory(repository_root: Path | None = None) -> dict[str, dict[str, str]]:
+    """Return exact byte inventories for the tested suites and their source trees."""
+    root = Path.cwd().resolve() if repository_root is None else Path(repository_root).resolve()
+    groups = {
+        "tests": tuple(Path(suite) for suite, _, _ in PREFLIGHT_SUITES),
+        "sources": (
+            Path("pre_experiments"),
+            Path("vggt"),
+        ),
+    }
+    inventory: dict[str, dict[str, str]] = {}
+    for group, directories in groups.items():
+        rows: dict[str, str] = {}
+        for directory in directories:
+            if not (root / directory).exists():
+                continue
+            for path in sorted((root / directory).rglob("*.py")):
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError("preflight source inventory contains an invalid path")
+                rows[path.relative_to(root).as_posix()] = sha256_file(path)
+        if not rows:
+            raise ValueError("preflight source inventory is empty")
+        inventory[group] = rows
+    frozen = root / "configs" / "scannet50_camera_velocity_ambiguity_02_split_v2.json"
+    inventory["frozen_config"] = {frozen.relative_to(root).as_posix(): sha256_file(frozen)}
+    return inventory
+
+
+def git_tree_identity() -> str:
+    try:
+        value = subprocess.check_output(
+            ["git", "rev-parse", "HEAD^{tree}"], text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ValueError("cannot inspect Git tree identity") from error
+    if re.fullmatch(r"[0-9a-f]{40}", value) is None:
+        raise ValueError("Git tree identity is malformed")
+    return value
+
+
+def preflight_test_inventory(repository_root: Path | None = None) -> dict[str, list[str]]:
+    """Discover and bind the exact stable unittest IDs for each required suite."""
+    root = Path.cwd().resolve() if repository_root is None else Path(repository_root).resolve()
+
+    def collect(suite: unittest.TestSuite) -> list[str]:
+        output: list[str] = []
+        for test in suite:
+            if isinstance(test, unittest.TestSuite):
+                output.extend(collect(test))
+            else:
+                output.append(test.id())
+        return output
+
+    inventory: dict[str, list[str]] = {}
+    for suite, expected_count, _ in PREFLIGHT_SUITES:
+        discovered = unittest.defaultTestLoader.discover(
+            str(root / suite), pattern="test_*.py", top_level_dir=str(root)
+        )
+        identifiers = sorted(collect(discovered))
+        if len(identifiers) != expected_count or len(set(identifiers)) != expected_count:
+            raise ValueError("preflight unittest inventory/count mismatch")
+        inventory[suite] = identifiers
+    return inventory
+
+
 def run_preflight(args: argparse.Namespace | SimpleNamespace) -> Path:
     """Execute every CPU contract suite plus compileall and bind their actual logs."""
     _validate_git(args.git_commit)
     root = Path(args.run_root).resolve()
     evidence_path = root / "manifests" / "preflight_evidence.json"
-    suites = (
-        "tests/conditional_hierarchical_vrfm",
-        "tests/variational_camera_latent",
-        "tests/long_short_camera_head",
-    )
+    if evidence_path.is_file():
+        _validate_preflight(root, args.git_commit)
+        return evidence_path
+    suites = tuple(path for path, _, _ in PREFLIGHT_SUITES)
     commands = [
         [sys.executable, "-m", "unittest", "discover", "-s", suite, "-v"]
         for suite in suites
@@ -278,23 +553,33 @@ def run_preflight(args: argparse.Namespace | SimpleNamespace) -> Path:
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text(completed.stdout + completed.stderr, encoding="utf-8")
         count = 0
+        skipped = 0
         if index < len(suites):
-            match = re.search(r"Ran\s+(\d+)\s+tests?", completed.stdout + completed.stderr)
+            content = completed.stdout + completed.stderr
+            match = re.search(r"Ran\s+(\d+)\s+tests?", content)
             count = int(match.group(1)) if match else 0
-            if count < 1:
-                raise ValueError("preflight test evidence contains no executed tests")
+            skipped_match = re.search(r"skipped=(\d+)", content)
+            skipped = int(skipped_match.group(1)) if skipped_match else 0
+            _, expected_count, maximum_skipped = PREFLIGHT_SUITES[index]
+            if count != expected_count or not 0 <= skipped <= maximum_skipped:
+                raise ValueError("preflight test count/skip inventory mismatch")
         if completed.returncode != 0:
             raise ValueError(f"preflight command failed: {' '.join(command)}")
         rows.append({
             "command": command, "returncode": completed.returncode, "test_count": count,
+            "skipped_count": skipped,
             "log": log.relative_to(root).as_posix(), "log_sha256": sha256_file(log),
         })
-    unsigned = {"schema": PREFLIGHT_SCHEMA, "git_commit": args.git_commit, "commands": rows}
+    unsigned = {
+        "schema": PREFLIGHT_SCHEMA,
+        "git_commit": args.git_commit,
+        "source_inventory": preflight_source_inventory(),
+        "test_inventory": preflight_test_inventory(),
+        "git_tree": git_tree_identity(),
+        "commands": rows,
+    }
     payload = {**unsigned, "record_digest": _canonical_digest(unsigned)}
-    if evidence_path.exists() and _read_json(evidence_path) != payload:
-        raise ValueError("existing preflight evidence is stale or fabricated")
-    if not evidence_path.exists():
-        _atomic_json(evidence_path, payload)
+    _atomic_json(evidence_path, payload)
     return evidence_path
 
 
@@ -306,29 +591,47 @@ def _validate_preflight(root: Path, git_commit: str) -> dict[str, object]:
         raise ValueError("preflight evidence commit binding mismatch")
     if digest != _canonical_digest(payload):
         raise ValueError("preflight evidence record digest mismatch")
+    if payload.get("source_inventory") != preflight_source_inventory():
+        raise ValueError("preflight evidence source inventory mismatch")
+    if payload.get("test_inventory") != preflight_test_inventory():
+        raise ValueError("preflight evidence unittest inventory mismatch")
+    if payload.get("git_tree") != git_tree_identity():
+        raise ValueError("preflight evidence Git tree mismatch")
     rows = payload.get("commands")
     if not isinstance(rows, list) or len(rows) != 4:
         raise ValueError("preflight evidence command count mismatch")
     expected_commands = [
         [sys.executable, "-m", "unittest", "discover", "-s", suite, "-v"]
-        for suite in (
-            "tests/conditional_hierarchical_vrfm", "tests/variational_camera_latent",
-            "tests/long_short_camera_head",
-        )
+        for suite, _, _ in PREFLIGHT_SUITES
     ] + [[sys.executable, "-m", "compileall", "-q", "pre_experiments"]]
     for index, row in enumerate(rows):
         if not isinstance(row, Mapping) or row.get("returncode") != 0:
             raise ValueError("preflight evidence command failure")
         if row.get("command") != expected_commands[index]:
             raise ValueError("preflight evidence command mismatch")
-        if index < 3 and (not isinstance(row.get("test_count"), int) or int(row["test_count"]) < 1):
+        expected_count, maximum_skipped = (0, 0)
+        if index < 3:
+            _, expected_count, maximum_skipped = PREFLIGHT_SUITES[index]
+        if (
+            row.get("test_count") != expected_count
+            or not isinstance(row.get("skipped_count"), int)
+            or not 0 <= int(row["skipped_count"]) <= maximum_skipped
+        ):
             raise ValueError("preflight evidence test count mismatch")
         log = root / str(row.get("log", ""))
         if not log.is_file() or sha256_file(log) != row.get("log_sha256"):
             raise ValueError("preflight evidence log digest mismatch")
         if index < 3:
             content = log.read_text(encoding="utf-8")
-            if not re.search(r"Ran\s+\d+\s+tests?", content) or not re.search(r"^OK", content, re.MULTILINE):
+            count_match = re.search(r"Ran\s+(\d+)\s+tests?", content)
+            skip_match = re.search(r"skipped=(\d+)", content)
+            observed_skipped = int(skip_match.group(1)) if skip_match else 0
+            if (
+                count_match is None
+                or int(count_match.group(1)) != expected_count
+                or observed_skipped != row["skipped_count"]
+                or not re.search(r"^OK", content, re.MULTILINE)
+            ):
                 raise ValueError("preflight evidence log does not prove a passing test run")
     payload["record_digest"] = digest
     return payload
@@ -342,15 +645,14 @@ def validate_preflight_evidence(root: Path, git_commit: str) -> dict[str, object
 def run_prepare(args: argparse.Namespace | SimpleNamespace) -> Path:
     """Publish physically separated long-only shards and strict teacher sidecars."""
     _validate_git(args.git_commit)
+    validate_long_context_publication_root(args.run_root)
     root = Path(args.run_root).resolve()
     _validate_preflight(root, args.git_commit)
     existing = (
         root / "config.json", root / "manifests" / "long_context.json",
         root / "manifests" / "teacher.json",
     )
-    if any(path.exists() for path in existing):
-        if not all(path.is_file() for path in existing):
-            raise ValueError("prepare found an incomplete existing publication")
+    if all(path.is_file() for path in existing):
         config, _, teacher_manifest = _load_prepared_manifests(root, args.git_commit)
         summary = teacher_manifest.get("teacher_upper_bound")
         if summary != {
@@ -361,11 +663,17 @@ def run_prepare(args: argparse.Namespace | SimpleNamespace) -> Path:
             raise ValueError("existing teacher replay summary mismatch")
         return root / "manifests" / "long_context.json"
     records = load_source_records(Path(args.source_run))
-    if tuple(sorted(record.scene for record in records)) != tuple(sorted(EXPECTED_SCENES)):
-        raise ValueError("source manifest does not bind the exact ten calibration scenes")
-    if sum(record.role == "train" for record in records) != 8 or sum(record.role == "validation" for record in records) != 2:
-        raise ValueError("source scene roles must be exactly eight train and two validation")
+    validate_frozen_scene_identity(
+        Path("configs/scannet50_camera_velocity_ambiguity_02_split_v2.json")
+    )
+    validate_source_scene_cohort(records)
     camera_head, checkpoint_sha256 = load_base_camera_head(Path(args.checkpoint_dir))
+    formal_auth = authenticate_formal_run(
+        Path(args.formal_label_root), Path(args.source_run), records, checkpoint_sha256
+    )
+    formal_labels = formal_auth["labels"]
+    if not isinstance(formal_labels, Mapping):
+        raise ValueError("formal label authentication result is malformed")
     device = torch.device(args.device)
     camera_head = camera_head.to(device).eval()
     manifest = build_long_context_manifest({
@@ -379,11 +687,9 @@ def run_prepare(args: argparse.Namespace | SimpleNamespace) -> Path:
     teachers: list[TeacherVariantSet] = []
     for record in records:
         long_path = root / "prediction_only" / "long_context" / f"{record.scene}.npz"
-        if long_path.exists():
-            raise ValueError("prepare refuses to overwrite an existing long-context shard")
-        published = publish_long_context(record, long_path)
+        published = reuse_or_publish_long_context(record, long_path)
         manifest_rows[record.scene]["sha256"] = published.sha256
-        formal_path = _locate_formal_label(Path(args.formal_label_root), record.scene)
+        formal_path = Path(formal_labels[record.scene])
         formal = load_privileged_labels(formal_path)
         teacher = build_teacher_variants(
             record.path, Path(args.prepared_root) / record.scene, camera_head,
@@ -392,11 +698,14 @@ def run_prepare(args: argparse.Namespace | SimpleNamespace) -> Path:
         validate_variant_zero_against_formal(teacher, formal)
         long_context = load_long_context(long_path)
         teacher_path = root / "privileged_labels" / "teacher" / f"{record.scene}.npz"
+        _reject_existing_symlink_components(teacher_path)
+        if not _within(teacher_path.resolve(), root):
+            raise ValueError("teacher publication path escapes the run root")
         arrays = _teacher_arrays(
             teacher, formal, long_context["baseline_c2w"], source_sha256=record.sha256,
             formal_label_sha256=sha256_file(formal_path), git_commit=args.git_commit,
         )
-        teacher_sha = save_teacher_artifact(teacher_path, arrays)
+        teacher_sha = reuse_or_save_teacher_artifact(teacher_path, arrays)
         teacher_rows.append({
             "scene": record.scene, "role": record.role,
             "file": teacher_path.relative_to(root).as_posix(), "sha256": teacher_sha,
@@ -417,13 +726,15 @@ def run_prepare(args: argparse.Namespace | SimpleNamespace) -> Path:
     long_manifest_path = root / "manifests" / "long_context.json"
     teacher_manifest_path = root / "manifests" / "teacher.json"
     audit_long_context_manifest(root, manifest)
-    _atomic_json(long_manifest_path, manifest)
+    _reuse_or_publish_json(long_manifest_path, manifest, "long-context manifest")
     teacher_manifest = {
         "schema": TEACHER_MANIFEST_SCHEMA, "git_commit": args.git_commit,
         "checkpoint_sha256": checkpoint_sha256, "teacher_upper_bound": summary,
+        "formal_completion_sha256": formal_auth["completion_sha256"],
+        "formal_data_manifest_sha256": formal_auth["data_manifest_sha256"],
         "records": teacher_rows,
     }
-    _atomic_json(teacher_manifest_path, teacher_manifest)
+    _reuse_or_publish_json(teacher_manifest_path, teacher_manifest, "teacher manifest")
     config = {
         "schema": "conditional_hierarchical_vrfm.run_config.v1",
         "git_commit": args.git_commit,
@@ -431,14 +742,16 @@ def run_prepare(args: argparse.Namespace | SimpleNamespace) -> Path:
         "basis_sha256": canonical_basis_sha256(),
         "long_manifest_sha256": sha256_file(long_manifest_path),
         "teacher_manifest_sha256": sha256_file(teacher_manifest_path),
+        "source_run": str(Path(args.source_run).resolve()),
+        "source_manifest_sha256": formal_auth["source_manifest_sha256"],
+        "formal_run_root": str(Path(formal_auth["formal_root"])),
+        "formal_completion_sha256": formal_auth["completion_sha256"],
+        "formal_data_manifest_sha256": formal_auth["data_manifest_sha256"],
         "smoke_scene": "scene0000_00", "smoke_steps": 20, "calibration_steps": 250,
         "scene_count": 10, "variant_count": 4,
     }
     config_path = root / "config.json"
-    if config_path.exists() and _read_json(config_path) != config:
-        raise ValueError("existing immutable run config does not match")
-    if not config_path.exists():
-        _atomic_json(config_path, config)
+    _reuse_or_publish_json(config_path, config, "immutable run config")
     return long_manifest_path
 
 
@@ -455,6 +768,22 @@ def _load_prepared_manifests(root: Path, git_commit: str) -> tuple[dict[str, obj
     audit_long_context_manifest(root, long_manifest)
     if teacher_manifest.get("schema") != TEACHER_MANIFEST_SCHEMA or teacher_manifest.get("git_commit") != git_commit:
         raise ValueError("teacher manifest binding mismatch")
+    records = load_source_records(Path(str(config.get("source_run", ""))))
+    formal_auth = authenticate_formal_run(
+        Path(str(config.get("formal_run_root", ""))),
+        Path(str(config.get("source_run", ""))),
+        records,
+        str(config.get("checkpoint_sha256", "")),
+    )
+    for name in ("completion_sha256", "data_manifest_sha256", "source_manifest_sha256"):
+        config_name = "formal_" + name if name != "source_manifest_sha256" else name
+        if config.get(config_name) != formal_auth[name]:
+            raise ValueError("run config formal authentication binding mismatch")
+    if (
+        teacher_manifest.get("formal_completion_sha256") != formal_auth["completion_sha256"]
+        or teacher_manifest.get("formal_data_manifest_sha256") != formal_auth["data_manifest_sha256"]
+    ):
+        raise ValueError("teacher manifest formal authentication binding mismatch")
     rows = teacher_manifest.get("records")
     if not isinstance(rows, list) or len(rows) != 10:
         raise ValueError("teacher manifest must bind ten scenes")
@@ -463,6 +792,9 @@ def _load_prepared_manifests(root: Path, git_commit: str) -> tuple[dict[str, obj
         if path.is_symlink() or not _within(path.resolve(), root) or sha256_file(path) != row["sha256"]:
             raise ValueError("teacher manifest artifact mismatch")
         load_teacher_artifact(path)
+        formal_label = formal_auth["labels"][str(row["scene"])]
+        if row.get("formal_label_sha256") != sha256_file(Path(formal_label)):
+            raise ValueError("teacher manifest formal label binding mismatch")
     return config, long_manifest, teacher_manifest
 
 
@@ -524,6 +856,71 @@ def validate_target_for_stage(target: Mapping[str, object], *, steps: int) -> No
         raise ValueError("target final losses must be strictly decreasing from their initial losses")
 
 
+def validate_target_checkpoint_witness(
+    target: Mapping[str, object],
+    checkpoints: Sequence[Mapping[str, object]],
+    *,
+    steps: int,
+) -> None:
+    """Bind every saved target value to the exact optimizer checkpoint witness."""
+    validate_target_for_stage(target, steps=steps)
+    coefficients = np.asarray(target.get("residual_coefficients"))
+    initial = np.asarray(target.get("initial_losses"))
+    final = np.asarray(target.get("final_losses"))
+    if (
+        coefficients.shape != (4, 32, 2048)
+        or coefficients.dtype != np.float32
+        or not np.isfinite(coefficients).all()
+        or initial.shape != (4,)
+        or initial.dtype != np.float64
+        or final.shape != (4,)
+        or final.dtype != np.float64
+        or len(checkpoints) != 4
+    ):
+        raise ValueError("target/checkpoint witness tensor contract mismatch")
+    provenance = {
+        "source_sha256": str(target.get("source_sha256")),
+        "teacher_sha256": str(target.get("teacher_sha256")),
+        "basis_sha256": str(target.get("basis_sha256")),
+        "camera_head_checkpoint_sha256": str(target.get("checkpoint_sha256")),
+        "git_commit": str(target.get("git_commit")),
+    }
+    for variant, checkpoint in enumerate(checkpoints):
+        try:
+            best = checkpoint["best_coefficients"]
+            loss_trace = checkpoint["loss_trace"]
+            initial_loss = float(checkpoint["initial_loss"])
+            best_loss = float(checkpoint["best_loss"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("target/checkpoint witness is incomplete") from error
+        if (
+            not isinstance(best, torch.Tensor)
+            or best.device.type != "cpu"
+            or best.dtype != torch.float32
+            or tuple(best.shape) != (1, 32, 2048)
+            or not torch.isfinite(best).all().item()
+            or checkpoint.get("variant_index") != variant
+            or checkpoint.get("next_step") != steps
+            or not isinstance(loss_trace, list)
+            or len(loss_trace) != steps
+            or not np.isfinite(np.asarray(loss_trace, dtype=np.float64)).all()
+            or not np.isfinite((initial_loss, best_loss)).all()
+            or best_loss != min(float(value) for value in loss_trace)
+            or initial_loss != float(initial[variant])
+            or best_loss != float(final[variant])
+            or any(checkpoint.get(name) != value for name, value in provenance.items())
+            or not np.array_equal(best.numpy()[0], coefficients[variant])
+        ):
+            raise ValueError("target/checkpoint witness mismatch")
+
+
+def _load_checkpoint_witnesses(checkpoint_dir: Path) -> list[dict[str, object]]:
+    return [
+        load_lift_checkpoint(Path(checkpoint_dir) / f"variant_{variant}.pt")
+        for variant in range(4)
+    ]
+
+
 def verify_target_redecode(
     camera_head: torch.nn.Module,
     long_tokens: torch.Tensor,
@@ -568,6 +965,9 @@ def _run_scene_lift(
     if target_path.exists():
         existing = load_latent_targets(target_path)
         _target_bindings_valid(existing, long, teacher_path, teacher, steps=steps, git_commit=git_commit)
+        validate_target_checkpoint_witness(
+            existing, _load_checkpoint_witnesses(checkpoint_dir), steps=steps
+        )
         return target_path
     tokens = torch.from_numpy(long["camera_tokens"]).unsqueeze(0).to(device=device, dtype=torch.float32)
     oracle = _oracle_from_teacher(teacher)
@@ -623,6 +1023,9 @@ def _run_scene_lift(
         "git_commit": np.asarray(git_commit, dtype="U40"),
     }
     save_latent_targets(target_path, arrays, teacher_artifact=teacher_path)
+    validate_target_checkpoint_witness(
+        arrays, _load_checkpoint_witnesses(checkpoint_dir), steps=steps
+    )
     del arrays, results, tokens, long, teacher
     gc.collect()
     if device.type == "cuda":
@@ -671,7 +1074,13 @@ def run_smoke(args: argparse.Namespace | SimpleNamespace) -> Path:
     long_path = root / "prediction_only" / "long_context" / "scene0000_00.npz"
     teacher = load_teacher_artifact(teacher_path)
     teacher["artifact_sha256"] = sha256_file(teacher_path)
-    metrics = evaluate_latent_targets(load_long_context(long_path), load_latent_targets(target), teacher)
+    target_arrays = load_latent_targets(target)
+    validate_target_checkpoint_witness(
+        target_arrays,
+        _load_checkpoint_witnesses(root / "smoke" / "checkpoints" / "scene0000_00"),
+        steps=20,
+    )
+    metrics = evaluate_latent_targets(load_long_context(long_path), target_arrays, teacher)
     if not metrics["all_finite"]:
         raise ValueError("smoke metrics are non-finite")
     checkpoints = sorted((root / "smoke" / "checkpoints" / "scene0000_00").glob("variant_*.pt"))
@@ -702,24 +1111,31 @@ def _recompute_scene_metrics(
     return metrics
 
 
-def _allowed_formal_file(relative: str) -> bool:
+def _expected_formal_files() -> set[str]:
     exact = {
         "config.json", "manifests/preflight_evidence.json", "manifests/long_context.json",
         "manifests/teacher.json", "smoke/completed.json", "calibration/completed.json",
         "reports/stage_a.json", "reports/stage_a.md",
     }
-    if relative in exact:
-        return True
-    patterns = (
-        r"logs/preflight_[0-3]\.log",
-        r"prediction_only/long_context/scene\d{4}_\d{2}\.npz",
-        r"privileged_labels/teacher/scene\d{4}_\d{2}\.npz",
-        r"privileged_labels/latent_targets/scene\d{4}_\d{2}\.npz",
-        r"smoke/latent_targets/scene0000_00\.npz",
-        r"smoke/checkpoints/scene0000_00/variant_[0-3]\.pt",
-        r"checkpoints/calibration/scene\d{4}_\d{2}/variant_[0-3]\.pt",
+    exact.update(f"logs/preflight_{index}.log" for index in range(4))
+    for scene in EXPECTED_SCENES:
+        exact.add(f"prediction_only/long_context/{scene}.npz")
+        exact.add(f"privileged_labels/teacher/{scene}.npz")
+        exact.add(f"privileged_labels/latent_targets/{scene}.npz")
+        exact.update(
+            f"checkpoints/calibration/{scene}/variant_{variant}.pt"
+            for variant in range(4)
+        )
+    exact.add("smoke/latent_targets/scene0000_00.npz")
+    exact.update(
+        f"smoke/checkpoints/scene0000_00/variant_{variant}.pt"
+        for variant in range(4)
     )
-    return any(re.fullmatch(pattern, relative) for pattern in patterns)
+    return exact
+
+
+def is_expected_formal_file(relative: str) -> bool:
+    return relative.replace("\\", "/") in _expected_formal_files()
 
 
 def run_report(args: argparse.Namespace | SimpleNamespace) -> Path:
@@ -760,9 +1176,11 @@ def run_report(args: argparse.Namespace | SimpleNamespace) -> Path:
         relative = path.relative_to(root).as_posix()
         if relative in {"manifests/verification_inventory.json", "verified_completion.json"}:
             continue
-        if not _allowed_formal_file(relative):
+        if not is_expected_formal_file(relative):
             raise ValueError("run does not have the exact directory whitelist")
         files[relative] = sha256_file(path)
+    if set(files) != _expected_formal_files():
+        raise ValueError("run does not contain the exact formal file cohort")
     inventory = {
         "schema": INVENTORY_SCHEMA, "git_commit": args.git_commit,
         "classification": classification["classification"], "files": files,
@@ -773,6 +1191,12 @@ def run_report(args: argparse.Namespace | SimpleNamespace) -> Path:
             raise ValueError("existing verification inventory does not match recomputation")
     else:
         _atomic_json(inventory_path, inventory)
+    verify_inventory_exactness(
+        root,
+        inventory,
+        allow_verified_completion=True,
+        expected_files=_expected_formal_files(),
+    )
     return inventory_path
 
 
@@ -839,6 +1263,11 @@ def run_calibration(args: argparse.Namespace | SimpleNamespace) -> Path:
         smoke_target, smoke_long, smoke_teacher_path, smoke_teacher,
         steps=20, git_commit=expected_commit,
     )
+    validate_target_checkpoint_witness(
+        smoke_target,
+        _load_checkpoint_witnesses(root / "smoke" / "checkpoints" / smoke_scene),
+        steps=20,
+    )
     if not np.all(smoke_target["final_losses"] < smoke_target["initial_losses"]):
         raise ValueError("smoke completion losses did not decrease")
     smoke_tokens = torch.from_numpy(smoke_long["camera_tokens"]).unsqueeze(0).to(device)
@@ -903,10 +1332,13 @@ def verify_inventory_exactness(
     inventory: Mapping[str, object],
     *,
     allow_verified_completion: bool = False,
+    expected_files: set[str] | None = None,
 ) -> None:
     """Rehash every inventoried byte and reject every unlisted filesystem entry."""
     root = Path(run_root).resolve()
     allowed = _inventory_files(root, inventory)
+    if expected_files is not None and allowed != expected_files:
+        raise ValueError("verification inventory does not bind the exact formal cohort")
     inventory_path = root / "manifests" / "verification_inventory.json"
     if inventory_path.is_file():
         allowed.add("manifests/verification_inventory.json")
@@ -914,12 +1346,23 @@ def verify_inventory_exactness(
     if allow_verified_completion and completion_path.is_file():
         allowed.add("verified_completion.json")
     actual: set[str] = set()
+    actual_directories: set[str] = set()
     for path in root.rglob("*"):
         if path.is_symlink() or path.name.endswith(".tmp"):
             raise ValueError("run contains forbidden symlink or temporary artifact")
         if path.is_file():
             actual.add(path.relative_to(root).as_posix())
+        elif path.is_dir():
+            actual_directories.add(path.relative_to(root).as_posix())
     if actual != allowed:
+        raise ValueError("run does not have the exact directory inventory")
+    expected_directories: set[str] = set()
+    for relative in allowed:
+        parent = Path(relative).parent
+        while parent != Path("."):
+            expected_directories.add(parent.as_posix())
+            parent = parent.parent
+    if actual_directories != expected_directories:
         raise ValueError("run does not have the exact directory inventory")
     size = sum((root / relative).stat().st_size for relative in actual)
     if size >= 20 * 1024**3:
@@ -974,6 +1417,13 @@ def verify_completed_run(
             teacher_path = root / str(teacher_by_scene[scene]["file"])
             teacher = load_teacher_artifact(teacher_path)
             _target_bindings_valid(target, long, teacher_path, teacher, steps=250, git_commit=expected_git_commit)
+            validate_target_checkpoint_witness(
+                target,
+                _load_checkpoint_witnesses(
+                    root / "checkpoints" / "calibration" / scene
+                ),
+                steps=250,
+            )
             for variant in range(4):
                 checkpoint = load_lift_checkpoint(
                     root / "checkpoints" / "calibration" / scene / f"variant_{variant}.pt"
@@ -1020,7 +1470,12 @@ def verify_completed_run(
         if inventory["classification"] != classification["classification"]:
             raise ValueError("inventory classification does not match independent replay")
     completion_path = root / "verified_completion.json"
-    verify_inventory_exactness(root, inventory, allow_verified_completion=True)
+    verify_inventory_exactness(
+        root,
+        inventory,
+        allow_verified_completion=True,
+        expected_files=_expected_formal_files(),
+    )
     unsigned = {
         "schema": VERIFIED_SCHEMA,
         "git_commit": expected_git_commit,
