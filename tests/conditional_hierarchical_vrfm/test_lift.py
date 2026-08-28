@@ -217,6 +217,44 @@ class LiftTests(unittest.TestCase):
                         source_sha256=self.source_sha256, teacher_sha256=self.teacher_sha256,
                     )
 
+    def test_checkpoint_rejects_same_shape_invalid_cpu_rng_without_changing_global_rng(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint, _ = self._checkpoint_fixture(directory)
+            valid_rng = torch.get_rng_state()
+            self._rewrite_checkpoint(checkpoint, lambda payload: payload.__setitem__("rng_state", torch.zeros_like(valid_rng)))
+            before = torch.get_rng_state().clone()
+            with self.assertRaisesRegex(ValueError, "checkpoint"):
+                load_lift_checkpoint(checkpoint)
+            torch.testing.assert_close(torch.get_rng_state(), before, atol=0.0, rtol=0.0)
+
+    def test_rng_setter_failure_rolls_back_cpu_and_cuda_state(self) -> None:
+        import pre_experiments.conditional_hierarchical_vrfm.lift as lift
+        saved_cpu = torch.get_rng_state().clone()
+        original_cpu = torch.full_like(saved_cpu, 7)
+        saved_cuda = torch.ones(8, dtype=torch.uint8)
+        original_cuda = torch.full((8,), 2, dtype=torch.uint8)
+        cpu_sets: list[torch.Tensor] = []
+        cuda_sets: list[torch.Tensor] = []
+
+        def set_cpu(value: torch.Tensor) -> None:
+            cpu_sets.append(value.clone())
+
+        def set_cuda(value: torch.Tensor, *, device: torch.device) -> None:
+            cuda_sets.append(value.clone())
+            if len(cuda_sets) == 1:
+                raise RuntimeError("controlled CUDA setter failure")
+
+        with mock.patch.object(lift.torch, "get_rng_state", return_value=original_cpu), mock.patch.object(
+            lift.torch, "set_rng_state", side_effect=set_cpu
+        ), mock.patch.object(lift.torch.cuda, "get_rng_state", return_value=original_cuda), mock.patch.object(
+            lift.torch.cuda, "set_rng_state", side_effect=set_cuda
+        ):
+            with self.assertRaisesRegex(ValueError, "RNG state"):
+                lift._apply_rng_states_atomically(saved_cpu, saved_cuda, torch.device("cuda", 0))
+        torch.testing.assert_close(cpu_sets[0], saved_cpu)
+        torch.testing.assert_close(cpu_sets[-1], original_cpu)
+        torch.testing.assert_close(cuda_sets[-1], original_cuda)
+
     def test_nonmonotonic_resume_keeps_the_original_best_state(self) -> None:
         config = LiftConfig(max_steps=20, learning_rate=4.0, smoothness=0.0, residual_norm=0.0)
         with tempfile.TemporaryDirectory() as directory, mock.patch(

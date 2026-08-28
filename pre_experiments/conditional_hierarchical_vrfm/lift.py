@@ -188,6 +188,39 @@ def _validate_rng_shape(value: Tensor, expected: Tensor, name: str) -> None:
         raise ValueError(f"invalid lift checkpoint {name}")
 
 
+def _validate_rng_bytes(value: Tensor, device: torch.device, name: str) -> None:
+    """Validate generator bytes without touching the process-global RNG state."""
+    try:
+        isolated = torch.Generator(device=device)
+        isolated.set_state(value)
+    except (RuntimeError, ValueError, TypeError) as error:
+        raise ValueError(f"invalid lift checkpoint {name}") from error
+
+
+def _apply_rng_states_atomically(
+    cpu_rng_state: Tensor, cuda_rng_state: Tensor | None, device: torch.device
+) -> None:
+    """Apply CPU/CUDA state as one transaction, restoring both domains on any setter failure."""
+    previous_cpu = torch.get_rng_state()
+    previous_cuda = torch.cuda.get_rng_state(device) if device.type == "cuda" else None
+    try:
+        torch.set_rng_state(cpu_rng_state)
+        if device.type == "cuda":
+            assert cuda_rng_state is not None
+            torch.cuda.set_rng_state(cuda_rng_state, device=device)
+    except (RuntimeError, ValueError, TypeError) as error:
+        try:
+            torch.set_rng_state(previous_cpu)
+        finally:
+            if device.type == "cuda":
+                try:
+                    assert previous_cuda is not None
+                    torch.cuda.set_rng_state(previous_cuda, device=device)
+                except (RuntimeError, ValueError, TypeError):
+                    pass
+        raise ValueError("invalid lift checkpoint RNG state") from error
+
+
 def latent_lift_loss(
     *,
     corrected_c2w_raw: Tensor,
@@ -314,6 +347,7 @@ def _checkpoint_payload_valid(payload: Any) -> dict[str, Any]:
     if not isinstance(payload["rng_state"], Tensor):
         raise ValueError("invalid lift checkpoint RNG state")
     _validate_rng_shape(payload["rng_state"], torch.get_rng_state(), "RNG state")
+    _validate_rng_bytes(payload["rng_state"], torch.device("cpu"), "RNG state")
     if payload["device_type"] not in {"cpu", "cuda"}:
         raise ValueError("invalid lift checkpoint device type")
     cuda_rng_state = payload["cuda_rng_state"]
@@ -526,8 +560,10 @@ def optimize_latent_target(
                 _validate_rng_shape(
                     payload["cuda_rng_state"], torch.cuda.get_rng_state(device), "CUDA RNG state"
                 )
+                _validate_rng_bytes(payload["cuda_rng_state"], device, "CUDA RNG state")
             except (RuntimeError, ValueError) as error:
                 raise ValueError("invalid lift checkpoint CUDA RNG state") from error
+        _apply_rng_states_atomically(payload["rng_state"], payload["cuda_rng_state"], device)
         with torch.no_grad():
             coefficients.copy_(payload["coefficients"].to(device=device))
         try:
@@ -538,12 +574,6 @@ def optimize_latent_target(
             for key, value in state.items():
                 if isinstance(value, Tensor):
                     state[key] = value.to(device=device)
-        try:
-            torch.set_rng_state(payload["rng_state"])
-            if device.type == "cuda":
-                torch.cuda.set_rng_state(payload["cuda_rng_state"], device=device)
-        except (RuntimeError, ValueError) as error:
-            raise ValueError("invalid lift checkpoint RNG state") from error
         loss_trace = [float(value) for value in payload["loss_trace"]]
         initial_loss = float(payload["initial_loss"])
         best_coefficients = payload["best_coefficients"].to(device=device).clone()
