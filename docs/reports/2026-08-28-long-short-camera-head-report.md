@@ -22,8 +22,9 @@ representation.
 - Evaluation: both variants on all ten scenes; only the two locked-replay scenes
   participate in the acceptance decision
 - Long-only inference audit: passed
-- Repeated `verified_completion.json` SHA-256:
-  `54e72876c7596ba5a02b31b7c089ce60dad81a64f6a5402a6e7aa5113410ba9b`
+- `verified_completion.json` was regenerated twice with byte-identical output;
+  its final SHA-256 is recorded alongside the remote run, rather than embedded
+  here, so this report does not become stale when verification metadata grows.
 - Artifact size: 7.8 GiB; no large artifact was copied from H20
 
 The earlier run `long_short_head_20260828T064208Z` is superseded and must be
@@ -88,13 +89,14 @@ ten-scene diagnostics, and two locked-replay gates should remain unchanged.
 
 ## Verification
 
-- Local Camera Head tests: 38 passed.
+- Local Camera Head tests: 39 passed.
 - Compatibility tests: 64 VRFM tests passed (one Windows symlink skip) and 55
   selector tests passed.
-- H20 preflight: all 38 Camera Head tests passed and were hash-bound to the run.
+- H20 preflight: 39 Camera Head, 64 VRFM, and 55 selector tests passed and were
+  hash-bound to the run (158 total).
 - All stderr logs are empty.
 - The verifier checked the formal configuration, data/config digests, smoke
   decrease and exact reload, checkpoint metadata, 20 predictions, 20 metric
   files, all stage completion hashes, report hash, and long-only signature.
-- Independent H20 verification ran twice and produced the identical completion
-  hash shown above.
+- Independent H20 verification ran twice and produced byte-identical completion
+  files.
