@@ -687,6 +687,14 @@ class H20RunnerBehaviorTests(unittest.TestCase):
                     )
                 },
             ),
+            (
+                "status-failure",
+                {
+                    "FIXTURE_GIT_STATUS_SEQUENCE": (
+                        "__EMPTY__|__EMPTY__|__FAIL__"
+                    )
+                },
+            ),
         )
         for label, change in cases:
             with self.subTest(label=label):
@@ -705,6 +713,11 @@ class H20RunnerBehaviorTests(unittest.TestCase):
                 self.assertEqual(
                     [stage for _, stage in self.python_stages()], ["preflight"]
                 )
+                if label == "status-failure":
+                    self.assertIn(
+                        "could not recheck worktree cleanliness",
+                        result.stderr.lower(),
+                    )
 
     def _check_disk_threshold_is_exact_in_bytes(self) -> None:
         threshold = 100 * 1024**3
@@ -724,6 +737,7 @@ class H20RunnerBehaviorTests(unittest.TestCase):
         )
 
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not inspect worktree cleanliness", result.stderr.lower())
         self.assertEqual(self.python_stages(), [])
 
     def _check_disk_threshold_accepts_exactly_100_gib(self) -> None:
@@ -935,7 +949,9 @@ class H20RunnerBehaviorTests(unittest.TestCase):
             self.assertIn("gpu", second.stderr.lower())
         finally:
             release.touch()
-            first_stdout, first_stderr = first.communicate(timeout=30)
+            first_stdout, first_stderr = first.communicate(
+                timeout=RUNNER_FIXTURE_TIMEOUT_SECONDS
+            )
         self.assertEqual(first.returncode, 0, first_stderr + first_stdout)
 
     def test_complete_run_selects_an_idle_h20_and_runs_six_ordered_stages(self) -> None:
