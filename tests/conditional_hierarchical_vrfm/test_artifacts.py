@@ -144,6 +144,50 @@ class LatentTargetArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "SO\(3\)"):
             save_teacher_artifact(self.path.with_name("teacher.npz"), arrays)
 
+    def test_teacher_artifact_accepts_raw_so3_roundoff_but_rejects_distortion(self) -> None:
+        arrays = self.valid_teacher_arrays()
+        roundoff_rotation = np.diag([1.0 + 7e-7, 1.0 + 3e-7, 1.0 + 3e-7])
+        arrays["gt_c2w"][0, :3, :3] = roundoff_rotation
+        path = self.path.with_name("teacher_roundoff.npz")
+        try:
+            save_teacher_artifact(path, arrays)
+        except ValueError as error:
+            self.fail(f"raw authenticated SO(3) roundoff must be accepted: {error}")
+        loaded = load_teacher_artifact(path)
+        np.testing.assert_array_equal(loaded["gt_c2w"], arrays["gt_c2w"])
+
+        strict_oracle = self.valid_teacher_arrays()
+        strict_oracle["oracle_rotation"] = roundoff_rotation
+        strict_oracle["oracle_digest"] = np.asarray(canonical_json_digest({
+            "scene": "scene0000_00", "frame_digest": "a" * 64, "fit_count": 500,
+            "scale": 1.0,
+            "rotation": tuple(tuple(float(value) for value in row) for row in roundoff_rotation),
+            "translation": (0.0, 0.0, 0.0),
+        }), dtype="U64")
+        with self.assertRaisesRegex(ValueError, "SO\(3\)"):
+            save_teacher_artifact(
+                self.path.with_name("teacher_strict_oracle.npz"), strict_oracle
+            )
+
+        just_over_threshold = np.eye(3, dtype=np.float64)
+        just_over_threshold[0, 1] = 2.1e-6
+        larger_shear = np.eye(3, dtype=np.float64)
+        larger_shear[0, 1] = 1e-5
+        invalid_rotations = {
+            "just_over_threshold": just_over_threshold,
+            "one_e_minus_five_shear": larger_shear,
+            "reflection": np.diag([-1.0, 1.0, 1.0]),
+            "nan": np.full((3, 3), np.nan, dtype=np.float64),
+        }
+        for name, rotation in invalid_rotations.items():
+            with self.subTest(name=name):
+                distorted = self.valid_teacher_arrays()
+                distorted["gt_c2w"][0, :3, :3] = rotation
+                with self.assertRaises(ValueError):
+                    save_teacher_artifact(
+                        self.path.with_name(f"teacher_{name}.npz"), distorted
+                    )
+
     def test_teacher_artifact_recomputes_oracle_digest(self) -> None:
         arrays = self.valid_teacher_arrays()
         arrays["oracle_digest"] = np.asarray("b" * 64, dtype="U64")

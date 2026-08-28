@@ -28,6 +28,8 @@ TEACHER_ARTIFACT_MEMBERS = {
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
+_STRICT_SO3_ATOL = 1e-7
+_RAW_POSE_SO3_ATOL = 2e-6
 _EXPECTED_SHAPES = {
     "scene": (),
     "frame_ids": (500,),
@@ -152,13 +154,19 @@ def _validate_pose_stack(value: np.ndarray, shape: tuple[int, ...], name: str) -
         raise ValueError(f"teacher artifact {name} has invalid shape or dtype")
 
 
-def _validate_so3(value: np.ndarray, name: str) -> None:
+def _validate_so3(
+    value: np.ndarray, name: str, *, atol: float = _STRICT_SO3_ATOL
+) -> None:
     rotations = np.asarray(value, dtype=np.float64)
     gram = np.einsum("...ji,...jk->...ik", rotations, rotations)
     if (
         not np.isfinite(rotations).all()
-        or not np.allclose(gram, np.eye(3), atol=1e-7, rtol=1e-7)
-        or not np.allclose(np.linalg.det(rotations), 1.0, atol=1e-7, rtol=1e-7)
+        or not np.allclose(
+            gram, np.eye(3), atol=atol, rtol=0.0
+        )
+        or not np.allclose(
+            np.linalg.det(rotations), 1.0, atol=atol, rtol=0.0,
+        )
     ):
         raise ValueError(f"teacher artifact {name} must contain proper SO(3) rotations")
 
@@ -199,8 +207,14 @@ def _validate_teacher_artifact(arrays: Mapping[str, np.ndarray]) -> None:
         arrays["baseline_c2w_raw"][..., 3, :], [0, 0, 0, 1]
     ):
         raise ValueError("teacher artifact baseline and GT poses must be homogeneous")
-    _validate_so3(arrays["gt_c2w"][..., :3, :3], "gt_c2w")
-    _validate_so3(arrays["baseline_c2w_raw"][..., :3, :3], "baseline_c2w_raw")
+    _validate_so3(
+        arrays["gt_c2w"][..., :3, :3], "gt_c2w", atol=_RAW_POSE_SO3_ATOL
+    )
+    _validate_so3(
+        arrays["baseline_c2w_raw"][..., :3, :3],
+        "baseline_c2w_raw",
+        atol=_RAW_POSE_SO3_ATOL,
+    )
     expected_shapes = {
         "gt_scene_scale": (), "oracle_fit_count": (), "oracle_scale": (),
         "oracle_rotation": (3, 3), "oracle_translation": (3,), "oracle_rank": (),
@@ -250,7 +264,11 @@ def _validate_teacher_artifact(arrays: Mapping[str, np.ndarray]) -> None:
     if np.any(covered) and not np.allclose(fused[covered][:, 3, :], [0, 0, 0, 1]):
         raise ValueError("teacher artifact covered fused poses must be homogeneous")
     if np.any(covered):
-        _validate_so3(fused[covered][:, :3, :3], "covered fused_c2w")
+        _validate_so3(
+            fused[covered][:, :3, :3],
+            "covered fused_c2w",
+            atol=_RAW_POSE_SO3_ATOL,
+        )
 
 
 def save_teacher_artifact(path: Path, arrays: Mapping[str, np.ndarray]) -> str:
