@@ -15,6 +15,7 @@ import torch.nn.functional as F
 
 from pre_experiments.camera_velocity_ambiguity_02.frozen_oracle import FrozenOracle
 from pre_experiments.conditional_hierarchical_vrfm.basis import (
+    canonical_basis_sha256,
     expand_residual,
     temporal_dct_basis,
 )
@@ -22,7 +23,7 @@ from pre_experiments.long_short_camera_head.geometry import apply_sim3_torch
 from pre_experiments.variational_camera_latent.camera import pose_encoding_to_c2w
 
 
-_CHECKPOINT_SCHEMA = "conditional_hierarchical_vrfm.lift.v2"
+_CHECKPOINT_SCHEMA = "conditional_hierarchical_vrfm.lift.v3"
 _DIGEST_LENGTH = 64
 
 
@@ -78,6 +79,12 @@ def _config_digest(config: LiftConfig) -> str:
 def _valid_digest(value: str, name: str) -> str:
     if not isinstance(value, str) or len(value) != _DIGEST_LENGTH or any(ch not in "0123456789abcdef" for ch in value):
         raise ValueError(f"{name} must be a lowercase SHA-256 digest")
+    return value
+
+
+def _valid_git_commit(value: str) -> str:
+    if not isinstance(value, str) or len(value) != 40 or any(ch not in "0123456789abcdef" for ch in value):
+        raise ValueError("git_commit must be a lowercase 40-character commit")
     return value
 
 
@@ -335,7 +342,8 @@ def _checkpoint_payload_valid(payload: Any) -> dict[str, Any]:
     required = {
         "schema", "coefficients", "optimizer", "variant_index", "next_step", "config_digest",
         "source_sha256", "teacher_sha256", "rng_state", "cuda_rng_state", "device_type",
-        "loss_trace", "initial_loss", "best_coefficients", "best_loss",
+        "loss_trace", "initial_loss", "best_coefficients", "best_loss", "basis_sha256",
+        "camera_head_checkpoint_sha256", "git_commit",
     }
     if set(payload) != required:
         raise ValueError("invalid lift checkpoint structure")
@@ -351,8 +359,12 @@ def _checkpoint_payload_valid(payload: Any) -> dict[str, Any]:
         raise ValueError("invalid lift checkpoint step")
     if payload["variant_index"] >= 4:
         raise ValueError("invalid lift checkpoint variant")
-    for name in ("config_digest", "source_sha256", "teacher_sha256"):
+    for name in (
+        "config_digest", "source_sha256", "teacher_sha256", "basis_sha256",
+        "camera_head_checkpoint_sha256",
+    ):
         _valid_digest(payload[name], name)
+    _valid_git_commit(payload["git_commit"])
     if not isinstance(payload["rng_state"], Tensor):
         raise ValueError("invalid lift checkpoint RNG state")
     _validate_rng_shape(payload["rng_state"], torch.get_rng_state(), "RNG state")
@@ -413,6 +425,9 @@ def save_lift_checkpoint(
     config_digest: str,
     source_sha256: str,
     teacher_sha256: str,
+    basis_sha256: str,
+    camera_head_checkpoint_sha256: str,
+    git_commit: str,
     rng_state: Tensor,
     best_coefficients: Tensor,
     best_loss: float,
@@ -434,6 +449,9 @@ def save_lift_checkpoint(
     _valid_digest(config_digest, "config_digest")
     _valid_digest(source_sha256, "source_sha256")
     _valid_digest(teacher_sha256, "teacher_sha256")
+    _valid_digest(basis_sha256, "basis_sha256")
+    _valid_digest(camera_head_checkpoint_sha256, "camera_head_checkpoint_sha256")
+    _valid_git_commit(git_commit)
     resolved_device_type = coefficients.device.type if device_type is None else device_type
     resolved_cuda_rng = cuda_rng_state
     if resolved_device_type == "cuda" and resolved_cuda_rng is None:
@@ -449,6 +467,9 @@ def save_lift_checkpoint(
         "config_digest": config_digest,
         "source_sha256": source_sha256,
         "teacher_sha256": teacher_sha256,
+        "basis_sha256": basis_sha256,
+        "camera_head_checkpoint_sha256": camera_head_checkpoint_sha256,
+        "git_commit": git_commit,
         "rng_state": rng_state.detach().to(device="cpu", dtype=torch.uint8).clone(),
         "cuda_rng_state": None if resolved_cuda_rng is None else resolved_cuda_rng.detach().to(device="cpu", dtype=torch.uint8).clone(),
         "device_type": resolved_device_type,
@@ -527,11 +548,19 @@ def optimize_latent_target(
     resume: bool = False,
     source_sha256: str,
     teacher_sha256: str,
+    basis_sha256: str,
+    camera_head_checkpoint_sha256: str,
+    git_commit: str,
 ) -> LiftResult:
     """Optimize a single variant; callers process four variants sequentially."""
     _validate_config(config)
     _valid_digest(source_sha256, "source_sha256")
     _valid_digest(teacher_sha256, "teacher_sha256")
+    _valid_digest(basis_sha256, "basis_sha256")
+    _valid_digest(camera_head_checkpoint_sha256, "camera_head_checkpoint_sha256")
+    _valid_git_commit(git_commit)
+    if basis_sha256 != canonical_basis_sha256():
+        raise ValueError("basis_sha256 does not match the canonical basis")
     if isinstance(variant_index, bool) or not isinstance(variant_index, int) or not 0 <= variant_index < 4:
         raise ValueError("variant_index must lie in [0, 3]")
     if not isinstance(long_tokens, Tensor) or long_tokens.shape != (1, 500, 2048):
@@ -557,6 +586,12 @@ def optimize_latent_target(
             raise ValueError("checkpoint source digest does not match")
         if payload["teacher_sha256"] != teacher_sha256:
             raise ValueError("checkpoint teacher digest does not match")
+        if payload["basis_sha256"] != basis_sha256:
+            raise ValueError("checkpoint basis_sha256 does not match")
+        if payload["camera_head_checkpoint_sha256"] != camera_head_checkpoint_sha256:
+            raise ValueError("checkpoint checkpoint_sha256 does not match")
+        if payload["git_commit"] != git_commit:
+            raise ValueError("checkpoint git_commit does not match")
         if payload["variant_index"] != variant_index:
             raise ValueError("checkpoint variant does not match")
         next_step = payload["next_step"]
@@ -642,6 +677,9 @@ def optimize_latent_target(
                     checkpoint_path, coefficients=coefficients, optimizer=optimizer,
                     variant_index=variant_index, next_step=step + 1, config_digest=config_digest,
                     source_sha256=source_sha256, teacher_sha256=teacher_sha256,
+                    basis_sha256=basis_sha256,
+                    camera_head_checkpoint_sha256=camera_head_checkpoint_sha256,
+                    git_commit=git_commit,
                     rng_state=torch.get_rng_state(), loss_trace=tuple(loss_trace), initial_loss=initial_loss,
                     best_coefficients=best_coefficients, best_loss=best_loss,
                     cuda_rng_state=(torch.cuda.get_rng_state(device) if device.type == "cuda" else None),

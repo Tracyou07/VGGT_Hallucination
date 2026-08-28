@@ -18,6 +18,18 @@ from pre_experiments.conditional_hierarchical_vrfm.lift import (
     optimize_latent_target,
     save_lift_checkpoint,
 )
+from pre_experiments.conditional_hierarchical_vrfm.basis import canonical_basis_sha256
+
+
+_real_optimize_latent_target = optimize_latent_target
+
+
+def optimize_latent_target(*args: object, **kwargs: object):
+    """Supply invariant production bindings so legacy loss tests stay focused."""
+    kwargs.setdefault("basis_sha256", canonical_basis_sha256())
+    kwargs.setdefault("camera_head_checkpoint_sha256", hashlib.sha256(b"camera-head").hexdigest())
+    kwargs.setdefault("git_commit", "1" * 40)
+    return _real_optimize_latent_target(*args, **kwargs)
 
 
 def _identity_oracle() -> FrozenOracle:
@@ -74,6 +86,42 @@ class LiftTests(unittest.TestCase):
         self.teacher[:, self.coverage == 0] = torch.nan
         self.source_sha256 = hashlib.sha256(b"source").hexdigest()
         self.teacher_sha256 = hashlib.sha256(b"teacher").hexdigest()
+        self.checkpoint_sha256 = hashlib.sha256(b"camera-head").hexdigest()
+        self.git_commit = "1" * 40
+
+    def _provenance(self) -> dict[str, str]:
+        return {
+            "basis_sha256": canonical_basis_sha256(),
+            "camera_head_checkpoint_sha256": self.checkpoint_sha256,
+            "git_commit": self.git_commit,
+        }
+
+    def test_checkpoint_rejects_changed_basis_checkpoint_or_git_binding(self) -> None:
+        config = LiftConfig(max_steps=2, learning_rate=0.08, smoothness=0.0, residual_norm=0.0)
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w
+        ):
+            checkpoint = Path(directory) / "bound.pt"
+            optimize_latent_target(
+                self.head, self.long_tokens, self.teacher, self.oracle, config,
+                coverage_weight=self.coverage, checkpoint_path=checkpoint,
+                source_sha256=self.source_sha256, teacher_sha256=self.teacher_sha256,
+                **self._provenance(),
+            )
+            for name, value in (
+                ("basis_sha256", "2" * 64),
+                ("camera_head_checkpoint_sha256", "3" * 64),
+                ("git_commit", "4" * 40),
+            ):
+                bindings = self._provenance()
+                bindings[name] = value
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, name.replace("camera_head_", "")):
+                    optimize_latent_target(
+                        self.head, self.long_tokens, self.teacher, self.oracle, config,
+                        coverage_weight=self.coverage, checkpoint_path=checkpoint, resume=True,
+                        source_sha256=self.source_sha256, teacher_sha256=self.teacher_sha256,
+                        **bindings,
+                    )
 
     def _checkpoint_fixture(self, directory: str) -> tuple[Path, LiftConfig]:
         config = LiftConfig(max_steps=3, learning_rate=0.08, smoothness=0.0, residual_norm=0.0)

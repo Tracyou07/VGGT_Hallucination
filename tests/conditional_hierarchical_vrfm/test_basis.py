@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import unittest
+import hashlib
 
 import torch
 
 from pre_experiments.conditional_hierarchical_vrfm.basis import (
+    canonical_basis_sha256,
     expand_residual,
     split_hierarchical_coefficients,
     temporal_dct_basis,
@@ -35,6 +37,17 @@ class TemporalBasisTests(unittest.TestCase):
         )
         self.assertEqual(global_part.shape, (1, 32, 2048))
         self.assertEqual(local_part.shape, (1, 0, 2048))
+
+    def test_canonical_digest_binds_exact_cpu_float32_bytes(self) -> None:
+        basis = temporal_dct_basis()
+        expected = hashlib.sha256(basis.numpy().tobytes(order="C")).hexdigest()
+        self.assertEqual(canonical_basis_sha256(), expected)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
+    def test_cpu_and_cuda_use_identical_canonical_basis_bytes(self) -> None:
+        cpu = temporal_dct_basis()
+        cuda_roundtrip = temporal_dct_basis(device=torch.device("cuda")).cpu()
+        self.assertTrue(torch.equal(cpu, cuda_roundtrip))
 
 
 if __name__ == "__main__":

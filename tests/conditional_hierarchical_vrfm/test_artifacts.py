@@ -8,9 +8,12 @@ import warnings
 import zipfile
 
 import numpy as np
+from pre_experiments.camera_velocity_ambiguity_02.contracts import canonical_json_digest
 
 from pre_experiments.conditional_hierarchical_vrfm.artifacts import (
+    load_teacher_artifact,
     load_latent_targets,
+    save_teacher_artifact,
     save_latent_targets,
 )
 
@@ -83,6 +86,72 @@ class LatentTargetArtifactTests(unittest.TestCase):
                 archive.writestr("scene.npy", encoded["scene"])
         with self.assertRaisesRegex(ValueError, "duplicate"):
             load_latent_targets(self.path)
+
+    @staticmethod
+    def valid_teacher_arrays() -> dict[str, np.ndarray]:
+        poses = np.broadcast_to(np.eye(4, dtype=np.float64), (4, 500, 4, 4)).copy()
+        gt = poses[0].copy()
+        oracle_digest = canonical_json_digest({
+            "scene": "scene0000_00", "frame_digest": "a" * 64, "fit_count": 500,
+            "scale": 1.0,
+            "rotation": ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+            "translation": (0.0, 0.0, 0.0),
+        })
+        return {
+            "scene": np.asarray("scene0000_00", dtype="U32"),
+            "frame_ids": np.arange(500, dtype=np.int64),
+            "gt_c2w": gt,
+            "gt_scene_scale": np.asarray(1.0, dtype=np.float64),
+            "baseline_c2w_raw": gt.copy(),
+            "oracle_scene": np.asarray("scene0000_00", dtype="U32"),
+            "oracle_frame_digest": np.asarray("a" * 64, dtype="U64"),
+            "oracle_fit_count": np.asarray(500, dtype=np.int64),
+            "oracle_scale": np.asarray(1.0, dtype=np.float64),
+            "oracle_rotation": np.eye(3, dtype=np.float64),
+            "oracle_translation": np.zeros(3, dtype=np.float64),
+            "oracle_rank": np.asarray(3, dtype=np.int64),
+            "oracle_condition": np.asarray(1.0, dtype=np.float64),
+            "oracle_digest": np.asarray(oracle_digest, dtype="U64"),
+            "window_weights": np.ones(9, dtype=np.float64),
+            "window_masks": np.ones((4, 9), dtype=np.uint8),
+            "coverage_weights": np.ones((4, 500), dtype=np.float64),
+            "fused_c2w": poses,
+            "variant_utilities": np.ones(4, dtype=np.float64),
+            "source_sha256": np.asarray("c" * 64, dtype="U64"),
+            "formal_label_sha256": np.asarray("d" * 64, dtype="U64"),
+            "checkpoint_sha256": np.asarray("e" * 64, dtype="U64"),
+            "git_commit": np.asarray("f" * 40, dtype="U40"),
+        }
+
+    def test_teacher_artifact_binds_formal_label_and_all_four_variants(self) -> None:
+        path = self.path.with_name("teacher.npz")
+        digest = save_teacher_artifact(path, self.valid_teacher_arrays())
+        loaded = load_teacher_artifact(path)
+        self.assertEqual(len(digest), 64)
+        self.assertEqual(loaded["fused_c2w"].shape, (4, 500, 4, 4))
+        self.assertEqual(str(loaded["formal_label_sha256"]), "d" * 64)
+
+    def test_teacher_artifact_rejects_non_so3_oracle(self) -> None:
+        arrays = self.valid_teacher_arrays()
+        arrays["oracle_rotation"] *= 2.0
+        with self.assertRaisesRegex(ValueError, "SO\(3\)"):
+            save_teacher_artifact(self.path.with_name("teacher.npz"), arrays)
+
+    def test_teacher_artifact_recomputes_oracle_digest(self) -> None:
+        arrays = self.valid_teacher_arrays()
+        arrays["oracle_digest"] = np.asarray("b" * 64, dtype="U64")
+        with self.assertRaisesRegex(ValueError, "oracle digest"):
+            save_teacher_artifact(self.path.with_name("teacher.npz"), arrays)
+
+    def test_target_teacher_digest_must_match_teacher_artifact(self) -> None:
+        teacher_path = self.path.with_name("teacher.npz")
+        teacher_digest = save_teacher_artifact(teacher_path, self.valid_teacher_arrays())
+        arrays = self.valid_arrays()
+        arrays["teacher_sha256"] = np.asarray(teacher_digest, dtype="U64")
+        save_latent_targets(self.path, arrays, teacher_artifact=teacher_path)
+        arrays["teacher_sha256"] = np.asarray("0" * 64, dtype="U64")
+        with self.assertRaisesRegex(ValueError, "teacher artifact"):
+            save_latent_targets(self.path, arrays, teacher_artifact=teacher_path)
 
 
 if __name__ == "__main__":
