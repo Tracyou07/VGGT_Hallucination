@@ -306,10 +306,16 @@ failure to reduce loss. Optimize four variants sequentially to bound memory.
 - [ ] **Step 4: Add deterministic resume payloads**
 
 `save_lift_checkpoint(path, *, coefficients, optimizer, variant_index, next_step,
-config_digest, source_sha256, teacher_sha256, rng_state)` writes atomically. Resume rejects
-any changed digest/config/variant and restores the exact next step. Add a test comparing a
-20-step uninterrupted run to 8 steps plus resume to 20 with identical coefficients and
-loss trace.
+config_digest, source_sha256, teacher_sha256, rng_state, best_coefficients, best_loss,
+cuda_rng_state=None, device_type=None, loss_trace=(), initial_loss=0.0)` writes atomically.
+The payload preserves the current AdamW state and the independently retained best-finite
+state; the latter cannot be reconstructed after a nonmonotonic run.  It also records the
+complete loss history, initial loss, CPU RNG state, and (for CUDA) the RNG state of the
+coefficient device.  Resume rejects any changed digest/config/variant/device, noncanonical
+installed-AdamW state, malformed RNG state, or inconsistent history, then restores the
+exact next step transactionally. Add a test comparing a 20-step uninterrupted run to 8
+steps plus resume to 20 with identical coefficients and loss trace, plus corruption tests
+for optimizer and RNG state.
 
 - [ ] **Step 5: Run tests and commit**
 
