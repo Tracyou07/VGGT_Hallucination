@@ -7,7 +7,6 @@ from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 from pathlib import Path
-import pickle
 from typing import Any, Mapping
 
 import torch
@@ -23,7 +22,7 @@ from pre_experiments.long_short_camera_head.geometry import apply_sim3_torch
 from pre_experiments.variational_camera_latent.camera import pose_encoding_to_c2w
 
 
-_CHECKPOINT_SCHEMA = "conditional_hierarchical_vrfm.lift.v1"
+_CHECKPOINT_SCHEMA = "conditional_hierarchical_vrfm.lift.v2"
 _DIGEST_LENGTH = 64
 
 
@@ -100,6 +99,18 @@ def _validate_homogeneous(c2w: Tensor, name: str) -> None:
         raise ValueError(f"{name} contains non-homogeneous poses")
 
 
+def _validate_so3(rotation: Tensor, name: str) -> None:
+    if rotation.ndim < 2 or rotation.shape[-2:] != (3, 3) or not torch.isfinite(rotation).all():
+        raise ValueError(f"{name} must contain finite SO(3) rotations")
+    identity = torch.eye(3, dtype=rotation.dtype, device=rotation.device)
+    gram = rotation.transpose(-1, -2) @ rotation
+    determinant = torch.linalg.det(rotation)
+    if not torch.allclose(gram, identity, atol=1e-4, rtol=1e-4) or not torch.allclose(
+        determinant, torch.ones_like(determinant), atol=1e-4, rtol=1e-4
+    ):
+        raise ValueError(f"{name} must contain proper SO(3) rotations")
+
+
 def _decode_trace(camera_head: nn.Module, tokens: Tensor) -> Tensor:
     if not isinstance(camera_head, nn.Module):
         raise ValueError("camera_head must be an nn.Module")
@@ -139,18 +150,25 @@ def decode_coefficients(camera_head: nn.Module, long_tokens: Tensor, coefficient
 def _oracle_tensors(oracle: FrozenOracle, device: torch.device) -> tuple[Tensor, Tensor, Tensor]:
     if not isinstance(oracle, FrozenOracle):
         raise ValueError("oracle must be a FrozenOracle")
-    values = (oracle.scale, *sum((tuple(row) for row in oracle.rotation), ()), *oracle.translation)
-    if not all(torch.isfinite(torch.tensor(value)).item() for value in values):
-        raise ValueError("oracle must be finite")
-    return (
-        torch.tensor(oracle.scale, dtype=torch.float32, device=device),
-        torch.tensor(oracle.rotation, dtype=torch.float32, device=device),
-        torch.tensor(oracle.translation, dtype=torch.float32, device=device),
-    )
+    scale = torch.tensor(oracle.scale, dtype=torch.float32, device=device)
+    rotation = torch.tensor(oracle.rotation, dtype=torch.float32, device=device)
+    translation = torch.tensor(oracle.translation, dtype=torch.float32, device=device)
+    if scale.numel() != 1 or not torch.isfinite(scale).all() or float(scale) <= 0.0:
+        raise ValueError("oracle scale must be finite and positive")
+    if translation.shape != (3,) or not torch.isfinite(translation).all():
+        raise ValueError("oracle translation must be finite with shape [3]")
+    _validate_so3(rotation, "oracle rotation")
+    return scale, rotation, translation
 
 
 def _zero_like_loss(reference: Tensor) -> Tensor:
     return reference.sum() * 0.0
+
+
+def _weighted_frame_loss(values: Tensor, weights: Tensor) -> Tensor:
+    if values.ndim != 1 or weights.shape != values.shape or not torch.any(weights > 0.0):
+        raise ValueError("covered loss weights must be positive and match frame losses")
+    return torch.sum(values * weights) / torch.sum(weights)
 
 
 def latent_lift_loss(
@@ -174,6 +192,8 @@ def latent_lift_loss(
     )
     _validate_homogeneous(corrected, "corrected_c2w_raw")
     _validate_homogeneous(baseline, "baseline_c2w_raw")
+    _validate_so3(corrected[..., :3, :3], "corrected_c2w_raw")
+    _validate_so3(baseline[..., :3, :3], "baseline_c2w_raw")
     if not isinstance(coverage_weight, Tensor):
         raise ValueError("coverage_weight must be a tensor")
     coverage = coverage_weight.to(device=corrected.device, dtype=torch.float32).reshape(-1)
@@ -185,8 +205,14 @@ def latent_lift_loss(
     scale, rotation, translation = _oracle_tensors(oracle, corrected.device)
     corrected_gt = apply_sim3_torch(corrected, scale=scale, rotation=rotation, translation=translation)
     baseline_gt = apply_sim3_torch(baseline, scale=scale, rotation=rotation, translation=translation)
+    covered = coverage > 0.0
     teacher_finite = torch.isfinite(teacher).all(dim=(-1, -2))[0]
-    covered = (coverage > 0.0) & teacher_finite
+    if torch.any(covered & ~teacher_finite):
+        raise ValueError("covered teacher poses must be finite")
+    if torch.any(covered):
+        covered_teacher = teacher[0, covered]
+        _validate_homogeneous(covered_teacher, "covered teacher poses")
+        _validate_so3(covered_teacher[..., :3, :3], "covered teacher poses")
     uncovered = ~covered
     center = corrected_gt[..., :3, 3]
     baseline_center = baseline_gt[..., :3, 3]
@@ -194,9 +220,14 @@ def latent_lift_loss(
     if torch.any(covered):
         predicted_centers = center[0, covered]
         teacher_centers = teacher[0, covered, :3, 3]
-        teacher_center_loss = F.smooth_l1_loss(predicted_centers, teacher_centers)
-        covered_rotation_loss = torch.mean(
-            (corrected_gt[0, covered, :3, :3] - teacher[0, covered, :3, :3]).square()
+        covered_weights = coverage[covered]
+        teacher_center_loss = _weighted_frame_loss(
+            F.smooth_l1_loss(predicted_centers, teacher_centers, reduction="none").mean(dim=-1),
+            covered_weights,
+        )
+        covered_rotation_loss = _weighted_frame_loss(
+            (corrected_gt[0, covered, :3, :3] - teacher[0, covered, :3, :3]).square().mean(dim=(-1, -2)),
+            covered_weights,
         )
     else:
         teacher_center_loss = _zero_like_loss(center)
@@ -208,7 +239,11 @@ def latent_lift_loss(
         if torch.any(pair):
             predicted_delta = center[0, lag:][pair] - center[0, :-lag][pair]
             teacher_delta = teacher[0, lag:, :3, 3][pair] - teacher[0, :-lag, :3, 3][pair]
-            relative_terms.append(F.smooth_l1_loss(predicted_delta, teacher_delta))
+            pair_weights = 0.5 * (coverage[lag:][pair] + coverage[:-lag][pair])
+            relative_terms.append(_weighted_frame_loss(
+                F.smooth_l1_loss(predicted_delta, teacher_delta, reduction="none").mean(dim=-1),
+                pair_weights,
+            ))
     relative_motion_loss = torch.stack(relative_terms).mean() if relative_terms else _zero_like_loss(center)
     uncovered_center_anchor = (
         F.smooth_l1_loss(center[0, uncovered], baseline_center[0, uncovered])
@@ -240,26 +275,56 @@ def _checkpoint_payload_valid(payload: Any) -> dict[str, Any]:
         raise ValueError("invalid lift checkpoint schema")
     required = {
         "schema", "coefficients", "optimizer", "variant_index", "next_step", "config_digest",
-        "source_sha256", "teacher_sha256", "rng_state", "loss_trace", "initial_loss",
+        "source_sha256", "teacher_sha256", "rng_state", "cuda_rng_state", "device_type",
+        "loss_trace", "initial_loss", "best_coefficients", "best_loss",
     }
     if set(payload) != required:
         raise ValueError("invalid lift checkpoint structure")
-    coefficients = payload["coefficients"]
-    if not isinstance(coefficients, Tensor) or coefficients.shape != (1, 32, 2048) or coefficients.dtype != torch.float32:
-        raise ValueError("invalid lift checkpoint coefficients")
-    if not torch.isfinite(coefficients).all() or not isinstance(payload["optimizer"], Mapping):
+    for name in ("coefficients", "best_coefficients"):
+        value = payload[name]
+        if not isinstance(value, Tensor) or value.shape != (1, 32, 2048) or value.dtype != torch.float32:
+            raise ValueError(f"invalid lift checkpoint {name}")
+        if not torch.isfinite(value).all():
+            raise ValueError(f"invalid lift checkpoint {name}")
+    if not isinstance(payload["optimizer"], Mapping):
         raise ValueError("invalid lift checkpoint state")
     if any(isinstance(payload[name], bool) or not isinstance(payload[name], int) or payload[name] < 0 for name in ("variant_index", "next_step")):
         raise ValueError("invalid lift checkpoint step")
+    if payload["variant_index"] >= 4:
+        raise ValueError("invalid lift checkpoint variant")
     for name in ("config_digest", "source_sha256", "teacher_sha256"):
         _valid_digest(payload[name], name)
-    if not isinstance(payload["rng_state"], Tensor) or payload["rng_state"].dtype != torch.uint8:
+    if not isinstance(payload["rng_state"], Tensor) or payload["rng_state"].dtype != torch.uint8 or payload["rng_state"].ndim != 1:
         raise ValueError("invalid lift checkpoint RNG state")
+    if payload["device_type"] not in {"cpu", "cuda"}:
+        raise ValueError("invalid lift checkpoint device type")
+    cuda_rng_state = payload["cuda_rng_state"]
+    if payload["device_type"] == "cuda":
+        if not isinstance(cuda_rng_state, Tensor) or cuda_rng_state.dtype != torch.uint8 or cuda_rng_state.ndim != 1:
+            raise ValueError("invalid lift checkpoint CUDA RNG state")
+    elif cuda_rng_state is not None:
+        raise ValueError("CPU lift checkpoints may not contain CUDA RNG state")
     trace = payload["loss_trace"]
-    if not isinstance(trace, (list, tuple)) or not all(isinstance(value, (float, int)) and torch.isfinite(torch.tensor(value)).item() for value in trace):
+    if not isinstance(trace, (list, tuple)) or len(trace) != payload["next_step"] or not all(isinstance(value, (float, int)) and torch.isfinite(torch.tensor(value)).item() for value in trace):
         raise ValueError("invalid lift checkpoint loss trace")
-    if not isinstance(payload["initial_loss"], (float, int)) or not torch.isfinite(torch.tensor(payload["initial_loss"])).item():
+    if any(not isinstance(payload[name], (float, int)) or not torch.isfinite(torch.tensor(payload[name])).item() for name in ("initial_loss", "best_loss")):
         raise ValueError("invalid lift checkpoint initial loss")
+    optimizer = payload["optimizer"]
+    if set(optimizer) != {"state", "param_groups"} or not isinstance(optimizer["state"], Mapping):
+        raise ValueError("invalid lift checkpoint optimizer")
+    groups = optimizer["param_groups"]
+    if not isinstance(groups, list) or len(groups) != 1 or not isinstance(groups[0], Mapping) or groups[0].get("params") != [0]:
+        raise ValueError("invalid lift checkpoint optimizer group")
+    state = optimizer["state"].get(0)
+    if not isinstance(state, Mapping) or not {"step", "exp_avg", "exp_avg_sq"}.issubset(state):
+        raise ValueError("invalid lift checkpoint AdamW state")
+    for name in ("exp_avg", "exp_avg_sq"):
+        value = state[name]
+        if not isinstance(value, Tensor) or value.shape != (1, 32, 2048) or value.dtype != torch.float32 or not torch.isfinite(value).all():
+            raise ValueError("invalid lift checkpoint AdamW tensors")
+    step = state["step"]
+    if not isinstance(step, Tensor) or step.numel() != 1 or not torch.isfinite(step).all() or float(step) != payload["next_step"]:
+        raise ValueError("invalid lift checkpoint AdamW step")
     return dict(payload)
 
 
@@ -274,6 +339,10 @@ def save_lift_checkpoint(
     source_sha256: str,
     teacher_sha256: str,
     rng_state: Tensor,
+    best_coefficients: Tensor,
+    best_loss: float,
+    cuda_rng_state: Tensor | None,
+    device_type: str,
     loss_trace: tuple[float, ...] = (),
     initial_loss: float = 0.0,
 ) -> None:
@@ -291,8 +360,12 @@ def save_lift_checkpoint(
         "source_sha256": source_sha256,
         "teacher_sha256": teacher_sha256,
         "rng_state": rng_state.detach().to(device="cpu", dtype=torch.uint8).clone(),
+        "cuda_rng_state": None if cuda_rng_state is None else cuda_rng_state.detach().to(device="cpu", dtype=torch.uint8).clone(),
+        "device_type": device_type,
         "loss_trace": [float(value) for value in loss_trace],
         "initial_loss": float(initial_loss),
+        "best_coefficients": best_coefficients.detach().to(device="cpu", dtype=torch.float32).clone(),
+        "best_loss": float(best_loss),
     }
     _checkpoint_payload_valid(payload)
     target = Path(path)
@@ -307,13 +380,10 @@ def save_lift_checkpoint(
 
 
 def load_lift_checkpoint(path: Path) -> dict[str, Any]:
-    """Load only an internal trusted checkpoint and validate its complete structure."""
+    """Safely load tensors only, then validate the full internal checkpoint structure."""
     try:
-        try:
-            payload = torch.load(Path(path), map_location="cpu", weights_only=False)
-        except TypeError:  # PyTorch versions before weights_only accepted this trusted load.
-            payload = torch.load(Path(path), map_location="cpu")
-    except (OSError, RuntimeError, EOFError, ValueError, pickle.UnpicklingError) as error:
+        payload = torch.load(Path(path), map_location="cpu", weights_only=True)
+    except Exception as error:
         raise ValueError("invalid lift checkpoint") from error
     try:
         return _checkpoint_payload_valid(payload)
@@ -321,27 +391,33 @@ def load_lift_checkpoint(path: Path) -> dict[str, Any]:
         raise ValueError("invalid lift checkpoint") from error
 
 
-def _snapshot_head(camera_head: nn.Module) -> tuple[list[tuple[Tensor, Tensor]], list[tuple[nn.Module, bool]], list[tuple[Tensor, bool]]]:
+def _snapshot_head(camera_head: nn.Module) -> tuple[list[tuple[Tensor, Tensor, int]], list[tuple[nn.Module, bool]], list[tuple[Tensor, bool]]]:
     if not isinstance(camera_head, nn.Module):
         raise ValueError("camera_head must be an nn.Module")
-    tensors = [(tensor, tensor.detach().clone()) for tensor in [*camera_head.parameters(), *camera_head.buffers()]]
+    tensors = [(tensor, tensor.detach().clone(), tensor._version) for tensor in [*camera_head.parameters(), *camera_head.buffers()]]
     modes = [(module, module.training) for module in camera_head.modules()]
     requires_grad = [(parameter, parameter.requires_grad) for parameter in camera_head.parameters()]
     return tensors, modes, requires_grad
 
 
-def _restore_head(snapshot: tuple[list[tuple[Tensor, Tensor]], list[tuple[nn.Module, bool]], list[tuple[Tensor, bool]]]) -> bool:
+def _head_state_changed(snapshot: tuple[list[tuple[Tensor, Tensor, int]], list[tuple[nn.Module, bool]], list[tuple[Tensor, bool]]]) -> bool:
     tensors, modes, requires_grad = snapshot
-    parameter_count = len(requires_grad)
-    changed_parameter = any(not torch.equal(tensor, value) for tensor, value in tensors[:parameter_count])
+    return any(tensor._version != version for tensor, _, version in tensors) or any(
+        module.training for module, _ in modes
+    ) or any(parameter.requires_grad for parameter, _ in requires_grad)
+
+
+def _restore_head(snapshot: tuple[list[tuple[Tensor, Tensor, int]], list[tuple[nn.Module, bool]], list[tuple[Tensor, bool]]]) -> bool:
+    tensors, modes, requires_grad = snapshot
+    changed_tensor = any(not torch.equal(tensor, value) for tensor, value, _ in tensors)
     with torch.no_grad():
-        for tensor, value in tensors:
+        for tensor, value, _ in tensors:
             tensor.copy_(value)
     for module, training in modes:
         module.training = training
     for parameter, required in requires_grad:
         parameter.requires_grad_(required)
-    return changed_parameter
+    return changed_tensor
 
 
 def _residual(coefficients: Tensor, device: torch.device) -> Tensor:
@@ -359,8 +435,8 @@ def optimize_latent_target(
     variant_index: int = 0,
     checkpoint_path: Path | None = None,
     resume: bool = False,
-    source_sha256: str = "0" * 64,
-    teacher_sha256: str = "0" * 64,
+    source_sha256: str,
+    teacher_sha256: str,
 ) -> LiftResult:
     """Optimize a single variant; callers process four variants sequentially."""
     _validate_config(config)
@@ -379,6 +455,8 @@ def optimize_latent_target(
     next_step = 0
     loss_trace: list[float] = []
     initial_loss: float | None = None
+    best_coefficients = coefficients.detach().clone()
+    best_loss = float("inf")
     if resume:
         if checkpoint_path is None:
             raise ValueError("resume requires checkpoint_path")
@@ -394,16 +472,25 @@ def optimize_latent_target(
         next_step = payload["next_step"]
         if next_step > config.max_steps:
             raise ValueError("checkpoint next step exceeds max_steps")
+        if payload["device_type"] != device.type:
+            raise ValueError("checkpoint device type does not match")
         with torch.no_grad():
             coefficients.copy_(payload["coefficients"].to(device=device))
-        optimizer.load_state_dict(payload["optimizer"])
+        try:
+            optimizer.load_state_dict(payload["optimizer"])
+        except (KeyError, RuntimeError, TypeError, ValueError) as error:
+            raise ValueError("invalid lift checkpoint optimizer") from error
         for state in optimizer.state.values():
             for key, value in state.items():
                 if isinstance(value, Tensor):
                     state[key] = value.to(device=device)
         torch.set_rng_state(payload["rng_state"])
+        if device.type == "cuda":
+            torch.cuda.set_rng_state(payload["cuda_rng_state"], device=device)
         loss_trace = [float(value) for value in payload["loss_trace"]]
         initial_loss = float(payload["initial_loss"])
+        best_coefficients = payload["best_coefficients"].to(device=device).clone()
+        best_loss = float(payload["best_loss"])
 
     snapshot = _snapshot_head(camera_head)
     try:
@@ -412,12 +499,8 @@ def optimize_latent_target(
             parameter.requires_grad_(False)
         with torch.no_grad():
             baseline = decode_coefficients(camera_head, long_tokens, torch.zeros_like(coefficients))
-        if _restore_head(snapshot):
-            raise ValueError("Camera Head parameters changed during frozen decode")
-        snapshot = _snapshot_head(camera_head)
-        camera_head.eval()
-        for parameter in camera_head.parameters():
-            parameter.requires_grad_(False)
+        if _head_state_changed(snapshot):
+            raise ValueError("Camera Head state changed during frozen decode")
         if initial_loss is None:
             with torch.no_grad():
                 baseline_residual = _residual(torch.zeros_like(coefficients), device)
@@ -427,9 +510,6 @@ def optimize_latent_target(
                     oracle=oracle, residual=baseline_residual, config=config,
                 )["total"].cpu())
 
-        best_coefficients = coefficients.detach().clone()
-        best_loss = float("inf")
-        best_decoded: Tensor | None = None
         for step in range(next_step, config.max_steps):
             optimizer.zero_grad(set_to_none=True)
             decoded = decode_coefficients(camera_head, long_tokens, coefficients)
@@ -446,12 +526,8 @@ def optimize_latent_target(
             total.backward()
             if coefficients.grad is None or not torch.isfinite(coefficients.grad).all():
                 raise ValueError("non-finite latent lift gradient")
-            if _restore_head(snapshot):
-                raise ValueError("Camera Head parameters changed during frozen decode")
-            snapshot = _snapshot_head(camera_head)
-            camera_head.eval()
-            for parameter in camera_head.parameters():
-                parameter.requires_grad_(False)
+            if _head_state_changed(snapshot):
+                raise ValueError("Camera Head state changed during frozen decode")
             torch.nn.utils.clip_grad_norm_([coefficients], config.gradient_clip)
             optimizer.step()
             current_loss = float(total.detach().cpu())
@@ -459,29 +535,29 @@ def optimize_latent_target(
             if current_loss < best_loss:
                 best_loss = current_loss
                 best_coefficients = evaluated_coefficients
-                best_decoded = decoded.detach().clone()
             if checkpoint_path is not None:
                 save_lift_checkpoint(
                     checkpoint_path, coefficients=coefficients, optimizer=optimizer,
                     variant_index=variant_index, next_step=step + 1, config_digest=config_digest,
                     source_sha256=source_sha256, teacher_sha256=teacher_sha256,
                     rng_state=torch.get_rng_state(), loss_trace=tuple(loss_trace), initial_loss=initial_loss,
+                    best_coefficients=best_coefficients, best_loss=best_loss,
+                    cuda_rng_state=(torch.cuda.get_rng_state(device) if device.type == "cuda" else None),
+                    device_type=device.type,
                 )
-        if best_decoded is None or not torch.isfinite(torch.tensor(best_loss)) or best_loss >= initial_loss:
+        if not torch.isfinite(torch.tensor(best_loss)) or best_loss >= initial_loss:
             raise ValueError("latent lift did not reduce the initial loss")
         with torch.no_grad():
             coefficients.copy_(best_coefficients)
             final_decoded = decode_coefficients(camera_head, long_tokens, coefficients).detach().clone()
-        if _restore_head(snapshot):
-            raise ValueError("Camera Head parameters changed during frozen decode")
+        if _head_state_changed(snapshot):
+            raise ValueError("Camera Head state changed during frozen decode")
         _validate_homogeneous(final_decoded, "best decoded Camera Head output")
         return LiftResult(
             coefficients=best_coefficients.detach().clone(), decoded_c2w_raw=final_decoded,
             initial_loss=initial_loss, final_loss=best_loss, completed_steps=config.max_steps,
             finite=True, loss_trace=tuple(loss_trace),
         )
-    except (RuntimeError, ValueError):
-        _restore_head(snapshot)
-        raise
     finally:
-        _restore_head(snapshot)
+        if _restore_head(snapshot):
+            raise ValueError("Camera Head state changed during frozen decode")

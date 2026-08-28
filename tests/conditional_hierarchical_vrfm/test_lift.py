@@ -43,8 +43,21 @@ class _FakeHead(nn.Module):
         self.register_buffer("counter", torch.zeros(()))
 
     def decode_pose_tokens(self, tokens: torch.Tensor, *, num_iterations: int) -> list[torch.Tensor]:
-        self.counter.add_(1)
         return [tokens[..., :9] + self.anchor * 0.0]
+
+
+class _UnsafePayload:
+    def __init__(self, marker: str) -> None:
+        self.marker = marker
+
+    def __reduce__(self) -> tuple[object, tuple[str]]:
+        return (Path.write_text, (Path(self.marker), "executed"))
+
+
+class _DataMutatingBufferHead(_FakeHead):
+    def decode_pose_tokens(self, tokens: torch.Tensor, *, num_iterations: int) -> list[torch.Tensor]:
+        self.counter.data.add_(1.0)
+        return super().decode_pose_tokens(tokens, num_iterations=num_iterations)
 
 
 class LiftTests(unittest.TestCase):
@@ -59,6 +72,8 @@ class LiftTests(unittest.TestCase):
         self.teacher = self.baseline.clone()
         self.teacher[:, 100:400, 0, 3] = 0.5
         self.teacher[:, self.coverage == 0] = torch.nan
+        self.source_sha256 = hashlib.sha256(b"source").hexdigest()
+        self.teacher_sha256 = hashlib.sha256(b"teacher").hexdigest()
 
     def test_zero_coefficients_reproduce_baseline_exactly(self) -> None:
         with mock.patch("pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w):
@@ -90,7 +105,8 @@ class LiftTests(unittest.TestCase):
         with mock.patch("pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w):
             result = optimize_latent_target(
                 self.head, self.long_tokens, self.teacher, self.oracle, config,
-                coverage_weight=self.coverage,
+                coverage_weight=self.coverage, source_sha256=self.source_sha256,
+                teacher_sha256=self.teacher_sha256,
             )
         self.assertTrue(result.finite)
         self.assertLess(result.final_loss, result.initial_loss)
@@ -101,8 +117,8 @@ class LiftTests(unittest.TestCase):
 
     def test_resume_is_bitwise_identical_and_rejects_corrupt_binding(self) -> None:
         config = LiftConfig(max_steps=20, learning_rate=0.08, smoothness=0.0, residual_norm=0.0)
-        source_sha256 = hashlib.sha256(b"source").hexdigest()
-        teacher_sha256 = hashlib.sha256(b"teacher").hexdigest()
+        source_sha256 = self.source_sha256
+        teacher_sha256 = self.teacher_sha256
         with tempfile.TemporaryDirectory() as directory, mock.patch(
             "pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w
         ):
@@ -139,6 +155,146 @@ class LiftTests(unittest.TestCase):
             path.write_bytes(b"not a checkpoint")
             with self.assertRaisesRegex(ValueError, "checkpoint"):
                 load_lift_checkpoint(path)
+
+    def test_nonmonotonic_resume_keeps_the_original_best_state(self) -> None:
+        config = LiftConfig(max_steps=20, learning_rate=4.0, smoothness=0.0, residual_norm=0.0)
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w
+        ):
+            direct = optimize_latent_target(
+                self.head, self.long_tokens, self.teacher, self.oracle, config,
+                coverage_weight=self.coverage, source_sha256=self.source_sha256,
+                teacher_sha256=self.teacher_sha256,
+            )
+            checkpoint = Path(directory) / "nonmonotonic.pt"
+            optimize_latent_target(
+                self.head, self.long_tokens, self.teacher, self.oracle,
+                LiftConfig(**{**config.__dict__, "max_steps": 13}), coverage_weight=self.coverage,
+                checkpoint_path=checkpoint, source_sha256=self.source_sha256,
+                teacher_sha256=self.teacher_sha256,
+            )
+            resumed = optimize_latent_target(
+                self.head, self.long_tokens, self.teacher, self.oracle, config,
+                coverage_weight=self.coverage, checkpoint_path=checkpoint, resume=True,
+                source_sha256=self.source_sha256, teacher_sha256=self.teacher_sha256,
+            )
+        torch.testing.assert_close(resumed.coefficients, direct.coefficients, atol=0.0, rtol=0.0)
+        self.assertEqual(resumed.final_loss, direct.final_loss)
+        self.assertEqual(resumed.loss_trace, direct.loss_trace)
+
+    def test_completed_checkpoint_replays_the_saved_best_state(self) -> None:
+        config = LiftConfig(max_steps=8, learning_rate=4.0, smoothness=0.0, residual_norm=0.0)
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w
+        ):
+            checkpoint = Path(directory) / "complete.pt"
+            direct = optimize_latent_target(
+                self.head, self.long_tokens, self.teacher, self.oracle, config,
+                coverage_weight=self.coverage, checkpoint_path=checkpoint,
+                source_sha256=self.source_sha256, teacher_sha256=self.teacher_sha256,
+            )
+            resumed = optimize_latent_target(
+                self.head, self.long_tokens, self.teacher, self.oracle, config,
+                coverage_weight=self.coverage, checkpoint_path=checkpoint, resume=True,
+                source_sha256=self.source_sha256, teacher_sha256=self.teacher_sha256,
+            )
+        torch.testing.assert_close(resumed.coefficients, direct.coefficients, atol=0.0, rtol=0.0)
+        self.assertEqual(resumed.final_loss, direct.final_loss)
+        self.assertEqual(resumed.loss_trace, direct.loss_trace)
+
+    def test_optimizer_takes_one_full_head_snapshot_not_one_per_step(self) -> None:
+        config = LiftConfig(max_steps=5, learning_rate=0.08, smoothness=0.0, residual_norm=0.0)
+        import pre_experiments.conditional_hierarchical_vrfm.lift as lift
+        with mock.patch("pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w), mock.patch.object(
+            lift, "_snapshot_head", wraps=lift._snapshot_head
+        ) as snapshot:
+            optimize_latent_target(
+                self.head, self.long_tokens, self.teacher, self.oracle, config,
+                coverage_weight=self.coverage, source_sha256=self.source_sha256,
+                teacher_sha256=self.teacher_sha256,
+            )
+        self.assertEqual(snapshot.call_count, 1)
+
+    def test_final_snapshot_detects_buffer_data_mutation_that_avoids_version_changes(self) -> None:
+        head = _DataMutatingBufferHead()
+        with mock.patch("pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w):
+            with self.assertRaisesRegex(ValueError, "Camera Head state"):
+                optimize_latent_target(
+                    head, self.long_tokens, self.teacher, self.oracle,
+                    LiftConfig(max_steps=2), coverage_weight=self.coverage,
+                    source_sha256=self.source_sha256, teacher_sha256=self.teacher_sha256,
+                )
+        torch.testing.assert_close(head.counter, torch.zeros(()))
+
+    def test_checkpoint_loading_uses_weights_only_and_never_executes_reduce(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "executed.txt"
+            path = Path(directory) / "unsafe.pt"
+            torch.save({"unsafe": _UnsafePayload(str(marker))}, path)
+            with self.assertRaisesRegex(ValueError, "checkpoint"):
+                load_lift_checkpoint(path)
+            self.assertFalse(marker.exists())
+
+    def test_rejects_invalid_covered_teacher_and_oracle_pose(self) -> None:
+        invalid_teacher = self.teacher.clone()
+        invalid_teacher[:, 100, :3, :3] = 2.0 * torch.eye(3)
+        with self.assertRaisesRegex(ValueError, "SO\(3\)"):
+            latent_lift_loss(
+                corrected_c2w_raw=self.baseline, baseline_c2w_raw=self.baseline,
+                teacher_c2w_gt_gauge=invalid_teacher, coverage_weight=self.coverage,
+                oracle=self.oracle, residual=torch.zeros(1, 500, 2048), config=LiftConfig(),
+            )
+        bad_oracle = FrozenOracle(**{**self.oracle.__dict__, "scale": -1.0})
+        with self.assertRaisesRegex(ValueError, "scale"):
+            latent_lift_loss(
+                corrected_c2w_raw=self.baseline, baseline_c2w_raw=self.baseline,
+                teacher_c2w_gt_gauge=self.teacher, coverage_weight=self.coverage,
+                oracle=bad_oracle, residual=torch.zeros(1, 500, 2048), config=LiftConfig(),
+            )
+        bad_rotation = FrozenOracle(
+            **{**self.oracle.__dict__, "rotation": ((2.0, 0.0, 0.0), (0.0, 2.0, 0.0), (0.0, 0.0, 2.0))}
+        )
+        with self.assertRaisesRegex(ValueError, "SO\(3\)"):
+            latent_lift_loss(
+                corrected_c2w_raw=self.baseline, baseline_c2w_raw=self.baseline,
+                teacher_c2w_gt_gauge=self.teacher, coverage_weight=self.coverage,
+                oracle=bad_rotation, residual=torch.zeros(1, 500, 2048), config=LiftConfig(),
+            )
+
+    def test_rejects_nan_in_positive_coverage_and_uses_coverage_magnitudes(self) -> None:
+        broken = self.teacher.clone()
+        broken[:, 100] = torch.nan
+        with self.assertRaisesRegex(ValueError, "covered teacher"):
+            latent_lift_loss(
+                corrected_c2w_raw=self.baseline, baseline_c2w_raw=self.baseline,
+                teacher_c2w_gt_gauge=broken, coverage_weight=self.coverage,
+                oracle=self.oracle, residual=torch.zeros(1, 500, 2048), config=LiftConfig(),
+            )
+        corrected = self.baseline.clone()
+        corrected[:, 101:400, 0, 3] = 0.5
+        equal = torch.zeros(500)
+        equal[100:400] = 1.0
+        weighted = equal.clone()
+        weighted[100] = 100.0
+        equal_loss = latent_lift_loss(
+            corrected_c2w_raw=corrected, baseline_c2w_raw=self.baseline,
+            teacher_c2w_gt_gauge=self.teacher, coverage_weight=equal,
+            oracle=self.oracle, residual=torch.zeros(1, 500, 2048), config=LiftConfig(),
+        )["teacher_center_loss"]
+        weighted_loss = latent_lift_loss(
+            corrected_c2w_raw=corrected, baseline_c2w_raw=self.baseline,
+            teacher_c2w_gt_gauge=self.teacher, coverage_weight=weighted,
+            oracle=self.oracle, residual=torch.zeros(1, 500, 2048), config=LiftConfig(),
+        )["teacher_center_loss"]
+        self.assertGreater(float(weighted_loss), float(equal_loss))
+
+    def test_optimizer_requires_explicit_provenance_digests(self) -> None:
+        with mock.patch("pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w):
+            with self.assertRaisesRegex(TypeError, "source_sha256"):
+                optimize_latent_target(
+                    self.head, self.long_tokens, self.teacher, self.oracle, LiftConfig(max_steps=2),
+                    coverage_weight=self.coverage,
+                )
 
 
 if __name__ == "__main__":
