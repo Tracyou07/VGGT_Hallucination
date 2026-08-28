@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import tempfile
 import unittest
 
-from pre_experiments.long_short_camera_head.report import classify
+from pre_experiments.long_short_camera_head.report import classify, write_report
 
 
 def _row(scene: str, *, baseline: float, gt_only: float, long_short: float) -> dict[str, object]:
@@ -17,6 +20,32 @@ def _row(scene: str, *, baseline: float, gt_only: float, long_short: float) -> d
 
 
 class ReportClassificationTests(unittest.TestCase):
+    def test_write_report_ignores_stage_completion_json(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for variant, predicted in (("gt_only", 0.95), ("long_short", 0.90)):
+                target = root / "evaluation" / variant
+                target.mkdir(parents=True)
+                metrics = {
+                    "schema": "long_short_camera_head.evaluation.v1",
+                    "scene": "scene0325_01",
+                    "baseline_rms": 1.0,
+                    "predicted_rms": predicted,
+                    "baseline_rotation_deg": 1.0,
+                    "predicted_rotation_deg": 1.05,
+                    "checkpoint_sha256": ("a" if variant == "gt_only" else "b") * 64,
+                }
+                (target / "scene0325_01.json").write_text(json.dumps(metrics))
+                (target / "completed.json").write_text(
+                    json.dumps({"schema": "stage.completion.v1"})
+                )
+
+            report_path = write_report(root)
+
+            self.assertTrue(report_path.is_file())
+            report = json.loads(report_path.read_text())
+            self.assertEqual(len(report["scenes"]), 1)
+
     def test_promising_requires_long_short_to_beat_baseline_and_gt_only(self) -> None:
         report = classify(
             [_row("scene0325_01", baseline=1.0, gt_only=0.97, long_short=0.94),

@@ -127,9 +127,13 @@ def _read_metrics(path: Path) -> dict[str, object]:
 
 def write_report(run_root: Path) -> Path:
     run_root = Path(run_root)
-    gt_files = {path.stem: path for path in (run_root / "evaluation" / "gt_only").glob("*.json")}
+    gt_files = {
+        path.stem: path
+        for path in (run_root / "evaluation" / "gt_only").glob("scene*.json")
+    }
     long_files = {
-        path.stem: path for path in (run_root / "evaluation" / "long_short").glob("*.json")
+        path.stem: path
+        for path in (run_root / "evaluation" / "long_short").glob("scene*.json")
     }
     if not gt_files or set(gt_files) != set(long_files):
         raise ValueError("matched evaluation files are incomplete")
