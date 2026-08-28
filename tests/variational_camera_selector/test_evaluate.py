@@ -11,6 +11,7 @@ import torch
 from pre_experiments.variational_camera_latent.alpha_scan import DEFAULT_ALPHAS
 from pre_experiments.variational_camera_selector.dataset import CandidateGroup
 from pre_experiments.variational_camera_selector import evaluate as selector_evaluate
+from pre_experiments.variational_camera_selector import safety_gate
 from pre_experiments.variational_camera_selector.evaluate import (
     load_score_shard,
     score_scene_candidates,
@@ -156,6 +157,52 @@ class SelectorEvaluationTests(unittest.TestCase):
                 arrays["full_context_corrected_camera_tokens"][overlap, :, 0],
                 expected,
             )
+        self.assertFalse(
+            any(
+                fragment in name.lower()
+                for name in arrays
+                for fragment in ("gt", "quality", "error", "depth", "utility", "privileged")
+            )
+        )
+
+    def test_gated_selection_fail_closes_without_loading_labels(self) -> None:
+        # Catches a gate writer that needs GT at inference or emits the raw unsafe top-1.
+        score_scene_candidates(
+            self.dataset,
+            "scene0325_01",
+            self.checkpoint,
+            self.output,
+            device="cpu",
+        )
+        writer = getattr(safety_gate, "write_gated_scene_selection", None)
+        loader = getattr(safety_gate, "load_gated_selection", None)
+        self.assertIsNotNone(writer, "gated selection writer is missing")
+        self.assertIsNotNone(loader, "gated selection loader is missing")
+        assert writer is not None and loader is not None
+        self.assertFalse(
+            any(
+                fragment in name.lower()
+                for name in inspect.signature(writer).parameters
+                for fragment in ("gt", "utility", "privileged", "depth", "error")
+            )
+        )
+
+        destination = self.root / "gated_selection.npz"
+        path = writer(
+            _FakePredictionDataset(self.root, frames=50),
+            "scene0325_01",
+            self.output,
+            safety_gate.GatePolicy.fail_closed(),
+            "f" * 64,
+            destination,
+        )
+        arrays = loader(path)
+
+        np.testing.assert_array_equal(arrays["selected_indices"], np.zeros(8, np.int64))
+        self.assertFalse(arrays["gate_pass"].any())
+        np.testing.assert_array_equal(
+            arrays["corrected_camera_tokens"], np.zeros((8, 50, 2048), np.float32)
+        )
         self.assertFalse(
             any(
                 fragment in name.lower()
