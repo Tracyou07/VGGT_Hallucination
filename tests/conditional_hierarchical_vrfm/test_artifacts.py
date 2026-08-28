@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 import tempfile
 import unittest
+import warnings
+import zipfile
 
 import numpy as np
 
@@ -56,6 +59,30 @@ class LatentTargetArtifactTests(unittest.TestCase):
         arrays["residual_coefficients"][0, 0, 0] = np.nan
         with self.assertRaisesRegex(ValueError, "finite"):
             save_latent_targets(self.path, arrays)
+
+    def test_latent_target_rejects_non_floating_coefficients_and_losses(self) -> None:
+        for name in ("residual_coefficients", "initial_losses", "final_losses"):
+            with self.subTest(name=name):
+                arrays = self.valid_arrays()
+                arrays[name] = np.full(arrays[name].shape, "0", dtype="U1")
+                with self.assertRaisesRegex(ValueError, "floating"):
+                    save_latent_targets(self.path, arrays)
+
+    def test_load_rejects_duplicate_archive_members(self) -> None:
+        arrays = self.valid_arrays()
+        encoded: dict[str, bytes] = {}
+        for name, value in arrays.items():
+            handle = BytesIO()
+            np.save(handle, value, allow_pickle=False)
+            encoded[name] = handle.getvalue()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            with zipfile.ZipFile(self.path, "w") as archive:
+                for name, value in encoded.items():
+                    archive.writestr(f"{name}.npy", value)
+                archive.writestr("scene.npy", encoded["scene"])
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            load_latent_targets(self.path)
 
 
 if __name__ == "__main__":

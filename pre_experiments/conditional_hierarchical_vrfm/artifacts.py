@@ -59,27 +59,28 @@ def _validate_latent_targets(arrays: Mapping[str, np.ndarray]) -> None:
         if arrays[name].shape != shape:
             raise ValueError(f"latent target {name} has invalid shape")
 
-    for name, value in arrays.items():
-        if np.issubdtype(value.dtype, np.number) and not np.isfinite(value).all():
+    for name in ("residual_coefficients", "decoded_c2w_raw", "initial_losses", "final_losses"):
+        value = arrays[name]
+        if not np.issubdtype(value.dtype, np.floating):
+            raise ValueError(f"{name} must use a real floating dtype")
+        if not np.isfinite(value).all():
             raise ValueError(f"latent target {name} must be finite")
 
-    if not np.issubdtype(arrays["frame_ids"].dtype, np.integer):
-        raise ValueError("frame_ids must be integers")
-    if not np.issubdtype(arrays["teacher_variant_ids"].dtype, np.integer):
-        raise ValueError("teacher_variant_ids must be integers")
+    for name in ("frame_ids", "teacher_variant_ids", "optimization_steps"):
+        if not np.issubdtype(arrays[name].dtype, np.integer):
+            raise ValueError(f"{name} must be integers")
     if len(set(arrays["teacher_variant_ids"].tolist())) != 4:
         raise ValueError("teacher_variant_ids must be unique")
-    if not np.issubdtype(arrays["optimization_steps"].dtype, np.integer):
-        raise ValueError("optimization_steps must be integers")
 
     for name in ("teacher_window_masks", "coverage_masks"):
         values = arrays[name]
-        if not np.issubdtype(values.dtype, np.number) or not np.isin(values, (0, 1)).all():
+        is_binary_type = np.issubdtype(values.dtype, np.integer) or np.issubdtype(
+            values.dtype, np.bool_
+        )
+        if not is_binary_type or not np.isin(values, (0, 1)).all():
             raise ValueError(f"{name} must be binary")
 
     poses = arrays["decoded_c2w_raw"]
-    if not np.issubdtype(poses.dtype, np.number):
-        raise ValueError("decoded_c2w_raw must be numeric")
     if not np.allclose(poses[..., 3, :], [0.0, 0.0, 0.0, 1.0]):
         raise ValueError("decoded_c2w_raw poses must be homogeneous")
 
@@ -109,9 +110,18 @@ def save_latent_targets(path: Path, arrays: Mapping[str, np.ndarray]) -> str:
 def load_latent_targets(path: Path) -> dict[str, np.ndarray]:
     """Load and revalidate one strict latent-target archive without pickles."""
     try:
-        with np.load(Path(path), allow_pickle=False) as archive:
-            arrays = {name: np.asarray(archive[name]).copy() for name in archive.files}
+        archive = np.load(Path(path), allow_pickle=False)
     except (OSError, ValueError, KeyError) as error:
         raise ValueError(f"invalid latent-target archive: {path}") from error
+    with archive:
+        names = list(archive.files)
+        if len(names) != len(LATENT_TARGET_MEMBERS) or set(names) != LATENT_TARGET_MEMBERS:
+            if len(names) != len(set(names)):
+                raise ValueError("latent-target archive contains duplicate members")
+            raise ValueError("latent-target archive must use the exact schema")
+        try:
+            arrays = {name: np.asarray(archive[name]).copy() for name in names}
+        except (OSError, ValueError, KeyError) as error:
+            raise ValueError(f"invalid latent-target archive: {path}") from error
     _validate_latent_targets(arrays)
     return arrays
