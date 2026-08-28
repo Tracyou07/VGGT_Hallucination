@@ -2,95 +2,99 @@
 
 ## Outcome
 
-The source-level Camera Head experiment completed on H20 and is classified
-`NO_SOURCE_HEAD_SIGNAL`. The native Camera Head learned the training objective,
-but the quality-weighted short-window variant did not improve the two locked
-replay scenes when inference received only the 500-frame Camera tokens.
+The protocol-compliant H20 experiment is classified `NO_SOURCE_HEAD_SIGNAL`.
+The native Camera Head learned both objectives, but the quality-weighted
+short-window supervision did not generalize reliably when inference received
+only the 500-frame long-window Camera tokens.
 
-This checkpoint is therefore **not deployable**. The negative result points to
-the frozen long-window token representation, rather than optimization failure,
-as the next component to test.
+This rejects the current **Camera-Head-only** source solution. It does not show
+that short windows are useless. It shows that a shared decoder cannot recover
+their useful local correction reliably from the frozen long-window token
+representation.
 
 ## Run identity
 
-- Formal run: `/data/yjh/output/vggt/long_short_camera_head/long_short_head_20260828T064208Z`
-- Training commit recorded by the manifest: `352765a4a906b768d7cf011522f81d58c3d6c9dc`
-- Reporting fix and final verifier commit: `59a8083`
+- Formal run: `/data/yjh/output/vggt/long_short_camera_head/long_short_head_formal_20260828T072407Z`
+- Git revision: `2476a59f583ce4c39bbe66dc65d6a8e5cddfb52e`
 - Base VGGT checkpoint SHA-256:
   `f164acf60724910d8fe1578bb499d800850c7bb0948db7555c413f9fbe60467e`
-- Data split: eight training scenes and two locked-replay scenes
+- Split: eight training scenes and two locked-replay scenes
+- Evaluation: both variants on all ten scenes; only the two locked-replay scenes
+  participate in the acceptance decision
 - Long-only inference audit: passed
 - Repeated `verified_completion.json` SHA-256:
-  `b6385283039cd4ac11078123df151e7cc8e3a562547384621974f3f0d3efc8d5`
-- Formal artifact size: 7.8 GiB; no large artifact was copied from H20.
+  `54e72876c7596ba5a02b31b7c089ce60dad81a64f6a5402a6e7aa5113410ba9b`
+- Artifact size: 7.8 GiB; no large artifact was copied from H20
 
-## Protocol
+The earlier run `long_short_head_20260828T064208Z` is superseded and must be
+treated as provisional because it used a shortened 4/40-step schedule.
+
+## Locked protocol
 
 The student consumed only cached `[500, 2048]` long-window Camera tokens. GT
-poses, the frozen scene Sim(3), short-window teacher poses, and teacher weights
-were stored in separate privileged sidecars. The two matched variants began
-from the same VGGT checkpoint:
+poses, the frozen scene Sim(3), short-window teacher poses, and quality weights
+lived in separate privileged sidecars used only during training and scoring.
 
-- `gt_only`: GT translation, relative-translation, rotation, and anchor losses;
-- `long_short`: the same losses plus positive-utility, quality-weighted
-  short-window teacher consistency.
+- Smoke: `scene0000_00`, 20 updates, BF16 autocast, AdamW, learning rate
+  `2e-6`, weight decay `1e-4`, gradient clipping at one.
+- Calibration: at most 400 updates, validation every 25, patience 100, identical
+  seed/order/optimizer for `gt_only` and `long_short`.
+- Trainable scope: final native Camera Head transformer block and native pose
+  decoder only.
+- Inference: 500-frame long context only; no GT, short token, teacher, or
+  privileged-label input.
 
-Only the final native Camera Head transformer block and its native pose decoder
-were trainable. Inference had no GT, short token, teacher, or privileged-label
-argument. Teacher coverage was substantial (300–500 of 500 frames per scene),
-so the result is not explained by an empty teacher mask.
+The smoke gate passed strictly: loss fell from `0.06355449` to `0.05972434`,
+the best checkpoint reloaded tensor-for-tensor exactly, and its long-only output
+contained 500 finite poses.
 
-The one-scene smoke gate passed: its objective decreased monotonically from
-`0.0641164` to `0.0626640` in four steps. Both matched calibrations stopped at
-step 25 after their locked-replay selection metric stopped improving.
+Both calibration variants selected step 25 and stopped normally at step 125
+after 100 updates without validation improvement:
+
+- `gt_only` training loss: `0.05610651 → 0.04929767`;
+- `long_short` training loss: `0.06355449 → 0.05596327`.
 
 ## Locked-replay results
 
 | Scene | Original long RMS | GT-only RMS | Long–short RMS | Long–short utility |
 |---|---:|---:|---:|---:|
-| `scene0325_01` | 0.0813720 | 0.0826863 | 0.0827762 | -1.7257% |
-| `scene0675_00` | 0.1105650 | 0.1100993 | 0.1100902 | +0.4295% |
-| Mean | 0.0959685 | 0.0963928 | 0.0964332 | -0.6481% (mean scene utility) |
+| `scene0325_01` | 0.08137197 | 0.08443880 | 0.08461124 | -3.980% |
+| `scene0675_00` | 0.11056502 | 0.10999312 | 0.10985244 | +0.645% |
+| Mean | 0.09596850 | 0.09721596 | 0.09723184 | -1.668% (mean scene utility) |
 
-The long–short variant was also approximately 0.042% worse in mean RMS than
-the matched GT-only control. Mean rotation error increased by only 0.0214°, so
-the rotation guard passed. It failed the positive-utility, per-scene-harm, and
-GT-only comparison gates.
+The long–short model was also slightly worse than the matched GT-only control
+in mean locked-replay RMS. Mean rotation error increased by `0.0406°`, so the
+rotation guard passed. Positive utility, per-scene harm, and the GT-only
+comparison gates failed.
 
-Training itself behaved normally:
+The ten-scene diagnostics make the failure mode clearer. On most training
+scenes both models improve the original long prediction by a small amount, and
+the two models remain extremely close. On the untouched scenes, one improves
+slightly while the other degrades by about four percent. This is overfitting to
+small scene-dependent corrections, not evidence of a stable short-window rule
+that the frozen long tokens expose.
 
-- GT-only objective: `0.0565422 → 0.0526214`;
-- long–short objective: `0.0641164 → 0.0593664`.
+## Source-level interpretation
 
-Thus the experiment learned a small correction, but that correction was
-scene-dependent: it helped `scene0675_00` slightly and harmed `scene0325_01`
-more strongly. A Camera Head shared across scenes could not reliably infer the
-short-window correction from the frozen long-window tokens.
+Longer Camera Head training is not justified: validation was best at the first
+25-step checkpoint and worsened afterward, while training loss kept falling.
+The bottleneck is upstream of the decoder.
 
-## Interpretation and next source-level step
-
-This result rejects the current **head-only** solution; it does not establish
-that short-window supervision is useless. The earlier evidence says short
-windows contain useful local information, while this experiment says that the
-frozen 500-frame Camera tokens do not expose that information to a shared
-decoder reliably enough.
-
-The next source-level experiment should move supervision upstream: train the
-last native Aggregator blocks together with the Camera Head so that a 500-frame
-forward pass produces Camera tokens that preserve the locally reliable motion
-evidence. It should retain the same matched GT-only control, strict long-only
-inference, and locked-replay gates. Simply training this Camera Head longer is
-not justified by these results.
+The next source-level experiment should unfreeze the final native Aggregator
+block(s) together with the Camera Head. Short-window supervision would then
+shape the 500-frame forward pass so its Camera tokens retain locally reliable
+motion evidence. The same GT-only control, long-only inference boundary,
+ten-scene diagnostics, and two locked-replay gates should remain unchanged.
 
 ## Verification
 
-- Local tests: 30 long–short tests passed.
+- Local Camera Head tests: 38 passed.
 - Compatibility tests: 64 VRFM tests passed (one Windows symlink skip) and 55
   selector tests passed.
-- H20 tests: all 30 long–short tests passed before launch.
-- Independent H20 verification was run twice; the completion hash was
-  identical both times.
-- The first report attempt failed because a stage marker was included in a JSON
-  glob. The exception is preserved under `diagnostics/report_attempt1.err.log`;
-  a regression test was added, only the report stage was rerun, and no training
-  artifact was changed or recomputed.
+- H20 preflight: all 38 Camera Head tests passed and were hash-bound to the run.
+- All stderr logs are empty.
+- The verifier checked the formal configuration, data/config digests, smoke
+  decrease and exact reload, checkpoint metadata, 20 predictions, 20 metric
+  files, all stage completion hashes, report hash, and long-only signature.
+- Independent H20 verification ran twice and produced the identical completion
+  hash shown above.

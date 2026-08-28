@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch import nn
 
 from pre_experiments.variational_camera_latent.camera import (
     decode_camera_tokens,
@@ -113,30 +112,55 @@ def run_long_only_inference(
     checkpoint_dir: Path,
     destination: Path,
     device: torch.device,
-    *,
-    model: nn.Module | None = None,
 ) -> PredictionRecord:
     """Decode a fine-tuned Camera Head from long tokens and nothing privileged."""
-    long_context = load_long_context(long_context_path)
-    if model is None:
-        model = load_camera_head_checkpoint(checkpoint_path, checkpoint_dir, device)
-    else:
-        model = model.to(device).eval()
-    tokens = torch.from_numpy(long_context["camera_tokens"]).unsqueeze(0).to(device)
-    pose = decode_camera_tokens(model, tokens, iterations=4)
-    c2w = pose_encoding_to_c2w(pose.float())
-    arrays = {
-        "scene": long_context["scene"].copy(),
-        "frame_ids": long_context["frame_ids"].copy(),
-        "pose_encoding": pose[0].float().cpu().numpy(),
-        "predicted_c2w": c2w[0].double().cpu().numpy(),
-        "source_sha256": long_context["source_sha256"].copy(),
-        "checkpoint_sha256": np.asarray(_sha256_file(checkpoint_path), dtype="U64"),
-    }
-    _validate_prediction(arrays)
-    destination = Path(destination)
-    _atomic_npz(destination, arrays)
-    return PredictionRecord(str(arrays["scene"]), destination, _sha256_file(destination))
+    return run_long_only_inference_batch(
+        (long_context_path,),
+        checkpoint_path,
+        checkpoint_dir,
+        (destination,),
+        device,
+    )[0]
+
+
+def run_long_only_inference_batch(
+    long_context_paths: tuple[Path, ...],
+    checkpoint_path: Path,
+    checkpoint_dir: Path,
+    destinations: tuple[Path, ...],
+    device: torch.device,
+) -> tuple[PredictionRecord, ...]:
+    """Load one named checkpoint and decode multiple long-only inputs from it."""
+    if not long_context_paths or len(long_context_paths) != len(destinations):
+        raise ValueError("batch inference requires matched non-empty paths")
+    checkpoint_path = Path(checkpoint_path)
+    checkpoint_sha256 = _sha256_file(checkpoint_path)
+    model = load_camera_head_checkpoint(checkpoint_path, checkpoint_dir, device)
+    records: list[PredictionRecord] = []
+    for long_context_path, destination in zip(long_context_paths, destinations):
+        long_context = load_long_context(long_context_path)
+        tokens = torch.from_numpy(long_context["camera_tokens"]).unsqueeze(0).to(device)
+        pose = decode_camera_tokens(model, tokens, iterations=4)
+        c2w = pose_encoding_to_c2w(pose.float())
+        arrays = {
+            "scene": long_context["scene"].copy(),
+            "frame_ids": long_context["frame_ids"].copy(),
+            "pose_encoding": pose[0].float().cpu().numpy(),
+            "predicted_c2w": c2w[0].double().cpu().numpy(),
+            "source_sha256": long_context["source_sha256"].copy(),
+            "checkpoint_sha256": np.asarray(checkpoint_sha256, dtype="U64"),
+        }
+        _validate_prediction(arrays)
+        destination = Path(destination)
+        _atomic_npz(destination, arrays)
+        records.append(
+            PredictionRecord(
+                str(arrays["scene"]),
+                destination,
+                _sha256_file(destination),
+            )
+        )
+    return tuple(records)
 
 
 def _apply_frozen_transform(poses: np.ndarray, labels: dict[str, np.ndarray]) -> np.ndarray:

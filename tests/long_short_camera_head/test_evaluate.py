@@ -15,6 +15,7 @@ from pre_experiments.long_short_camera_head.evaluate import (
     evaluate_prediction,
     load_prediction,
     run_long_only_inference,
+    run_long_only_inference_batch,
 )
 from pre_experiments.long_short_camera_head.pipeline import run_evaluation
 from tests.long_short_camera_head.test_train import TinyPoseHead
@@ -37,18 +38,19 @@ class LongOnlyEvaluationTests(unittest.TestCase):
                 for i in range(10)
             ]
 
-            def fake_inference(
-                long_path,
+            def fake_batch(
+                long_paths,
                 checkpoint_path,
                 checkpoint_dir,
-                destination,
+                destinations,
                 device,
-                *,
-                model=None,
             ):
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes(b"prediction")
-                return SimpleNamespace(path=destination, sha256="a" * 64)
+                records = []
+                for destination in destinations:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(b"prediction")
+                    records.append(SimpleNamespace(path=destination, sha256="a" * 64))
+                return tuple(records)
 
             def fake_evaluate(prediction_path, privileged_path, destination):
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -62,12 +64,9 @@ class LongOnlyEvaluationTests(unittest.TestCase):
                 "pre_experiments.long_short_camera_head.pipeline._load_formal_config",
                 return_value={},
             ), mock.patch(
-                "pre_experiments.long_short_camera_head.pipeline.run_long_only_inference",
-                side_effect=fake_inference,
-            ) as inference, mock.patch(
-                "pre_experiments.long_short_camera_head.pipeline.load_camera_head_checkpoint",
-                return_value=TinyPoseHead(500),
-            ), mock.patch(
+                "pre_experiments.long_short_camera_head.pipeline.run_long_only_inference_batch",
+                side_effect=fake_batch,
+            ) as inference_batch, mock.patch(
                 "pre_experiments.long_short_camera_head.pipeline.evaluate_prediction",
                 side_effect=fake_evaluate,
             ), mock.patch(
@@ -82,7 +81,7 @@ class LongOnlyEvaluationTests(unittest.TestCase):
                 )
 
             payload = __import__("json").loads(completion.read_text())
-            self.assertEqual(inference.call_count, 10)
+            self.assertEqual(inference_batch.call_count, 1)
             self.assertEqual(len(payload["records"]), 10)
             self.assertEqual(
                 sum(row["role"] == "locked_replay" for row in payload["records"]),
@@ -99,8 +98,13 @@ class LongOnlyEvaluationTests(unittest.TestCase):
                 "short_tokens",
                 "privileged",
                 "privileged_path",
+                "model",
             }
         )
+
+    def test_batch_inference_signature_is_checkpoint_bound(self) -> None:
+        names = set(inspect.signature(run_long_only_inference_batch).parameters)
+        self.assertFalse(names & {"model", "gt", "short_tokens", "privileged"})
 
     def test_prediction_contract_and_frozen_oracle_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

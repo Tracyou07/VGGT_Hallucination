@@ -15,6 +15,7 @@ from pre_experiments.long_short_camera_head.pipeline import (
     FORMAL_LEARNING_RATE,
     FORMAL_PATIENCE,
     FORMAL_SMOKE_STEPS,
+    REQUIRED_TEST_SUITES,
     formal_protocol,
     run_calibration,
     run_smoke,
@@ -46,6 +47,14 @@ class PipelineContractTests(unittest.TestCase):
         self.assertEqual(protocol["batch_size"], 1)
         self.assertEqual(protocol["weight_decay"], 1e-4)
         self.assertEqual(protocol["gradient_clip_norm"], 1.0)
+        self.assertEqual(
+            REQUIRED_TEST_SUITES,
+            (
+                ("long_short_camera_head", "tests/long_short_camera_head"),
+                ("variational_camera_latent", "tests/variational_camera_latent"),
+                ("variational_camera_selector", "tests/variational_camera_selector"),
+            ),
+        )
 
     def test_formal_stages_reject_provisional_schedule(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -4,8 +4,10 @@ import argparse
 import gc
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 from typing import Sequence
@@ -25,6 +27,7 @@ from .evaluate import (
     evaluate_prediction,
     load_prediction,
     run_long_only_inference,
+    run_long_only_inference_batch,
 )
 from .labels import build_privileged_labels, load_privileged_labels
 from .losses import LossWeights
@@ -45,7 +48,7 @@ DEFAULT_RESULT_ROOT = Path("/data/yjh/output/vggt/long_short_camera_head")
 MANIFEST_SCHEMA = "long_short_camera_head.data_manifest.v1"
 VERIFIED_SCHEMA = "long_short_camera_head.verified_completion.v1"
 RUN_CONFIG_SCHEMA = "long_short_camera_head.formal_run_config.v1"
-TEST_EVIDENCE_SCHEMA = "long_short_camera_head.test_evidence.v1"
+TEST_EVIDENCE_SCHEMA = "long_short_camera_head.test_evidence.v2"
 FORMAL_SMOKE_STEPS = 20
 FORMAL_CALIBRATION_STEPS = 400
 FORMAL_LEARNING_RATE = 2e-6
@@ -53,6 +56,11 @@ FORMAL_WEIGHT_DECAY = 1e-4
 FORMAL_CHECKPOINT_INTERVAL = 25
 FORMAL_PATIENCE = 100
 FORMAL_SEED = 20260828
+REQUIRED_TEST_SUITES = (
+    ("long_short_camera_head", "tests/long_short_camera_head"),
+    ("variational_camera_latent", "tests/variational_camera_latent"),
+    ("variational_camera_selector", "tests/variational_camera_selector"),
+)
 
 
 def formal_protocol() -> dict[str, object]:
@@ -181,16 +189,32 @@ def run_test_preflight(*, run_root: Path) -> Path:
     completion = run_root / "manifests" / "test_evidence.json"
     if completion.is_file():
         evidence = _read_json(completion)
-        log_path = Path(str(evidence.get("log_path", "")))
+        suites = evidence.get("suites")
         if (
             evidence.get("schema") == TEST_EVIDENCE_SCHEMA
-            and evidence.get("git_revision") == config["git_revision"]
-            and log_path.is_file()
-            and evidence.get("log_sha256") == sha256_file(log_path)
-            and int(evidence.get("returncode", -1)) == 0
+            and evidence.get("training_git_revision") == config["git_revision"]
+            and evidence.get("tested_git_revision") == _git_revision()
+            and isinstance(suites, list)
+            and [
+                (str(row.get("name")), str(row.get("path")))
+                for row in suites
+                if isinstance(row, dict)
+            ]
+            == list(REQUIRED_TEST_SUITES)
+            and all(
+                isinstance(row, dict)
+                and Path(str(row.get("log_path", ""))).is_file()
+                and row.get("log_sha256")
+                == sha256_file(Path(str(row.get("log_path", ""))))
+                and int(row.get("returncode", -1)) == 0
+                for row in suites
+            )
         ):
             return completion
-        raise ValueError("existing focused-test evidence is invalid")
+        preserved = run_root / "diagnostics" / "test_evidence_v1_preserved.json"
+        preserved.parent.mkdir(parents=True, exist_ok=True)
+        if not preserved.exists():
+            shutil.copy2(completion, preserved)
     try:
         repository_root = Path(
             subprocess.check_output(
@@ -201,40 +225,56 @@ def run_test_preflight(*, run_root: Path) -> Path:
         )
     except (OSError, subprocess.CalledProcessError) as error:
         raise ValueError("cannot locate repository for focused tests") from error
-    command = [
-        sys.executable,
-        "-m",
-        "unittest",
-        "discover",
-        "-s",
-        "tests/long_short_camera_head",
-        "-p",
-        "test_*.py",
-    ]
-    completed = subprocess.run(
-        command,
-        cwd=repository_root,
-        text=True,
-        capture_output=True,
-        timeout=600,
-        check=False,
-    )
-    combined = completed.stdout + completed.stderr
-    log_path = run_root / "logs" / "focused_tests.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(combined, encoding="utf-8")
-    match = re.search(r"Ran\s+(\d+)\s+tests?", combined)
-    test_count = int(match.group(1)) if match else 0
-    if completed.returncode != 0 or test_count < 1 or not re.search(r"^OK", combined, re.MULTILINE):
-        raise ValueError("focused preflight tests did not pass")
+    suite_rows: list[dict[str, object]] = []
+    for suite_name, suite_path in REQUIRED_TEST_SUITES:
+        command = [
+            sys.executable,
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            suite_path,
+            "-p",
+            "test_*.py",
+        ]
+        completed = subprocess.run(
+            command,
+            cwd=repository_root,
+            text=True,
+            capture_output=True,
+            timeout=900,
+            check=False,
+            env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+        )
+        combined = completed.stdout + completed.stderr
+        log_path = run_root / "logs" / f"tests_{suite_name}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(combined, encoding="utf-8")
+        match = re.search(r"Ran\s+(\d+)\s+tests?", combined)
+        test_count = int(match.group(1)) if match else 0
+        if (
+            completed.returncode != 0
+            or test_count < 1
+            or not re.search(r"^OK", combined, re.MULTILINE)
+        ):
+            raise ValueError(f"preflight test suite failed: {suite_name}")
+        suite_rows.append(
+            {
+                "name": suite_name,
+                "path": suite_path,
+                "command": command,
+                "returncode": completed.returncode,
+                "test_count": test_count,
+                "log_path": str(log_path),
+                "log_sha256": sha256_file(log_path),
+            }
+        )
     evidence = {
         "schema": TEST_EVIDENCE_SCHEMA,
-        "git_revision": config["git_revision"],
-        "command": command,
-        "returncode": completed.returncode,
-        "test_count": test_count,
-        "log_path": str(log_path),
-        "log_sha256": sha256_file(log_path),
+        "training_git_revision": config["git_revision"],
+        "tested_git_revision": _git_revision(),
+        "test_count": sum(int(row["test_count"]) for row in suite_rows),
+        "suites": suite_rows,
     }
     _atomic_json(completion, evidence)
     return completion
@@ -533,19 +573,21 @@ def run_evaluation(
     rows = manifest["records"]
     assert isinstance(rows, list)
     output_rows: list[dict[str, object]] = []
-    model = load_camera_head_checkpoint(checkpoint, checkpoint_dir, device)
-    for row in rows:
+    long_paths = tuple(Path(str(row["long_context_path"])) for row in rows)
+    prediction_paths = tuple(
+        Path(run_root) / "predictions" / variant / f"{row['scene']}.npz"
+        for row in rows
+    )
+    predictions = run_long_only_inference_batch(
+        long_paths,
+        checkpoint,
+        checkpoint_dir,
+        prediction_paths,
+        device,
+    )
+    for row, prediction in zip(rows, predictions):
         scene = str(row["scene"])
-        prediction_path = Path(run_root) / "predictions" / variant / f"{scene}.npz"
         metrics_path = Path(run_root) / "evaluation" / variant / f"{scene}.json"
-        prediction = run_long_only_inference(
-            Path(str(row["long_context_path"])),
-            checkpoint,
-            checkpoint_dir,
-            prediction_path,
-            device,
-            model=model,
-        )
         evaluation = evaluate_prediction(
             prediction.path,
             Path(str(row["privileged_path"])),
@@ -562,7 +604,6 @@ def run_evaluation(
         if device.type == "cuda":
             torch.cuda.empty_cache()
         gc.collect()
-    del model
     if len(output_rows) != 10:
         raise ValueError("formal evaluation must cover all ten scenes")
     completion = Path(run_root) / "evaluation" / variant / "completed.json"
@@ -600,16 +641,32 @@ def verify_completed_run(run_root: Path) -> Path:
     if not evidence_path.is_file():
         raise ValueError("run is incomplete: focused-test evidence")
     evidence = _read_json(evidence_path)
-    evidence_log = Path(str(evidence.get("log_path", "")))
+    evidence_suites = evidence.get("suites")
+    expected_suite_identity = list(REQUIRED_TEST_SUITES)
     if (
         evidence.get("schema") != TEST_EVIDENCE_SCHEMA
-        or evidence.get("git_revision") != config["git_revision"]
-        or int(evidence.get("returncode", -1)) != 0
-        or int(evidence.get("test_count", 0)) < 1
-        or not evidence_log.is_file()
-        or evidence.get("log_sha256") != sha256_file(evidence_log)
+        or evidence.get("training_git_revision") != config["git_revision"]
+        or evidence.get("tested_git_revision") != _git_revision()
+        or not isinstance(evidence_suites, list)
+        or [
+            (str(row.get("name")), str(row.get("path")))
+            for row in evidence_suites
+            if isinstance(row, dict)
+        ]
+        != expected_suite_identity
+        or int(evidence.get("test_count", 0))
+        != sum(int(row.get("test_count", 0)) for row in evidence_suites)
+        or any(
+            not isinstance(row, dict)
+            or int(row.get("returncode", -1)) != 0
+            or int(row.get("test_count", 0)) < 1
+            or not Path(str(row.get("log_path", ""))).is_file()
+            or row.get("log_sha256")
+            != sha256_file(Path(str(row.get("log_path", ""))))
+            for row in evidence_suites
+        )
     ):
-        raise ValueError("run is incomplete: focused-test evidence mismatch")
+        raise ValueError("run is incomplete: compatibility-test evidence mismatch")
 
     smoke_completion = run_root / "smoke" / "completed.json"
     if not smoke_completion.is_file():
