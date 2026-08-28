@@ -1,5 +1,18 @@
 # Round 2 Method Pre-experiment
 
+## Long–short native Camera Head fine-tuning
+
+`pre_experiments.long_short_camera_head` fine-tunes VGGT's own Camera Head from
+cached 500-frame Camera tokens. Short-window predictions and raw ScanNet poses
+exist only in separate privileged training/evaluation sidecars; deployed
+inference accepts only the long-token shard and a Camera Head checkpoint. The
+H20 entry point is `scripts/h20/run_long_short_camera_head.sh`, and formal
+artifacts are written below
+`/data/yjh/output/vggt/long_short_camera_head/<run_id>`. The runner first performs
+a one-scene smoke test, then trains matched GT-only and quality-weighted
+long–short variants on eight scenes and evaluates both on two locked-replay
+scenes.
+
 ## Variational Camera latent candidate selector
 
 `pre_experiments.variational_camera_selector` trains a prediction-only listwise ranker over
