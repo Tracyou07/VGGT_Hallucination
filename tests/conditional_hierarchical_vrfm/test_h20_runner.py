@@ -822,16 +822,40 @@ class H20RunnerBehaviorTests(unittest.TestCase):
         self.assertEqual(self.python_stages(), [])
 
     def _check_formal_mode_ignores_fixture_path_overrides(self) -> None:
+        ignored_overrides = {
+            "REPO_ROOT": bash_path(self.temporary / "ignored-repository"),
+            "PYTHON": bash_path(self.temporary / "ignored-python"),
+            "RESULT_ROOT": bash_path(self.temporary / "ignored-results"),
+            "SOURCE_RUN": bash_path(self.temporary / "ignored-source"),
+            "FORMAL_LABEL_ROOT": bash_path(self.temporary / "ignored-formal"),
+            "PREPARED_ROOT": bash_path(self.temporary / "ignored-prepared"),
+            "CHECKPOINT_DIR": bash_path(self.temporary / "ignored-checkpoint"),
+            "SCANNET_MARKER": bash_path(self.temporary / "ignored-scannet-marker"),
+        }
         result = self.run_runner_fixture(
             arguments=("--preflight-only",),
-            environment={"HVRFM_RUNNER_TEST_MODE": "0"},
+            environment={
+                "HVRFM_RUNNER_TEST_MODE": "0",
+                **ignored_overrides,
+            },
         )
 
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn(
-            "/home/ubuntu/yjh/vggt/.worktrees/privileged_conditional_hvrfm",
-            result.stderr,
-        )
+        if result.returncode == 0:
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                payload["result_root"],
+                "/data/yjh/output/vggt/privileged_conditional_hvrfm",
+            )
+            self.assertNotEqual(
+                payload["result_root"], ignored_overrides["RESULT_ROOT"]
+            )
+        else:
+            self.assertIn(
+                "/home/ubuntu/yjh/vggt/.worktrees/privileged_conditional_hvrfm",
+                result.stderr,
+            )
+        for ignored_path in ignored_overrides.values():
+            self.assertNotIn(ignored_path, result.stdout + result.stderr)
         self.assertEqual(self.python_stages(), [])
 
     def _check_result_root_symlink_is_rejected_without_outside_writes(self) -> None:

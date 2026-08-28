@@ -578,8 +578,17 @@ def _execute_preflight_commands(
     rows: list[dict[str, object]] = []
     for index, (command, completed) in enumerate(completed_commands):
         content = completed.stdout + completed.stderr
+        log_metadata: dict[str, str] = {}
+        if root is not None:
+            log = root / "logs" / f"preflight_{index}.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text(content, encoding="utf-8")
+            log_metadata = {
+                "log": log.relative_to(root).as_posix(),
+                "log_sha256": sha256_file(log),
+            }
         test_results: list[dict[str, str]] = []
-        if index < len(PREFLIGHT_SUITES):
+        if completed.returncode == 0 and index < len(PREFLIGHT_SUITES):
             suite, expected_count = PREFLIGHT_SUITES[index]
             test_results = _parse_unittest_results(content, suite, test_inventory[suite])
             if len(test_results) != expected_count:
@@ -590,15 +599,8 @@ def _execute_preflight_commands(
             "test_count": len(test_results),
             "skipped_count": sum(result["status"] == "skipped" for result in test_results),
             "test_results": test_results,
+            **log_metadata,
         }
-        if root is not None:
-            log = root / "logs" / f"preflight_{index}.log"
-            log.parent.mkdir(parents=True, exist_ok=True)
-            log.write_text(content, encoding="utf-8")
-            row.update({
-                "log": log.relative_to(root).as_posix(),
-                "log_sha256": sha256_file(log),
-            })
         rows.append(row)
     return rows
 

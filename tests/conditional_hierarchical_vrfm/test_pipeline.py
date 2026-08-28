@@ -103,6 +103,97 @@ def _write_privileged(path: Path, scene: str, source_sha: str, checkpoint_sha: s
 
 
 class PipelineBarrierTests(unittest.TestCase):
+    @staticmethod
+    def _synthetic_preflight_inventory() -> dict[str, list[str]]:
+        return {
+            suite: [
+                f"{suite.replace('/', '.')}.Synthetic.test_{index:03d}"
+                for index in range(count)
+            ]
+            for suite, count in PREFLIGHT_SUITES
+        }
+
+    def _check_failed_preflight_command_preserves_raw_log(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inventory = self._synthetic_preflight_inventory()
+            completed = [
+                SimpleNamespace(
+                    returncode=1,
+                    stdout="suite failure: FAIL\n",
+                    stderr="traceback: ERROR\n",
+                ),
+                *[
+                    SimpleNamespace(returncode=0, stdout="passing suite\n", stderr="")
+                    for _ in range(3)
+                ],
+            ]
+
+            def parse_only_success(
+                content: str, suite: str, expected_ids: list[str]
+            ) -> list[dict[str, str]]:
+                if "FAIL" in content or "ERROR" in content:
+                    raise AssertionError("failed command entered pass-only parser")
+                return [
+                    {"id": identifier, "status": "ok"}
+                    for identifier in expected_ids
+                ]
+
+            with patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_git"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.preflight_test_inventory",
+                return_value=inventory,
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.subprocess.run",
+                side_effect=completed,
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline._parse_unittest_results",
+                side_effect=parse_only_success,
+            ) as parser:
+                with self.assertRaisesRegex(ValueError, "preflight command failed"):
+                    run_preflight(SimpleNamespace(run_root=root, git_commit="a" * 40))
+
+            log = root / "logs" / "preflight_0.log"
+            self.assertEqual(
+                log.read_text(encoding="utf-8"),
+                "suite failure: FAIL\ntraceback: ERROR\n",
+            )
+            self.assertEqual(parser.call_count, 2)
+
+    def _check_malformed_success_preserves_raw_log(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inventory = self._synthetic_preflight_inventory()
+            completed = [
+                SimpleNamespace(
+                    returncode=0,
+                    stdout="malformed success output\n",
+                    stderr="parser context\n",
+                ),
+                *[
+                    SimpleNamespace(returncode=0, stdout="unused\n", stderr="")
+                    for _ in range(3)
+                ],
+            ]
+            with patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_git"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.preflight_test_inventory",
+                return_value=inventory,
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.subprocess.run",
+                side_effect=completed,
+            ):
+                with self.assertRaisesRegex(ValueError, "stable test IDs"):
+                    run_preflight(SimpleNamespace(run_root=root, git_commit="a" * 40))
+
+            log = root / "logs" / "preflight_0.log"
+            self.assertEqual(
+                log.read_text(encoding="utf-8"),
+                "malformed success output\nparser context\n",
+            )
+
     def test_forged_smoke_completion_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -120,6 +211,8 @@ class PipelineBarrierTests(unittest.TestCase):
     def test_authoritative_live_gate_rejects_forged_handwritten_preflight(self) -> None:
         # Regression: FORGED_HANDWRITTEN_PREFLIGHT_ACCEPTED.
         self.assertEqual(dict(PREFLIGHT_SUITES)["tests/conditional_hierarchical_vrfm"], 71)
+        self._check_failed_preflight_command_preserves_raw_log()
+        self._check_malformed_success_preserves_raw_log()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             inventory = preflight_test_inventory()
