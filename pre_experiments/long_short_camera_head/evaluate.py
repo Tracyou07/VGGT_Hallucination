@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from torch import nn
 
 from pre_experiments.variational_camera_latent.camera import (
     decode_camera_tokens,
@@ -112,10 +113,15 @@ def run_long_only_inference(
     checkpoint_dir: Path,
     destination: Path,
     device: torch.device,
+    *,
+    model: nn.Module | None = None,
 ) -> PredictionRecord:
     """Decode a fine-tuned Camera Head from long tokens and nothing privileged."""
     long_context = load_long_context(long_context_path)
-    model = load_camera_head_checkpoint(checkpoint_path, checkpoint_dir, device)
+    if model is None:
+        model = load_camera_head_checkpoint(checkpoint_path, checkpoint_dir, device)
+    else:
+        model = model.to(device).eval()
     tokens = torch.from_numpy(long_context["camera_tokens"]).unsqueeze(0).to(device)
     pose = decode_camera_tokens(model, tokens, iterations=4)
     c2w = pose_encoding_to_c2w(pose.float())

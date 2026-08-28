@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -15,10 +16,79 @@ from pre_experiments.long_short_camera_head.evaluate import (
     load_prediction,
     run_long_only_inference,
 )
+from pre_experiments.long_short_camera_head.pipeline import run_evaluation
 from tests.long_short_camera_head.test_train import TinyPoseHead
 
 
 class LongOnlyEvaluationTests(unittest.TestCase):
+    def test_pipeline_evaluates_all_ten_manifest_scenes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "training" / "gt_only" / "checkpoints" / "best.pt"
+            checkpoint.parent.mkdir(parents=True)
+            checkpoint.write_bytes(b"checkpoint")
+            records = [
+                {
+                    "scene": f"scene{i:04d}_00",
+                    "role": "train" if i < 8 else "validation",
+                    "long_context_path": str(root / f"long{i}.npz"),
+                    "privileged_path": str(root / f"privileged{i}.npz"),
+                }
+                for i in range(10)
+            ]
+
+            def fake_inference(
+                long_path,
+                checkpoint_path,
+                checkpoint_dir,
+                destination,
+                device,
+                *,
+                model=None,
+            ):
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(b"prediction")
+                return SimpleNamespace(path=destination, sha256="a" * 64)
+
+            def fake_evaluate(prediction_path, privileged_path, destination):
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text("{}", encoding="utf-8")
+                return SimpleNamespace(path=destination)
+
+            with mock.patch(
+                "pre_experiments.long_short_camera_head.pipeline._load_manifest",
+                return_value={"records": records},
+            ), mock.patch(
+                "pre_experiments.long_short_camera_head.pipeline._load_formal_config",
+                return_value={},
+            ), mock.patch(
+                "pre_experiments.long_short_camera_head.pipeline.run_long_only_inference",
+                side_effect=fake_inference,
+            ) as inference, mock.patch(
+                "pre_experiments.long_short_camera_head.pipeline.load_camera_head_checkpoint",
+                return_value=TinyPoseHead(500),
+            ), mock.patch(
+                "pre_experiments.long_short_camera_head.pipeline.evaluate_prediction",
+                side_effect=fake_evaluate,
+            ), mock.patch(
+                "pre_experiments.long_short_camera_head.pipeline.sha256_file",
+                return_value="b" * 64,
+            ):
+                completion = run_evaluation(
+                    run_root=root,
+                    checkpoint_dir=root / "base",
+                    variant="gt_only",
+                    device=torch.device("cpu"),
+                )
+
+            payload = __import__("json").loads(completion.read_text())
+            self.assertEqual(inference.call_count, 10)
+            self.assertEqual(len(payload["records"]), 10)
+            self.assertEqual(
+                sum(row["role"] == "locked_replay" for row in payload["records"]),
+                2,
+            )
+
     def test_inference_signature_has_no_privileged_or_short_argument(self) -> None:
         names = set(inspect.signature(run_long_only_inference).parameters)
         self.assertFalse(

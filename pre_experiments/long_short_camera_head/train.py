@@ -33,6 +33,7 @@ CHECKPOINT_SCHEMA = "long_short_camera_head.training_checkpoint.v1"
 @dataclass(frozen=True)
 class ResumeState:
     step: int
+    best_step: int
     best_validation_rms: float
 
 
@@ -82,9 +83,11 @@ class TrainingResult:
     initial_training_loss: float
     final_training_loss: float
     best_validation_rms: float
+    best_step: int
     best_checkpoint: Path
     latest_checkpoint: Path
     metrics_path: Path
+    validation_metrics_path: Path
 
 
 @dataclass(frozen=True)
@@ -94,11 +97,11 @@ class TrainConfig:
     variant: str
     train_pairs: tuple[tuple[Path, Path], ...]
     validation_pairs: tuple[tuple[Path, Path], ...]
-    max_steps: int = 80
-    learning_rate: float = 2e-5
+    max_steps: int = 400
+    learning_rate: float = 2e-6
     weight_decay: float = 1e-4
-    checkpoint_interval: int = 10
-    patience: int = 40
+    checkpoint_interval: int = 25
+    patience: int = 100
     seed: int = 20260828
     device: torch.device = torch.device("cuda")
     weights: LossWeights = LossWeights()
@@ -235,6 +238,7 @@ def train_camera_head(config: TrainConfig) -> TrainingResult:
         "checkpoint_interval": config.checkpoint_interval,
         "patience": config.patience,
         "seed": config.seed,
+        "precision": "bf16_autocast" if config.device.type == "cuda" else "float32",
         "weights": weights_payload,
         "train_scenes": list(train_scenes),
         "validation_scenes": list(validation_scenes),
@@ -326,12 +330,14 @@ def save_training_checkpoint(
     config_digest: str,
     data_digest: str,
     best_validation_rms: float,
+    best_step: int | None = None,
 ) -> None:
     if step < 0 or len(config_digest) != 64 or len(data_digest) != 64:
         raise ValueError("checkpoint step or digest is invalid")
     payload = {
         "schema": CHECKPOINT_SCHEMA,
         "step": int(step),
+        "best_step": int(step if best_step is None else best_step),
         "best_validation_rms": float(best_validation_rms),
         "config_digest": config_digest,
         "data_digest": data_digest,
@@ -368,12 +374,25 @@ def load_training_checkpoint(
     torch.set_rng_state(payload["torch_rng_state"])
     return ResumeState(
         step=int(payload["step"]),
+        best_step=int(payload.get("best_step", payload["step"])),
         best_validation_rms=float(payload["best_validation_rms"]),
     )
 
 
-def _decode_final(camera_head: nn.Module, tokens: Tensor) -> Tensor:
-    trace = camera_head.decode_pose_tokens(tokens, num_iterations=4)
+def _decode_final(
+    camera_head: nn.Module,
+    tokens: Tensor,
+    *,
+    autocast_enabled: bool | None = None,
+) -> Tensor:
+    enabled = tokens.device.type == "cuda" if autocast_enabled is None else autocast_enabled
+    device_type = "cuda" if enabled else tokens.device.type
+    with torch.autocast(
+        device_type=device_type,
+        dtype=torch.bfloat16,
+        enabled=enabled,
+    ):
+        trace = camera_head.decode_pose_tokens(tokens, num_iterations=4)
     if not isinstance(trace, (list, tuple)) or len(trace) != 4:
         raise ValueError("Camera Head must return exactly four decode iterations")
     output = trace[-1]
@@ -475,6 +494,7 @@ def run_training_loop(
     latest_checkpoint = run_root / "checkpoints" / "latest.pt"
     best_checkpoint = run_root / "checkpoints" / "best.pt"
     metrics_path = run_root / "metrics" / "training.jsonl"
+    validation_metrics_path = run_root / "metrics" / "validation.jsonl"
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
     start_step = 0
     best_validation = float("inf")
@@ -490,7 +510,7 @@ def run_training_loop(
         )
         start_step = resumed.step
         best_validation = resumed.best_validation_rms
-        best_step = start_step
+        best_step = resumed.best_step
     if start_step > max_steps:
         raise ValueError("checkpoint step exceeds requested maximum")
 
@@ -552,6 +572,7 @@ def run_training_loop(
                 config_digest=config_digest,
                 data_digest=data_digest,
                 best_validation_rms=best_validation,
+                best_step=best_step,
             )
             if improved:
                 save_training_checkpoint(
@@ -562,19 +583,49 @@ def run_training_loop(
                     config_digest=config_digest,
                     data_digest=data_digest,
                     best_validation_rms=best_validation,
+                    best_step=best_step,
+                )
+            with validation_metrics_path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "step": completed_step,
+                            "variant": variant,
+                            "mean_frozen_oracle_rms": validation,
+                            "improved": improved,
+                            "best_step": best_step,
+                            "best_validation_rms": best_validation,
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n"
                 )
             if completed_step - best_step >= patience:
                 break
             model.train()
     if not best_checkpoint.is_file():
         raise ValueError("training produced no best checkpoint")
+    model.eval()
+    with torch.no_grad():
+        final_loss = float(
+            _example_loss(
+                model,
+                train_examples[0],
+                teacher_coefficient=teacher_coefficient,
+                weights=weights,
+            )["total"]
+        )
+    if not math.isfinite(final_loss):
+        raise ValueError("final training loss became non-finite")
     return TrainingResult(
         start_step=start_step,
         completed_step=completed_step,
         initial_training_loss=initial_loss,
         final_training_loss=final_loss,
         best_validation_rms=best_validation,
+        best_step=best_step,
         best_checkpoint=best_checkpoint,
         latest_checkpoint=latest_checkpoint,
         metrics_path=metrics_path,
+        validation_metrics_path=validation_metrics_path,
     )

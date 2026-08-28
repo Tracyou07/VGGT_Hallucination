@@ -125,8 +125,30 @@ def _read_metrics(path: Path) -> dict[str, object]:
     return payload
 
 
+def _scene_roles(run_root: Path) -> dict[str, str]:
+    path = Path(run_root) / "manifests" / "data_manifest.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("data manifest is required for role-aware reporting") from error
+    records = payload.get("records") if isinstance(payload, dict) else None
+    if not isinstance(records, list) or not records:
+        raise ValueError("data manifest contains no scene roles")
+    roles: dict[str, str] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError("data manifest record is malformed")
+        scene = str(record.get("scene", ""))
+        role = str(record.get("role", ""))
+        if not scene or role not in {"train", "validation"} or scene in roles:
+            raise ValueError("data manifest scene role is malformed")
+        roles[scene] = role
+    return roles
+
+
 def write_report(run_root: Path) -> Path:
     run_root = Path(run_root)
+    roles = _scene_roles(run_root)
     gt_files = {
         path.stem: path
         for path in (run_root / "evaluation" / "gt_only").glob("scene*.json")
@@ -135,7 +157,11 @@ def write_report(run_root: Path) -> Path:
         path.stem: path
         for path in (run_root / "evaluation" / "long_short").glob("scene*.json")
     }
-    if not gt_files or set(gt_files) != set(long_files):
+    if (
+        not gt_files
+        or set(gt_files) != set(long_files)
+        or set(gt_files) != set(roles)
+    ):
         raise ValueError("matched evaluation files are incomplete")
     rows: list[dict[str, object]] = []
     for scene in sorted(gt_files):
@@ -153,7 +179,7 @@ def write_report(run_root: Path) -> Path:
         rows.append(
             {
                 "scene": scene,
-                "role": "locked_replay",
+                "role": "locked_replay" if roles[scene] == "validation" else "train_diagnostic",
                 "baseline_rms": float(long_short["baseline_rms"]),
                 "gt_only_rms": float(gt["predicted_rms"]),
                 "long_short_rms": float(long_short["predicted_rms"]),
@@ -164,7 +190,13 @@ def write_report(run_root: Path) -> Path:
                 "long_short_checkpoint_sha256": str(long_short["checkpoint_sha256"]),
             }
         )
-    report = classify(rows, inference_leakage_audit=inference_signature_is_long_only())
+    locked_rows = [row for row in rows if row["role"] == "locked_replay"]
+    report = classify(
+        locked_rows,
+        inference_leakage_audit=inference_signature_is_long_only(),
+    )
+    report["locked_replay_scenes"] = locked_rows
+    report["scenes"] = rows
     report_path = run_root / "reports" / "result.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = report_path.with_suffix(".json.tmp")
@@ -176,12 +208,12 @@ def write_report(run_root: Path) -> Path:
         "",
         f"Classification: **{report['classification']}**",
         "",
-        "| Scene | Baseline RMS | GT-only RMS | Long–short RMS |",
-        "|---|---:|---:|---:|",
+        "| Scene | Role | Baseline RMS | GT-only RMS | Long–short RMS |",
+        "|---|---|---:|---:|---:|",
     ]
     for row in rows:
         markdown.append(
-            f"| {row['scene']} | {row['baseline_rms']:.6f} | "
+            f"| {row['scene']} | {row['role']} | {row['baseline_rms']:.6f} | "
             f"{row['gt_only_rms']:.6f} | {row['long_short_rms']:.6f} |"
         )
     markdown_path = run_root / "reports" / "result.md"

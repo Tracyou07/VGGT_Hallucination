@@ -22,6 +22,24 @@ class H20RunnerContractTests(unittest.TestCase):
         for forbidden in ("hf_token", "huggingface_token", "token="):
             self.assertNotIn(forbidden, text)
 
+    def test_runner_uses_locked_formal_schedule(self) -> None:
+        text = self.runner.read_text(encoding="utf-8")
+        for required in (
+            'SMOKE_STEPS="20"',
+            'CALIBRATION_STEPS="400"',
+            'LEARNING_RATE="2e-6"',
+            'CHECKPOINT_INTERVAL="25"',
+            'PATIENCE="100"',
+            "--stage preflight",
+        ):
+            self.assertIn(required, text)
+        for forbidden in (
+            'SMOKE_STEPS="${SMOKE_STEPS:-',
+            'CALIBRATION_STEPS="${CALIBRATION_STEPS:-',
+            'LEARNING_RATE="${LEARNING_RATE:-',
+        ):
+            self.assertNotIn(forbidden, text)
+
 
 if __name__ == "__main__":
     unittest.main()

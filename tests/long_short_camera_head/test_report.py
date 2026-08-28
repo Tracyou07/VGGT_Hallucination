@@ -20,9 +20,26 @@ def _row(scene: str, *, baseline: float, gt_only: float, long_short: float) -> d
 
 
 class ReportClassificationTests(unittest.TestCase):
+    @staticmethod
+    def _write_manifest(root: Path, scenes: list[tuple[str, str]]) -> None:
+        target = root / "manifests"
+        target.mkdir(parents=True)
+        (target / "data_manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema": "long_short_camera_head.data_manifest.v1",
+                    "records": [
+                        {"scene": scene, "role": role} for scene, role in scenes
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
     def test_write_report_ignores_stage_completion_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            self._write_manifest(root, [("scene0325_01", "validation")])
             for variant, predicted in (("gt_only", 0.95), ("long_short", 0.90)):
                 target = root / "evaluation" / variant
                 target.mkdir(parents=True)
@@ -45,6 +62,38 @@ class ReportClassificationTests(unittest.TestCase):
             self.assertTrue(report_path.is_file())
             report = json.loads(report_path.read_text())
             self.assertEqual(len(report["scenes"]), 1)
+
+    def test_write_report_uses_all_scenes_but_only_locked_replay_for_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scenes = [(f"scene{i:04d}_00", "train") for i in range(8)] + [
+                ("scene0325_01", "validation"),
+                ("scene0675_00", "validation"),
+            ]
+            self._write_manifest(root, scenes)
+            for variant in ("gt_only", "long_short"):
+                target = root / "evaluation" / variant
+                target.mkdir(parents=True)
+                for scene, role in scenes:
+                    predicted = 2.0 if role == "train" and variant == "long_short" else 0.9
+                    if variant == "gt_only":
+                        predicted = 0.95
+                    metrics = {
+                        "schema": "long_short_camera_head.evaluation.v1",
+                        "scene": scene,
+                        "baseline_rms": 1.0,
+                        "predicted_rms": predicted,
+                        "baseline_rotation_deg": 1.0,
+                        "predicted_rotation_deg": 1.05,
+                        "checkpoint_sha256": ("a" if variant == "gt_only" else "b") * 64,
+                    }
+                    (target / f"{scene}.json").write_text(json.dumps(metrics))
+
+            report = json.loads(write_report(root).read_text())
+
+            self.assertEqual(len(report["scenes"]), 10)
+            self.assertEqual(len(report["locked_replay_scenes"]), 2)
+            self.assertEqual(report["classification"], "PROMISING")
 
     def test_promising_requires_long_short_to_beat_baseline_and_gt_only(self) -> None:
         report = classify(

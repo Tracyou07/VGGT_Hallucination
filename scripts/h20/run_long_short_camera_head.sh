@@ -14,11 +14,11 @@ RUN_ID="${RUN_ID:-long_short_head_$(date -u +%Y%m%dT%H%M%SZ)}"
 RUN_ROOT="${RESULT_ROOT}/${RUN_ID}"
 GPU_GT_ONLY="${GPU_GT_ONLY:-2}"
 GPU_LONG_SHORT="${GPU_LONG_SHORT:-3}"
-SMOKE_STEPS="${SMOKE_STEPS:-4}"
-CALIBRATION_STEPS="${CALIBRATION_STEPS:-40}"
-LEARNING_RATE="${LEARNING_RATE:-5e-6}"
-CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-5}"
-PATIENCE="${PATIENCE:-20}"
+SMOKE_STEPS="20"
+CALIBRATION_STEPS="400"
+LEARNING_RATE="2e-6"
+CHECKPOINT_INTERVAL="25"
+PATIENCE="100"
 
 [[ -d "${REPO_ROOT}" ]] || { echo "missing dedicated worktree" >&2; exit 12; }
 [[ "$(git -C "${REPO_ROOT}" branch --show-current)" == "codex/long-short-camera-head-finetune" ]] || { echo "wrong branch" >&2; exit 13; }
@@ -58,6 +58,7 @@ run_stage() {
 COMMON=(--run-root "${RUN_ROOT}" --checkpoint-dir "${CHECKPOINT_DIR}" --device cuda)
 run_stage "${GPU_GT_ONLY}" prepare --stage prepare "${COMMON[@]}" \
   --source-run "${SOURCE_RUN}" --prepared-root "${PREPARED_ROOT}"
+run_stage "${GPU_GT_ONLY}" preflight --stage preflight "${COMMON[@]}"
 run_stage "${GPU_GT_ONLY}" smoke --stage smoke "${COMMON[@]}" \
   --max-steps "${SMOKE_STEPS}" --learning-rate "${LEARNING_RATE}"
 

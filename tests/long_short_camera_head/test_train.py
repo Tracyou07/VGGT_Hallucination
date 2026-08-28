@@ -231,6 +231,7 @@ class CameraHeadTrainingTests(unittest.TestCase):
             )
 
             self.assertEqual(state.step, 7)
+            self.assertEqual(state.best_step, 7)
             self.assertEqual(state.best_validation_rms, 0.25)
             for name, value in model.state_dict().items():
                 torch.testing.assert_close(value, expected[name])
@@ -258,6 +259,32 @@ class CameraHeadTrainingTests(unittest.TestCase):
                     data_digest="c" * 64,
                     device=torch.device("cpu"),
                 )
+
+    def test_cuda_decode_uses_bfloat16_autocast(self) -> None:
+        from pre_experiments.long_short_camera_head import train as train_module
+
+        model = TinyPoseHead(2)
+        tokens = torch.zeros(1, 2, 2048)
+        entered: list[dict[str, object]] = []
+
+        class _Context:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        def fake_autocast(**kwargs):
+            entered.append(kwargs)
+            return _Context()
+
+        with mock.patch.object(torch, "autocast", side_effect=fake_autocast):
+            train_module._decode_final(model, tokens, autocast_enabled=True)
+
+        self.assertEqual(
+            entered,
+            [{"device_type": "cuda", "dtype": torch.bfloat16, "enabled": True}],
+        )
 
 
 if __name__ == "__main__":
