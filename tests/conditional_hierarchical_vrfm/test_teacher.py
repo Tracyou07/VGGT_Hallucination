@@ -34,9 +34,26 @@ def _poses_from_raw(raw: torch.Tensor) -> torch.Tensor:
 
 
 class _TokenCameraHead(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.anchor = nn.Parameter(torch.zeros(1))
+
     def decode_pose_tokens(self, tokens: torch.Tensor, *, num_iterations: int) -> list[torch.Tensor]:
         self.last_iterations = num_iterations
         return [tokens[..., :9]]
+
+
+class _StatefulTokenCameraHead(_TokenCameraHead):
+    def __init__(self) -> None:
+        super().__init__()
+        self.register_buffer("running_value", torch.zeros(1))
+        self.saw_eval = False
+
+    def decode_pose_tokens(self, tokens: torch.Tensor, *, num_iterations: int) -> list[torch.Tensor]:
+        self.saw_eval = not self.training
+        self.running_value.add_(1.0)
+        self.anchor.data.add_(1.0)
+        return super().decode_pose_tokens(tokens, num_iterations=num_iterations)
 
 
 class TeacherVariantTests(unittest.TestCase):
@@ -104,6 +121,22 @@ class TeacherVariantTests(unittest.TestCase):
         self.assertEqual(len({row.tobytes() for row in first}), 4)
         self.assertTrue(np.all(~first[:, weights == 0]))
 
+    def test_masks_preserve_variant_zero_frame_coverage_when_distinct_subsets_exist(self) -> None:
+        cases = {
+            "all_positive": np.ones(9),
+            "sparse_positive": np.array([0.5, 0.2, 0.3, 0.0, 0.4, 0.1, 0.3, 0.2, 0.6]),
+        }
+        for name, weights in cases.items():
+            with self.subTest(name=name):
+                masks = build_variant_window_masks("scene0000_00", weights)
+                coverage = np.zeros((4, 500), dtype=bool)
+                for variant, mask in enumerate(masks):
+                    for index, selected in enumerate(mask):
+                        if selected:
+                            coverage[variant, index * 50 : index * 50 + 100] = True
+                for variant in range(1, 4):
+                    np.testing.assert_array_equal(coverage[variant], coverage[0])
+
     def test_teacher_builder_never_mutates_authenticated_prediction_source(self) -> None:
         before = sha256_file(self.source_path)
         with mock.patch(
@@ -130,6 +163,38 @@ class TeacherVariantTests(unittest.TestCase):
         self.assertTrue(np.isnan(teachers.fused_c2w[~covered]).all())
         self.assertTrue(np.allclose(teachers.fused_c2w[covered, 3, :], [0.0, 0.0, 0.0, 1.0]))
         self.assertTrue(np.any(teachers.window_weights > 0.0))
+        self.assertGreater(teachers.variant_utilities[0], 0.0)
+
+    def test_builder_restores_frozen_head_state_and_binds_canonical_digest(self) -> None:
+        head = _StatefulTokenCameraHead()
+        head.train()
+        parameter_before = head.anchor.detach().clone()
+        buffer_before = head.running_value.detach().clone()
+        with mock.patch(
+            "pre_experiments.conditional_hierarchical_vrfm.teacher.pose_encoding_to_c2w",
+            side_effect=_poses_from_raw,
+        ):
+            teachers = build_teacher_variants(
+                self.source_path, self.prepared_scene, head,
+                checkpoint_sha256="a" * 64, device=torch.device("cpu"),
+            )
+        self.assertTrue(head.training)
+        self.assertTrue(head.saw_eval)
+        torch.testing.assert_close(head.anchor, parameter_before)
+        torch.testing.assert_close(head.running_value, buffer_before)
+        self.assertEqual(teachers.checkpoint_sha256, "a" * 64)
+
+    def test_builder_rejects_noncanonical_digest_and_head_device_mismatch(self) -> None:
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            build_teacher_variants(
+                self.source_path, self.prepared_scene, self.fake_camera_head,
+                checkpoint_sha256="A" * 64, device=torch.device("cpu"),
+            )
+        with self.assertRaisesRegex(ValueError, "device"):
+            build_teacher_variants(
+                self.source_path, self.prepared_scene, self.fake_camera_head,
+                checkpoint_sha256="a" * 64, device=torch.device("meta"),
+            )
 
     def test_upper_bound_summary_replays_the_formal_ten_scene_labels_exactly(self) -> None:
         oracle = FrozenOracle(
@@ -141,13 +206,25 @@ class TeacherVariantTests(unittest.TestCase):
         coverage[:, :445] = 1.0
         poses = np.full((4, 500, 4, 4), np.nan, dtype=np.float64)
         poses[:, :445] = np.eye(4, dtype=np.float64)
+        baseline = np.repeat(np.eye(4, dtype=np.float64)[None], 500, axis=0)
+        baseline[:445, 0, 3] = 1.0
+        poses[:, :445, 0, 3] = 1.0 - 0.1293578271441714
+        gt = np.repeat(np.eye(4, dtype=np.float64)[None], 500, axis=0)
+        covered = coverage[0] > 0.0
+        baseline_error = baseline[covered, :3, 3] - gt[covered, :3, 3]
+        teacher_error = poses[0, covered, :3, 3] - gt[covered, :3, 3]
+        baseline_rms = float(np.sqrt(np.mean(np.sum(baseline_error * baseline_error, axis=1))))
+        teacher_rms = float(np.sqrt(np.mean(np.sum(teacher_error * teacher_error, axis=1))))
+        replay_utility = (baseline_rms - teacher_rms) / max(baseline_rms, 1e-12)
         teachers = [
             TeacherVariantSet(
                 scene=f"scene{index:04d}_00", frame_ids=np.arange(500, dtype=np.int64),
                 aligned_short_c2w=np.zeros((9, 100, 4, 4), dtype=np.float64),
-                window_weights=np.full(9, 0.1293578271441714, dtype=np.float64),
+                window_weights=np.zeros(9, dtype=np.float64),
                 window_masks=np.ones((4, 9), dtype=bool), fused_c2w=poses,
                 coverage_weights=coverage, oracle=oracle,
+                checkpoint_sha256="a" * 64,
+                variant_utilities=np.full(4, replay_utility, dtype=np.float64),
             )
             for index in range(10)
         ]

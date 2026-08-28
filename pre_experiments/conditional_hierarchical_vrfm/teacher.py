@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
+import re
 from typing import Sequence
 
 import numpy as np
@@ -42,6 +44,19 @@ class TeacherVariantSet:
     fused_c2w: np.ndarray
     coverage_weights: np.ndarray
     oracle: FrozenOracle
+    checkpoint_sha256: str
+    variant_utilities: np.ndarray
+
+
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _window_coverage(mask: np.ndarray) -> np.ndarray:
+    coverage = np.zeros(500, dtype=bool)
+    for index, selected in enumerate(mask):
+        if selected:
+            coverage[index * 50 : index * 50 + 100] = True
+    return coverage
 
 
 def build_variant_window_masks(scene: str, window_weights: np.ndarray) -> np.ndarray:
@@ -57,6 +72,15 @@ def build_variant_window_masks(scene: str, window_weights: np.ndarray) -> np.nda
 
     masks = [positive.copy()]
     seen = {positive.tobytes()}
+    target_coverage = _window_coverage(positive)
+    all_candidates: list[np.ndarray] = []
+    positive_indices = np.flatnonzero(positive)
+    for bits in range(1, 1 << len(positive_indices)):
+        candidate = np.zeros(9, dtype=bool)
+        candidate[positive_indices] = np.asarray(
+            [(bits >> offset) & 1 for offset in range(len(positive_indices))], dtype=bool
+        )
+        all_candidates.append(candidate)
     for index in range(1, 4):
         seed = int.from_bytes(
             hashlib.sha256(f"{scene}:teacher_variant:{index}".encode("utf-8")).digest()[:8],
@@ -67,15 +91,18 @@ def build_variant_window_masks(scene: str, window_weights: np.ndarray) -> np.nda
         candidate: np.ndarray | None = None
         for _ in range(128):
             proposal = positive & (generator.random(9) < 0.75)
-            if not np.any(proposal):
-                proposal[np.flatnonzero(positive)[np.argmax(weights[positive])]] = True
-            if proposal.tobytes() in seen:
-                remaining = positive & ~proposal
-                if np.any(remaining):
-                    proposal[np.flatnonzero(remaining)[np.argmax(weights[remaining])]] = True
-            if proposal.tobytes() not in seen:
-                candidate = proposal
+            available = [value for value in all_candidates if value.tobytes() not in seen]
+            preserving = [
+                value for value in available
+                if np.array_equal(_window_coverage(value), target_coverage)
+            ]
+            pool = preserving or available
+            if not pool:
                 break
+            distances = np.asarray([np.count_nonzero(value != proposal) for value in pool])
+            nearest = np.flatnonzero(distances == distances.min())
+            candidate = pool[int(nearest[generator.integers(len(nearest))])].copy()
+            break
         if candidate is None:
             raise ValueError("could not construct a unique deterministic teacher mask")
         masks.append(candidate)
@@ -101,6 +128,50 @@ def _decode(camera_head: nn.Module, tokens: np.ndarray, device: torch.device) ->
     return result
 
 
+@contextmanager
+def _frozen_camera_head(camera_head: nn.Module, device: torch.device):
+    """Decode in eval mode while restoring every module flag, parameter, and buffer."""
+    if not isinstance(camera_head, nn.Module):
+        raise ValueError("camera_head must be an nn.Module")
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise ValueError("requested camera-head device is unavailable")
+    tensors = list(camera_head.parameters()) + list(camera_head.buffers())
+    for tensor in tensors:
+        if tensor.device.type != device.type or (
+            device.index is not None and tensor.device.index != device.index
+        ):
+            raise ValueError("camera head tensors must be on the requested device")
+    snapshots = [(tensor, tensor.detach().clone()) for tensor in tensors]
+    modes = [(module, module.training) for module in camera_head.modules()]
+    try:
+        camera_head.eval()
+        yield
+    finally:
+        with torch.no_grad():
+            for tensor, value in snapshots:
+                tensor.copy_(value)
+        for module, training in modes:
+            module.training = training
+
+
+def _covered_variant_utility(
+    baseline_aligned: np.ndarray,
+    fused: np.ndarray,
+    coverage: np.ndarray,
+    raw_gt: np.ndarray,
+) -> float:
+    covered = np.asarray(coverage) > 0.0
+    if covered.shape != (500,) or not np.any(covered):
+        return 0.0
+    if not np.isfinite(fused[covered]).all():
+        raise ValueError("covered fused teacher poses must be finite")
+    baseline_error = baseline_aligned[covered, :3, 3] - raw_gt[covered, :3, 3]
+    teacher_error = fused[covered, :3, 3] - raw_gt[covered, :3, 3]
+    baseline_rms = float(np.sqrt(np.mean(np.sum(baseline_error * baseline_error, axis=1))))
+    teacher_rms = float(np.sqrt(np.mean(np.sum(teacher_error * teacher_error, axis=1))))
+    return float((baseline_rms - teacher_rms) / max(baseline_rms, 1e-12))
+
+
 def build_teacher_variants(
     source_path: Path,
     prepared_scene: Path,
@@ -113,18 +184,20 @@ def build_teacher_variants(
     """Build offline-only GT-weighted short teachers without changing source bytes."""
     if variant_count != 4:
         raise ValueError("exactly four teacher variants are required")
-    if not isinstance(checkpoint_sha256, str) or len(checkpoint_sha256) != 64:
-        raise ValueError("checkpoint_sha256 must be a SHA-256 digest")
+    if not isinstance(checkpoint_sha256, str) or _SHA256_RE.fullmatch(checkpoint_sha256) is None:
+        raise ValueError("checkpoint_sha256 must be a canonical lowercase SHA-256 digest")
     source = load_source_shard(Path(source_path))
     if "global_pred_c2w" not in source:
         raise ValueError("source shard lacks authenticated baseline camera poses")
     scene = _scene_from_source(source)
     frame_ids = source["global_frame_ids"].astype(np.int64, copy=True)
-    baseline = _decode(camera_head, source["global_camera_tokens"][None], device)[0]
+    with _frozen_camera_head(camera_head, device):
+        decoded_baseline = _decode(camera_head, source["global_camera_tokens"][None], device)[0]
+        short_c2w = _decode(camera_head, source["short_camera_tokens"], device)
     authenticated_baseline = source["global_pred_c2w"].astype(np.float64, copy=False)
-    if not np.allclose(baseline, authenticated_baseline, atol=2e-4, rtol=2e-4):
+    if not np.allclose(decoded_baseline, authenticated_baseline, atol=2e-4, rtol=2e-4):
         raise ValueError("frozen Camera Head does not reproduce authenticated baseline")
-    short_c2w = _decode(camera_head, source["short_camera_tokens"], device)
+    baseline = authenticated_baseline.copy()
     raw_gt = load_prepared_gt(Path(prepared_scene), frame_ids)
 
     oracle = fit_frozen_oracle(scene, frame_ids, baseline, raw_gt)
@@ -165,15 +238,27 @@ def build_teacher_variants(
         trajectory, frame_weights = fuse_teacher_trajectories(frame_count=500, windows=windows)
         fused.append(trajectory)
         coverage.append(frame_weights)
+    fused_array = np.stack(fused)
+    coverage_array = np.stack(coverage)
+    baseline_aligned = apply_frozen_oracle(oracle, baseline)
+    utilities = np.asarray(
+        [
+            _covered_variant_utility(baseline_aligned, fused_array[index], coverage_array[index], raw_gt)
+            for index in range(variant_count)
+        ],
+        dtype=np.float64,
+    )
     return TeacherVariantSet(
         scene=scene,
         frame_ids=frame_ids,
         aligned_short_c2w=aligned_short,
         window_weights=weights,
         window_masks=masks,
-        fused_c2w=np.stack(fused),
-        coverage_weights=np.stack(coverage),
+        fused_c2w=fused_array,
+        coverage_weights=coverage_array,
         oracle=oracle,
+        checkpoint_sha256=checkpoint_sha256,
+        variant_utilities=utilities,
     )
 
 
@@ -184,9 +269,9 @@ def summarize_teacher_upper_bound(teachers: Sequence[TeacherVariantSet]) -> dict
     coverage = np.asarray(
         [np.mean(teacher.coverage_weights[0] > 0.0) for teacher in teachers], dtype=np.float64
     )
-    utility = np.asarray(
-        [np.mean(teacher.window_weights) for teacher in teachers], dtype=np.float64
-    )
+    utility = np.asarray([teacher.variant_utilities[0] for teacher in teachers], dtype=np.float64)
+    if not np.isfinite(utility).all():
+        raise ValueError("teacher variant utilities must be finite")
     return {
         "scene_count": len(teachers),
         "positive_scene_count": int(np.count_nonzero(utility > 0.0)),
