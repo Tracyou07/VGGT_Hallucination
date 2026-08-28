@@ -23,6 +23,68 @@ FORMAL_GIT = "2476a59f583ce4c39bbe66dc65d6a8e5cddfb52e"
 VRFM_COMPLETION_DIGEST = (
     "3fdc97395eef8261ad7eaa055aec0bd441cf8d43fee9847464f190e269ab474e"
 )
+FORMAL_PATH_ASSIGNMENTS = {
+    "REPO_ROOT": "/home/ubuntu/yjh/vggt/.worktrees/privileged_conditional_hvrfm",
+    "PYTHON": "/home/ubuntu/anaconda3/envs/vggt-gx/bin/python",
+    "RESULT_ROOT": "/data/yjh/output/vggt/privileged_conditional_hvrfm",
+    "SOURCE_RUN": (
+        "/data/yjh/output/vggt/variational_camera_latent/"
+        "vrfm_camera_20260827T044926Z"
+    ),
+    "FORMAL_LABEL_ROOT": (
+        "/data/yjh/output/vggt/long_short_camera_head/"
+        "long_short_head_formal_20260828T072407Z"
+    ),
+    "PREPARED_ROOT": "/data/yjh/share/datasets/ScanNet/processed_cva02_v1",
+    "CHECKPOINT_DIR": "/data/yjh/share/pretrained/VGGT-1B",
+    "SCANNET_MARKER": (
+        "/data/yjh/share/datasets/ScanNet/verified_completion.json"
+    ),
+}
+
+
+def formal_path_assignments(runner_text: str) -> dict[str, str]:
+    lines = runner_text.splitlines()
+    anchor = 'if [[ "$TEST_MODE" == "1" ]]; then'
+    starts = [index for index, line in enumerate(lines) if line == anchor]
+    if not starts:
+        raise AssertionError("runner must contain an exact TEST_MODE configuration block")
+
+    depth = 0
+    else_index: int | None = None
+    end_index: int | None = None
+    for index in range(starts[0], len(lines)):
+        stripped = lines[index].strip()
+        if stripped.startswith("if ") and stripped.endswith("; then"):
+            depth += 1
+        elif stripped == "else" and depth == 1 and else_index is None:
+            else_index = index
+        elif stripped == "fi":
+            depth -= 1
+            if depth == 0:
+                end_index = index
+                break
+    if else_index is None or end_index is None or else_index >= end_index:
+        raise AssertionError("TEST_MODE formal else block is malformed")
+
+    assignments: dict[str, str] = {}
+    for line in lines[else_index + 1:end_index]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        name, separator, quoted_value = stripped.partition("=")
+        if (
+            not line.startswith("  ")
+            or not separator
+            or not name.replace("_", "").isalnum()
+            or not name[0].isalpha()
+            or not quoted_value.startswith('"')
+            or not quoted_value.endswith('"')
+            or name in assignments
+        ):
+            raise AssertionError("TEST_MODE formal else block is not literal assignments")
+        assignments[name] = quoted_value[1:-1]
+    return assignments
 
 
 def bash_path(path: Path) -> str:
@@ -822,6 +884,30 @@ class H20RunnerBehaviorTests(unittest.TestCase):
         self.assertEqual(self.python_stages(), [])
 
     def _check_formal_mode_ignores_fixture_path_overrides(self) -> None:
+        runner_text = RUNNER.read_text(encoding="utf-8")
+        self.assertEqual(formal_path_assignments(runner_text), FORMAL_PATH_ASSIGNMENTS)
+        mutations = (
+            (
+                '  PYTHON="/home/ubuntu/anaconda3/envs/vggt-gx/bin/python"',
+                '  PYTHON="${PYTHON:-/home/ubuntu/anaconda3/envs/vggt-gx/bin/python}"',
+            ),
+            (
+                '  SOURCE_RUN="/data/yjh/output/vggt/variational_camera_latent/'
+                'vrfm_camera_20260827T044926Z"',
+                '  SOURCE_RUN="${SOURCE_RUN:-/data/yjh/output/vggt/'
+                'variational_camera_latent/vrfm_camera_20260827T044926Z}"',
+            ),
+        )
+        for original, mutant in mutations:
+            with self.subTest(mutant=mutant.split("=", 1)[0].strip()):
+                mutated_text = runner_text.replace(original, mutant, 1)
+                self.assertNotEqual(mutated_text, runner_text)
+                with self.assertRaises(AssertionError):
+                    self.assertEqual(
+                        formal_path_assignments(mutated_text),
+                        FORMAL_PATH_ASSIGNMENTS,
+                    )
+
         ignored_overrides = {
             "REPO_ROOT": bash_path(self.temporary / "ignored-repository"),
             "PYTHON": bash_path(self.temporary / "ignored-python"),
