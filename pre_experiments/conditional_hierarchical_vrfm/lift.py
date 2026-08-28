@@ -177,6 +177,15 @@ def _installed_adamw_group() -> dict[str, Any]:
     return dict(torch.optim.AdamW([parameter], lr=1.0, weight_decay=0.0).state_dict()["param_groups"][0])
 
 
+def _installed_adamw_step() -> Tensor:
+    """Return this PyTorch installation's canonical initialized AdamW step tensor."""
+    parameter = nn.Parameter(torch.zeros(1, dtype=torch.float32))
+    optimizer = torch.optim.AdamW([parameter], lr=1.0, weight_decay=0.0)
+    parameter.grad = torch.ones_like(parameter)
+    optimizer.step()
+    return optimizer.state_dict()["state"][0]["step"]
+
+
 def _same_optimizer_value(left: Any, right: Any) -> bool:
     if isinstance(left, Tensor) or isinstance(right, Tensor):
         return isinstance(left, Tensor) and isinstance(right, Tensor) and torch.equal(left, right)
@@ -381,7 +390,15 @@ def _checkpoint_payload_valid(payload: Any) -> dict[str, Any]:
         if not isinstance(value, Tensor) or value.shape != (1, 32, 2048) or value.dtype != torch.float32 or not torch.isfinite(value).all():
             raise ValueError("invalid lift checkpoint AdamW tensors")
     step = state["step"]
-    if not isinstance(step, Tensor) or step.numel() != 1 or not torch.isfinite(step).all() or float(step) != payload["next_step"]:
+    expected_step = _installed_adamw_step()
+    if (
+        not isinstance(step, Tensor)
+        or step.shape != expected_step.shape
+        or step.dtype != expected_step.dtype
+        or step.device != expected_step.device
+        or not torch.isfinite(step).all()
+        or float(step) != payload["next_step"]
+    ):
         raise ValueError("invalid lift checkpoint AdamW step")
     return dict(payload)
 
@@ -570,10 +587,8 @@ def optimize_latent_target(
             optimizer.load_state_dict(payload["optimizer"])
         except (KeyError, RuntimeError, TypeError, ValueError) as error:
             raise ValueError("invalid lift checkpoint optimizer") from error
-        for state in optimizer.state.values():
-            for key, value in state.items():
-                if isinstance(value, Tensor):
-                    state[key] = value.to(device=device)
+        # AdamW's native loader applies the installed capturable/fused policy: moments
+        # follow the parameter device, while a normal step tensor remains CPU-resident.
         loss_trace = [float(value) for value in payload["loss_trace"]]
         initial_loss = float(payload["initial_loss"])
         best_coefficients = payload["best_coefficients"].to(device=device).clone()

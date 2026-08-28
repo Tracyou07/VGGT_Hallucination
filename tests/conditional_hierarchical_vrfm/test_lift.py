@@ -203,6 +203,66 @@ class LiftTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "checkpoint"):
                 load_lift_checkpoint(checkpoint)
 
+    def test_checkpoint_rejects_noncanonical_adamw_step_tensor(self) -> None:
+        reference_parameter = nn.Parameter(torch.zeros(1, dtype=torch.float32))
+        reference_optimizer = torch.optim.AdamW([reference_parameter], lr=1.0, weight_decay=0.0)
+        reference_parameter.grad = torch.ones_like(reference_parameter)
+        reference_optimizer.step()
+        reference_step = reference_optimizer.state_dict()["state"][0]["step"]
+        self.assertEqual(reference_step.shape, torch.Size([]))
+        self.assertEqual(reference_step.dtype, torch.float32)
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint, _ = self._checkpoint_fixture(directory)
+            self._rewrite_checkpoint(
+                checkpoint,
+                lambda payload: payload["optimizer"]["state"][0].__setitem__(
+                    "step", torch.tensor([payload["next_step"]], dtype=torch.int64)
+                ),
+            )
+            with self.assertRaisesRegex(ValueError, "checkpoint"):
+                load_lift_checkpoint(checkpoint)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required to exercise AdamW restore placement")
+    def test_cuda_resume_preserves_installed_adamw_step_placement(self) -> None:
+        config = LiftConfig(max_steps=2, learning_rate=0.08, smoothness=0.0, residual_norm=0.0)
+        head = _FakeHead().cuda()
+        long_tokens = self.long_tokens.cuda()
+        teacher = self.teacher.cuda()
+        coverage = self.coverage.cuda()
+        reference_parameter = nn.Parameter(torch.zeros(1, device="cuda"))
+        reference_optimizer = torch.optim.AdamW([reference_parameter], lr=1.0, weight_decay=0.0)
+        reference_parameter.grad = torch.ones_like(reference_parameter)
+        reference_optimizer.step()
+        reference_step = reference_optimizer.state[reference_parameter]["step"]
+        observed: list[dict[str, torch.device]] = []
+        original_step = torch.optim.AdamW.step
+
+        def observe_state(optimizer: torch.optim.AdamW, *args: object, **kwargs: object) -> object:
+            state = next(iter(optimizer.state.values()))
+            observed.append({name: value.device for name, value in state.items() if isinstance(value, torch.Tensor)})
+            return original_step(optimizer, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w
+        ):
+            checkpoint = Path(directory) / "cuda-state.pt"
+            optimize_latent_target(
+                head, long_tokens, teacher, self.oracle,
+                LiftConfig(**{**config.__dict__, "max_steps": 1}), coverage_weight=coverage,
+                checkpoint_path=checkpoint, source_sha256=self.source_sha256,
+                teacher_sha256=self.teacher_sha256,
+            )
+            with mock.patch.object(torch.optim.AdamW, "step", new=observe_state):
+                optimize_latent_target(
+                    head, long_tokens, teacher, self.oracle, config, coverage_weight=coverage,
+                    checkpoint_path=checkpoint, resume=True, source_sha256=self.source_sha256,
+                    teacher_sha256=self.teacher_sha256,
+                )
+        self.assertEqual(observed[0]["exp_avg"].type, "cuda")
+        self.assertEqual(observed[0]["exp_avg_sq"].type, "cuda")
+        self.assertEqual(observed[0]["step"], reference_step.device)
+
     def test_checkpoint_rejects_malformed_cpu_rng_state_before_resume_mutates_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             checkpoint, config = self._checkpoint_fixture(directory)
