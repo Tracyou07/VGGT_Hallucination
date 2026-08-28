@@ -75,6 +75,23 @@ class LiftTests(unittest.TestCase):
         self.source_sha256 = hashlib.sha256(b"source").hexdigest()
         self.teacher_sha256 = hashlib.sha256(b"teacher").hexdigest()
 
+    def _checkpoint_fixture(self, directory: str) -> tuple[Path, LiftConfig]:
+        config = LiftConfig(max_steps=3, learning_rate=0.08, smoothness=0.0, residual_norm=0.0)
+        checkpoint = Path(directory) / "state.pt"
+        with mock.patch("pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w):
+            optimize_latent_target(
+                self.head, self.long_tokens, self.teacher, self.oracle, config,
+                coverage_weight=self.coverage, checkpoint_path=checkpoint,
+                source_sha256=self.source_sha256, teacher_sha256=self.teacher_sha256,
+            )
+        return checkpoint, config
+
+    @staticmethod
+    def _rewrite_checkpoint(path: Path, mutate: object) -> None:
+        payload = torch.load(path, map_location="cpu", weights_only=True)
+        mutate(payload)
+        torch.save(payload, path)
+
     def test_zero_coefficients_reproduce_baseline_exactly(self) -> None:
         with mock.patch("pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w):
             decoded = decode_coefficients(self.head, self.long_tokens, torch.zeros(1, 32, 2048))
@@ -155,6 +172,50 @@ class LiftTests(unittest.TestCase):
             path.write_bytes(b"not a checkpoint")
             with self.assertRaisesRegex(ValueError, "checkpoint"):
                 load_lift_checkpoint(path)
+
+    def test_resume_rejects_changed_adamw_hyperparameters_before_loading(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint, config = self._checkpoint_fixture(directory)
+            self._rewrite_checkpoint(
+                checkpoint, lambda payload: payload["optimizer"]["param_groups"][0].__setitem__("lr", 123.0)
+            )
+            with mock.patch("pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w):
+                with self.assertRaisesRegex(ValueError, "optimizer hyperparameter"):
+                    optimize_latent_target(
+                        self.head, self.long_tokens, self.teacher, self.oracle, config,
+                        coverage_weight=self.coverage, checkpoint_path=checkpoint, resume=True,
+                        source_sha256=self.source_sha256, teacher_sha256=self.teacher_sha256,
+                    )
+
+    def test_checkpoint_rejects_injected_optimizer_state_and_wrong_tensor_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint, _ = self._checkpoint_fixture(directory)
+            self._rewrite_checkpoint(
+                checkpoint, lambda payload: payload["optimizer"]["state"][0].__setitem__("injected", torch.tensor(1))
+            )
+            with self.assertRaisesRegex(ValueError, "checkpoint"):
+                load_lift_checkpoint(checkpoint)
+            checkpoint, _ = self._checkpoint_fixture(directory)
+            self._rewrite_checkpoint(
+                checkpoint,
+                lambda payload: payload["optimizer"]["state"][0].__setitem__("exp_avg", torch.zeros(1)),
+            )
+            with self.assertRaisesRegex(ValueError, "checkpoint"):
+                load_lift_checkpoint(checkpoint)
+
+    def test_checkpoint_rejects_malformed_cpu_rng_state_before_resume_mutates_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint, config = self._checkpoint_fixture(directory)
+            self._rewrite_checkpoint(checkpoint, lambda payload: payload.__setitem__("rng_state", torch.zeros(1, dtype=torch.uint8)))
+            with self.assertRaisesRegex(ValueError, "checkpoint"):
+                load_lift_checkpoint(checkpoint)
+            with mock.patch("pre_experiments.conditional_hierarchical_vrfm.lift.pose_encoding_to_c2w", side_effect=_raw_to_c2w):
+                with self.assertRaisesRegex(ValueError, "checkpoint"):
+                    optimize_latent_target(
+                        self.head, self.long_tokens, self.teacher, self.oracle, config,
+                        coverage_weight=self.coverage, checkpoint_path=checkpoint, resume=True,
+                        source_sha256=self.source_sha256, teacher_sha256=self.teacher_sha256,
+                    )
 
     def test_nonmonotonic_resume_keeps_the_original_best_state(self) -> None:
         config = LiftConfig(max_steps=20, learning_rate=4.0, smoothness=0.0, residual_norm=0.0)

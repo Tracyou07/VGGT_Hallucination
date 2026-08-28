@@ -171,6 +171,23 @@ def _weighted_frame_loss(values: Tensor, weights: Tensor) -> Tensor:
     return torch.sum(values * weights) / torch.sum(weights)
 
 
+def _installed_adamw_group() -> dict[str, Any]:
+    """Return this PyTorch installation's exact one-parameter AdamW group layout."""
+    parameter = nn.Parameter(torch.zeros(1, dtype=torch.float32))
+    return dict(torch.optim.AdamW([parameter], lr=1.0, weight_decay=0.0).state_dict()["param_groups"][0])
+
+
+def _same_optimizer_value(left: Any, right: Any) -> bool:
+    if isinstance(left, Tensor) or isinstance(right, Tensor):
+        return isinstance(left, Tensor) and isinstance(right, Tensor) and torch.equal(left, right)
+    return left == right
+
+
+def _validate_rng_shape(value: Tensor, expected: Tensor, name: str) -> None:
+    if value.dtype != expected.dtype or value.ndim != expected.ndim or value.shape != expected.shape:
+        raise ValueError(f"invalid lift checkpoint {name}")
+
+
 def latent_lift_loss(
     *,
     corrected_c2w_raw: Tensor,
@@ -294,8 +311,9 @@ def _checkpoint_payload_valid(payload: Any) -> dict[str, Any]:
         raise ValueError("invalid lift checkpoint variant")
     for name in ("config_digest", "source_sha256", "teacher_sha256"):
         _valid_digest(payload[name], name)
-    if not isinstance(payload["rng_state"], Tensor) or payload["rng_state"].dtype != torch.uint8 or payload["rng_state"].ndim != 1:
+    if not isinstance(payload["rng_state"], Tensor):
         raise ValueError("invalid lift checkpoint RNG state")
+    _validate_rng_shape(payload["rng_state"], torch.get_rng_state(), "RNG state")
     if payload["device_type"] not in {"cpu", "cuda"}:
         raise ValueError("invalid lift checkpoint device type")
     cuda_rng_state = payload["cuda_rng_state"]
@@ -313,10 +331,16 @@ def _checkpoint_payload_valid(payload: Any) -> dict[str, Any]:
     if set(optimizer) != {"state", "param_groups"} or not isinstance(optimizer["state"], Mapping):
         raise ValueError("invalid lift checkpoint optimizer")
     groups = optimizer["param_groups"]
-    if not isinstance(groups, list) or len(groups) != 1 or not isinstance(groups[0], Mapping) or groups[0].get("params") != [0]:
+    installed_group = _installed_adamw_group()
+    if (
+        not isinstance(groups, list) or len(groups) != 1 or not isinstance(groups[0], Mapping)
+        or set(groups[0]) != set(installed_group) or groups[0].get("params") != [0]
+    ):
         raise ValueError("invalid lift checkpoint optimizer group")
-    state = optimizer["state"].get(0)
-    if not isinstance(state, Mapping) or not {"step", "exp_avg", "exp_avg_sq"}.issubset(state):
+    if set(optimizer["state"]) != {0}:
+        raise ValueError("invalid lift checkpoint optimizer state keys")
+    state = optimizer["state"][0]
+    if not isinstance(state, Mapping) or set(state) != {"step", "exp_avg", "exp_avg_sq"}:
         raise ValueError("invalid lift checkpoint AdamW state")
     for name in ("exp_avg", "exp_avg_sq"):
         value = state[name]
@@ -341,15 +365,30 @@ def save_lift_checkpoint(
     rng_state: Tensor,
     best_coefficients: Tensor,
     best_loss: float,
-    cuda_rng_state: Tensor | None,
-    device_type: str,
+    cuda_rng_state: Tensor | None = None,
+    device_type: str | None = None,
     loss_trace: tuple[float, ...] = (),
     initial_loss: float = 0.0,
 ) -> None:
-    """Atomically save trusted internal optimizer state, then validate it on load."""
+    """Atomically save an exactly resumable lift state.
+
+    Required keyword arguments are the current coefficients/AdamW state, variant and next
+    step, all provenance/config digests, CPU ``rng_state``, complete ``loss_trace`` and
+    ``initial_loss``, plus ``best_coefficients`` and ``best_loss``.  The best state is
+    deliberately required: it cannot be reconstructed from AdamW's current coefficients or
+    a scalar loss trace after a nonmonotonic run.  ``device_type`` defaults to the coefficient
+    device; for CUDA, an omitted ``cuda_rng_state`` is safely captured from that same device
+    at save time (CPU checkpoints must retain ``None``).  No history is synthesized.
+    """
     _valid_digest(config_digest, "config_digest")
     _valid_digest(source_sha256, "source_sha256")
     _valid_digest(teacher_sha256, "teacher_sha256")
+    resolved_device_type = coefficients.device.type if device_type is None else device_type
+    resolved_cuda_rng = cuda_rng_state
+    if resolved_device_type == "cuda" and resolved_cuda_rng is None:
+        if not torch.cuda.is_available():
+            raise ValueError("CUDA checkpoint state requires an available CUDA device")
+        resolved_cuda_rng = torch.cuda.get_rng_state(coefficients.device)
     payload = {
         "schema": _CHECKPOINT_SCHEMA,
         "coefficients": coefficients.detach().to(device="cpu", dtype=torch.float32).clone(),
@@ -360,8 +399,8 @@ def save_lift_checkpoint(
         "source_sha256": source_sha256,
         "teacher_sha256": teacher_sha256,
         "rng_state": rng_state.detach().to(device="cpu", dtype=torch.uint8).clone(),
-        "cuda_rng_state": None if cuda_rng_state is None else cuda_rng_state.detach().to(device="cpu", dtype=torch.uint8).clone(),
-        "device_type": device_type,
+        "cuda_rng_state": None if resolved_cuda_rng is None else resolved_cuda_rng.detach().to(device="cpu", dtype=torch.uint8).clone(),
+        "device_type": resolved_device_type,
         "loss_trace": [float(value) for value in loss_trace],
         "initial_loss": float(initial_loss),
         "best_coefficients": best_coefficients.detach().to(device="cpu", dtype=torch.float32).clone(),
@@ -474,6 +513,21 @@ def optimize_latent_target(
             raise ValueError("checkpoint next step exceeds max_steps")
         if payload["device_type"] != device.type:
             raise ValueError("checkpoint device type does not match")
+        fresh_group = optimizer.state_dict()["param_groups"][0]
+        saved_group = payload["optimizer"]["param_groups"][0]
+        if any(
+            not _same_optimizer_value(saved_group[name], fresh_group[name])
+            for name in fresh_group
+            if name != "params"
+        ):
+            raise ValueError("checkpoint optimizer hyperparameter does not match")
+        if device.type == "cuda":
+            try:
+                _validate_rng_shape(
+                    payload["cuda_rng_state"], torch.cuda.get_rng_state(device), "CUDA RNG state"
+                )
+            except (RuntimeError, ValueError) as error:
+                raise ValueError("invalid lift checkpoint CUDA RNG state") from error
         with torch.no_grad():
             coefficients.copy_(payload["coefficients"].to(device=device))
         try:
@@ -484,9 +538,12 @@ def optimize_latent_target(
             for key, value in state.items():
                 if isinstance(value, Tensor):
                     state[key] = value.to(device=device)
-        torch.set_rng_state(payload["rng_state"])
-        if device.type == "cuda":
-            torch.cuda.set_rng_state(payload["cuda_rng_state"], device=device)
+        try:
+            torch.set_rng_state(payload["rng_state"])
+            if device.type == "cuda":
+                torch.cuda.set_rng_state(payload["cuda_rng_state"], device=device)
+        except (RuntimeError, ValueError) as error:
+            raise ValueError("invalid lift checkpoint RNG state") from error
         loss_trace = [float(value) for value in payload["loss_trace"]]
         initial_loss = float(payload["initial_loss"])
         best_coefficients = payload["best_coefficients"].to(device=device).clone()
