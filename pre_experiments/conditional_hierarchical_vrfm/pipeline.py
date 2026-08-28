@@ -77,7 +77,7 @@ FROZEN_BASE_CHECKPOINT_SHA256 = "f164acf60724910d8fe1578bb499d800850c7bb0948db75
 EXPECTED_TEACHER_COVERAGE = 0.89
 EXPECTED_TEACHER_UTILITY = 0.1293578271441714
 PREFLIGHT_SUITES = (
-    ("tests/conditional_hierarchical_vrfm", 62),
+    ("tests/conditional_hierarchical_vrfm", 71),
     ("tests/variational_camera_latent", 64),
     ("tests/long_short_camera_head", 39),
 )
@@ -565,12 +565,18 @@ def _parse_unittest_results(
 def _execute_preflight_commands(
     test_inventory: Mapping[str, Sequence[str]], root: Path | None = None
 ) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    for index, command in enumerate(_preflight_commands()):
-        completed = subprocess.run(
-            command, text=True, capture_output=True, check=False, timeout=1800,
-            env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+    completed_commands = [
+        (
+            command,
+            subprocess.run(
+                command, text=True, capture_output=True, check=False, timeout=1800,
+                env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+            ),
         )
+        for command in _preflight_commands()
+    ]
+    rows: list[dict[str, object]] = []
+    for index, (command, completed) in enumerate(completed_commands):
         content = completed.stdout + completed.stderr
         test_results: list[dict[str, str]] = []
         if index < len(PREFLIGHT_SUITES):

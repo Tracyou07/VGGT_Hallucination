@@ -15,6 +15,7 @@ from torch import nn
 
 from pre_experiments.conditional_hierarchical_vrfm.pipeline import (
     EXPECTED_SCENES,
+    PREFLIGHT_SUITES,
     authenticate_formal_run,
     git_tree_identity,
     audit_long_context_manifest,
@@ -118,6 +119,7 @@ class PipelineBarrierTests(unittest.TestCase):
 
     def test_authoritative_live_gate_rejects_forged_handwritten_preflight(self) -> None:
         # Regression: FORGED_HANDWRITTEN_PREFLIGHT_ACCEPTED.
+        self.assertEqual(dict(PREFLIGHT_SUITES)["tests/conditional_hierarchical_vrfm"], 71)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             inventory = preflight_test_inventory()
@@ -175,6 +177,73 @@ class PipelineBarrierTests(unittest.TestCase):
                     run_preflight(SimpleNamespace(run_root=root, git_commit="a" * 40)),
                     evidence.resolve(),
                 )
+
+            genuine_live = [
+                SimpleNamespace(
+                    returncode=0,
+                    stdout=(root / row["log"]).read_text(encoding="utf-8"),
+                    stderr="",
+                )
+                for row in rows
+            ]
+            self.assertEqual(len(rows[0]["test_results"]), 71)
+            with patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_git"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.git_tree_identity",
+                return_value=unsigned["git_tree"],
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.load_source_records",
+                side_effect=ValueError("genuine current-tree live authorization accepted"),
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.subprocess.run",
+                side_effect=genuine_live,
+            ) as invoked:
+                with self.assertRaisesRegex(ValueError, "genuine current-tree live authorization accepted"):
+                    run_prepare(SimpleNamespace(
+                        run_root=root, git_commit="a" * 40, source_run=root / "source",
+                        formal_label_root=root / "formal", prepared_root=root / "prepared",
+                        checkpoint_dir=root / "checkpoint", device="cpu",
+                    ))
+                self.assertEqual(invoked.call_count, 4)
+                self.assertEqual([call.args[0] for call in invoked.call_args_list], commands)
+
+            first_result = rows[0]["test_results"][0]
+            owner, method = first_result["id"].rsplit(".", 1)
+            first_line = f"{method} ({owner}) ... ok\n"
+            original = genuine_live[0].stdout
+            malformed_outputs = (
+                original.replace(first_line, "", 1),
+                original.replace(
+                    "Ran 71 tests",
+                    "test_unexpected (tests.conditional_hierarchical_vrfm.test_pipeline.Unexpected) ... ok\nRan 71 tests",
+                    1,
+                ),
+            )
+            for malformed in malformed_outputs:
+                attempted = [
+                    SimpleNamespace(returncode=0, stdout=malformed, stderr=""),
+                    *genuine_live[1:],
+                ]
+                with patch(
+                    "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_git"
+                ), patch(
+                    "pre_experiments.conditional_hierarchical_vrfm.pipeline.git_tree_identity",
+                    return_value=unsigned["git_tree"],
+                ), patch(
+                    "pre_experiments.conditional_hierarchical_vrfm.pipeline.load_source_records",
+                    side_effect=AssertionError("malformed live results escaped authorization"),
+                ), patch(
+                    "pre_experiments.conditional_hierarchical_vrfm.pipeline.subprocess.run",
+                    side_effect=attempted,
+                ) as invoked:
+                    with self.assertRaisesRegex(ValueError, "stable test IDs"):
+                        run_prepare(SimpleNamespace(
+                            run_root=root, git_commit="a" * 40, source_run=root / "source",
+                            formal_label_root=root / "formal", prepared_root=root / "prepared",
+                            checkpoint_dir=root / "checkpoint", device="cpu",
+                        ))
+                    self.assertEqual(invoked.call_count, 4)
 
             live = []
             for index, row in enumerate(rows):
