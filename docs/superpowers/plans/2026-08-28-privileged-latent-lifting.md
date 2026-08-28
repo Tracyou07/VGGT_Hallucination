@@ -333,32 +333,76 @@ git commit -m "Lift short teachers into native camera latents"
 ### Task 4: Evaluation, Gates, Resumable Pipeline, and Verification
 
 **Files:**
+- Modify: `pre_experiments/conditional_hierarchical_vrfm/basis.py`
+- Modify: `pre_experiments/conditional_hierarchical_vrfm/artifacts.py`
+- Modify: `pre_experiments/conditional_hierarchical_vrfm/lift.py`
 - Create: `pre_experiments/conditional_hierarchical_vrfm/evaluate.py`
 - Create: `pre_experiments/conditional_hierarchical_vrfm/report.py`
 - Create: `pre_experiments/conditional_hierarchical_vrfm/pipeline.py`
+- Modify: `tests/conditional_hierarchical_vrfm/test_basis.py`
+- Modify: `tests/conditional_hierarchical_vrfm/test_artifacts.py`
+- Modify: `tests/conditional_hierarchical_vrfm/test_lift.py`
 - Create: `tests/conditional_hierarchical_vrfm/test_evaluate.py`
 - Create: `tests/conditional_hierarchical_vrfm/test_pipeline.py`
 - Create: `tests/conditional_hierarchical_vrfm/test_report.py`
 
 **Interfaces:**
-- Produces: `evaluate_latent_targets(...) -> dict[str,object]` with per-scene/per-variant covered utility, full-scene utility, rotation delta, uncovered drift, residual norm, and teacher-retention ratio.
-- Produces: `classify_stage_a(scene_metrics: Sequence[Mapping[str,object]]) -> dict[str,object]`.
-- Produces CLI stages `prepare`, `smoke`, `calibration`, `report`, and `verify`.
+- Produces: `evaluate_latent_targets(long_context, latent_targets, teacher_labels) -> dict[str,object]` with per-scene/per-variant covered utility, full-scene utility, rotation delta, uncovered drift, residual norm, and teacher-retention ratio.
+- Produces: `classify_stage_a(scene_metrics, *, expected_scenes, prediction_contract_clean) -> dict[str,object]`.
+- Produces strict compact teacher artifacts sufficient for independent metric replay.
+- Produces physically separated long-only shards through
+  `pre_experiments.long_short_camera_head.data.publish_long_context`.
+- Produces CLI stages `preflight`, `prepare`, `smoke`, `calibration`, `report`, and `verify`.
+
+- [ ] **Step 0: Close cross-artifact and resume-contract gaps first**
+
+Make the DCT basis canonical: generate it on CPU in float64, cast once to CPU float32,
+then transfer those exact float32 values to the requested device. Export
+`canonical_basis_sha256()`. Bump the lift-checkpoint schema and bind every checkpoint to
+the canonical basis digest, base Camera Head checkpoint SHA-256, and exact Git commit in
+addition to its existing source/teacher/config bindings. `optimize_latent_target` receives
+these values explicitly and rejects any mismatch on resume. Test that CPU and CUDA use the
+same canonical values and that changing basis/checkpoint/Git bindings fails closed.
+
+Add a strict teacher-artifact NPZ schema and atomic save/load helpers. At minimum persist
+`scene`, `frame_ids`, raw `gt_c2w`, `gt_scene_scale`, all frozen-oracle fields including its
+digest, `window_weights`, `window_masks`, float `coverage_weights`, `fused_c2w`,
+`variant_utilities`, and the source/formal-label/checkpoint/Git provenance. The latent
+target's `teacher_sha256` is the byte SHA-256 of this teacher artifact. Variant zero must
+replay and match the authenticated formal label field by field; across the ten scenes the
+data-bound replay must remain coverage `0.89`, fused covered utility
+`0.1293578271441714`, and `10/10` positive scenes.
+
+Required regressions include:
+
+```python
+test_cpu_and_cuda_use_identical_canonical_basis_bytes()
+test_checkpoint_rejects_changed_basis_checkpoint_or_git_binding()
+test_teacher_artifact_binds_formal_label_and_all_four_variants()
+test_target_teacher_digest_must_match_teacher_artifact()
+test_prepare_rejects_rederived_variant_zero_that_differs_from_formal_label()
+```
 
 - [ ] **Step 1: Write failing metric and gate tests**
 
 ```python
 def test_metrics_use_one_baseline_frozen_oracle_for_every_variant(self):
-    metrics = evaluate_latent_targets(self.baseline, self.targets, self.labels)
-    self.assertEqual(metrics["alignment_fit_count"], 0)
+    with mock.patch.object(evaluate, "fit_frozen_oracle", side_effect=AssertionError):
+        metrics = evaluate_latent_targets(self.long_context, self.targets, self.labels)
     self.assertEqual(metrics["variant_count"], 4)
 
 def test_stage_a_requires_every_frozen_gate(self):
-    result = classify_stage_a(self.passing_scenes())
+    result = classify_stage_a(
+        self.passing_scenes(), expected_scenes=self.expected_scenes,
+        prediction_contract_clean=True,
+    )
     self.assertEqual(result["classification"], "LATENT_TARGETS_READY")
     harmed = self.passing_scenes()
     harmed[0]["mean_full_scene_utility"] = -0.0101
-    result = classify_stage_a(harmed)
+    result = classify_stage_a(
+        harmed, expected_scenes=self.expected_scenes,
+        prediction_contract_clean=True,
+    )
     self.assertEqual(result["classification"], "LATENT_LIFT_FAILED")
     self.assertIn("per_scene_harm", result["failed_gates"])
 ```
@@ -367,7 +411,21 @@ def test_stage_a_requires_every_frozen_gate(self):
 
 For every variant compare baseline and corrected poses under the oracle already stored in
 the teacher sidecar. Never fit an alignment to corrected output. Aggregate variants within
-scene, then scenes with equal scene weight. Implement these exact gates:
+scene with equal weight, then scenes with equal scene weight. Cross-check scene, frame IDs,
+source/teacher/checkpoint/Git/basis digests, variant IDs, window masks, and coverage before
+computing any number. Use these exact metric definitions:
+
+- `covered_utility = (baseline_covered_rms - corrected_covered_rms) / baseline_covered_rms`;
+- `full_scene_utility = (baseline_full_rms - corrected_full_rms) / baseline_full_rms`;
+- `rotation_delta_deg` is corrected-minus-baseline mean SO(3) geodesic error to GT;
+- `uncovered_drift_fraction` is corrected-vs-baseline camera-center RMS on uncovered frames,
+  after the saved frozen transform, divided by the saved GT scene scale (zero when none);
+- `residual_rms` is the element RMS of the actual canonical `B @ C`;
+- scene teacher retention is mean decoded covered utility over the four variants divided by
+  mean independently recomputed teacher covered utility; a nonfinite or nonpositive
+  denominator invalidates the scene.
+
+Implement these exact gates:
 
 ```python
 gates = {
@@ -378,12 +436,20 @@ gates = {
     "per_scene_harm": min(scene["mean_full_scene_utility"] for scene in scenes) >= -0.01,
     "rotation_guard": mean(scene["mean_rotation_delta_deg"] for scene in scenes) <= 0.1,
     "uncovered_anchor": max(scene["uncovered_drift_fraction"] for scene in scenes) <= 0.005,
-    "leakage_audit": all(scene["prediction_contract_clean"] for scene in scenes),
+    "leakage_audit": prediction_contract_clean,
 }
 ```
 
 `LATENT_TARGETS_READY` requires every gate; otherwise return `LATENT_LIFT_FAILED` and all
-failed gate names.
+failed gate names. Classification binds the exact ten unique expected scenes and four
+variants per scene, validates required keys/types and finiteness itself, and consumes a
+separate run-level prediction-contract audit rather than a scene row's self-reported bool.
+A complete and byte-valid run may receive a verified `LATENT_LIFT_FAILED` scientific
+classification; integrity failure receives no verified completion.
+
+Required regressions include no-oracle-refit, exact equal weighting, saved-scale drift,
+SO(3) rotation, zero/nonfinite teacher-reference rejection, missing/duplicate/unexpected
+scene rejection, and a NaN hidden behind a claimed `all_finite=True`.
 
 - [ ] **Step 3: Write pipeline barrier tests**
 
@@ -406,21 +472,57 @@ def test_prediction_only_manifest_contains_no_short_or_privileged_path(self):
         self.assertNotIn(forbidden, serialized)
 ```
 
-- [ ] **Step 4: Implement idempotent stages and signed completions**
+Also require behavioral tests that `prepare` physically publishes strict long-only NPZs,
+rejects a combined source shard even under a benign manifest field name, rejects symlink or
+resolved-path escape, and rejects every target/teacher/long-context semantic mismatch.
+
+- [ ] **Step 4: Implement idempotent stages and content-bound completions**
+
+`preflight` runs the prescribed conditional, variational-camera-latent, and
+long-short-camera-head suites plus compileall at the exact Git commit. The pipeline itself
+captures commands, return codes, test counts, log digests, and commit binding; handwritten
+or stale test-evidence JSON is rejected by later stages.
 
 `prepare` validates the clean Git commit, authenticated source manifests, formal labels,
 checkpoint, scene roles, and replayed teacher upper bound. It writes immutable
-`config.json` and manifests without copying source tensors.
+`config.json`, strict teacher artifacts, and physical long-only shards inside
+`prediction_only/long_context/`. Its manifest may resolve only to those exact run-root
+files and verifies exact NPZ members, scene/frame/source digests, no symlinks, and no path
+escape. It never points the prediction tree at the combined source shards containing short
+tokens.
 
 `smoke` processes only `scene0000_00`, four variants, 20 optimization steps, and requires
 finite decreasing losses plus exact checkpoint resume. `calibration` requires the signed
-smoke completion and processes all ten manifest scenes at 250 steps per variant. Existing
-valid target shards resume by exact digest; mismatched shards fail rather than overwrite.
+smoke completion and processes all ten manifest scenes at 250 steps per variant. Smoke and
+calibration artifacts use distinct paths. A fully valid 250-step final target is verified
+and skipped; an incomplete run resumes only from the matching lift checkpoint (never from
+the summarized target NPZ). The 20-step smoke checkpoint may extend to 250 because
+`max_steps` is an execution limit excluded from the optimizer-semantics digest. Any invalid
+or mismatched existing target/checkpoint fails rather than overwriting.
 
-`report` writes JSON and Markdown. `verify` reloads every NPZ with `allow_pickle=False`,
-checks exact member sets/shapes/finiteness, rehashes all inputs/outputs, confirms the run is
-below 20 GiB, validates test evidence, and publishes `verified_completion.json` only when
-all ten scenes and four variants are present.
+Stage markers are content-bound completion records, not trusted or claimed cryptographic
+signatures. Calibration independently verifies the smoke marker by reloading all bound
+artifacts, checking four variants/20 steps/loss traces and the exact-resume witness, and
+rehashing bytes. `report` writes JSON and Markdown. `verify` reloads every NPZ with
+`allow_pickle=False`, checks exact member sets/shapes/finiteness and cross-artifact
+semantics, rehashes all inputs/outputs, reloads the frozen Camera Head once, re-decodes
+saved coefficients, compares them to saved decoded poses, independently recomputes every
+metric/gate/report value, validates commit-bound preflight evidence, rejects unknown files,
+symlinks, `.tmp` files and path escapes under an explicit whitelist, and confirms the run
+is below 20 GiB. It publishes `verified_completion.json` only when all ten scenes and four
+variants are byte-valid; an existing completion is reverified exactly and never silently
+overwritten.
+
+Required barrier regressions include forged smoke completion, fabricated decoded poses,
+fabricated/stale test evidence, trusted-report tampering, calibration resuming a checkpoint
+rather than a smoke target, final-target skip vs invalid-target failure, and smoke target
+rejection as a calibration final.
+
+Within one GPU stage/process load and hash the Camera Head checkpoint once, execute all 40
+scene/variant lifts strictly sequentially, and release each graph and scene tensor before
+the next. Check at least 100 GiB free before each GPU stage and the run root below 20 GiB
+after each scene. A lift checkpoint is atomically replaced in place; never retain a copy per
+optimization step.
 
 - [ ] **Step 5: Run focused and full CPU tests**
 
@@ -471,7 +573,7 @@ def test_preflight_only_succeeds_with_controlled_h20_facts(self):
     self.assertEqual(result.returncode, 0, result.stderr)
     payload = json.loads(result.stdout)
     self.assertEqual(payload["result_root"], "/data/yjh/output/vggt/privileged_conditional_hvrfm")
-    self.assertEqual(payload["planned_stages"], ["prepare", "smoke", "calibration", "report", "verify"])
+    self.assertEqual(payload["planned_stages"], ["preflight", "prepare", "smoke", "calibration", "report", "verify"])
 
 def test_preflight_only_fails_before_compute_for_busy_gpu(self):
     result = run_runner_fixture(
@@ -501,7 +603,7 @@ GPU. Verify host/user, clean exact branch, local checkpoint, both source complet
 verified ScanNet marker, at least 100 GiB free, no compute PID on the selected GPU, and
 less than 20 GiB in the run root after every stage.
 
-Run `prepare`, `smoke`, `calibration`, `report`, and `verify` serially. Capture stdout and
+Run `preflight`, `prepare`, `smoke`, `calibration`, `report`, and `verify` serially. Capture stdout and
 stderr separately; any nonempty stderr fails closed. Use `flock` for one run ID. Preserve
 checkpoints and partial artifacts on failure. `--preflight-only` performs every read-only
 gate, prints one JSON object containing the resolved result root and planned stage list,
@@ -551,8 +653,8 @@ Run from the clean dedicated worktree:
 bash scripts/h20/run_privileged_conditional_hvrfm_teacher_lift.sh
 ```
 
-The runner performs one-scene smoke and automatically expands to ten scenes only after the
-signed smoke gate passes.
+The runner performs commit-bound test preflight, then one-scene smoke, and automatically
+expands to ten scenes only after the content-bound smoke gate passes.
 
 - [ ] **Step 3: Verify output without pulling large artifacts**
 
