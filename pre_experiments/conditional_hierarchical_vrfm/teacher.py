@@ -197,7 +197,7 @@ def build_teacher_variants(
     authenticated_baseline = source["global_pred_c2w"].astype(np.float64, copy=False)
     if not np.allclose(decoded_baseline, authenticated_baseline, atol=2e-4, rtol=2e-4):
         raise ValueError("frozen Camera Head does not reproduce authenticated baseline")
-    baseline = authenticated_baseline.copy()
+    baseline = decoded_baseline.copy()
     raw_gt = load_prepared_gt(Path(prepared_scene), frame_ids)
 
     oracle = fit_frozen_oracle(scene, frame_ids, baseline, raw_gt)

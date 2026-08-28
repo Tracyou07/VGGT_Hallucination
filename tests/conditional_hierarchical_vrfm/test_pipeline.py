@@ -210,7 +210,7 @@ class PipelineBarrierTests(unittest.TestCase):
 
     def test_authoritative_live_gate_rejects_forged_handwritten_preflight(self) -> None:
         # Regression: FORGED_HANDWRITTEN_PREFLIGHT_ACCEPTED.
-        self.assertEqual(dict(PREFLIGHT_SUITES)["tests/conditional_hierarchical_vrfm"], 71)
+        self.assertEqual(dict(PREFLIGHT_SUITES)["tests/conditional_hierarchical_vrfm"], 72)
         self._check_failed_preflight_command_preserves_raw_log()
         self._check_malformed_success_preserves_raw_log()
         with tempfile.TemporaryDirectory() as directory:
@@ -279,7 +279,7 @@ class PipelineBarrierTests(unittest.TestCase):
                 )
                 for row in rows
             ]
-            self.assertEqual(len(rows[0]["test_results"]), 71)
+            self.assertEqual(len(rows[0]["test_results"]), 72)
             with patch(
                 "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_git"
             ), patch(
@@ -308,8 +308,8 @@ class PipelineBarrierTests(unittest.TestCase):
             malformed_outputs = (
                 original.replace(first_line, "", 1),
                 original.replace(
-                    "Ran 71 tests",
-                    "test_unexpected (tests.conditional_hierarchical_vrfm.test_pipeline.Unexpected) ... ok\nRan 71 tests",
+                    "Ran 72 tests",
+                    "test_unexpected (tests.conditional_hierarchical_vrfm.test_pipeline.Unexpected) ... ok\nRan 72 tests",
                     1,
                 ),
             )

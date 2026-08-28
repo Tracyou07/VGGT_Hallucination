@@ -18,7 +18,7 @@ from pre_experiments.conditional_hierarchical_vrfm.teacher import (
     summarize_teacher_upper_bound,
 )
 from pre_experiments.camera_velocity_ambiguity_02.frozen_oracle import FrozenOracle
-from pre_experiments.variational_camera_latent.source import save_source_shard
+from pre_experiments.variational_camera_latent.source import load_source_shard, save_source_shard
 
 
 def sha256_file(path: Path) -> str:
@@ -173,6 +173,49 @@ class TeacherVariantTests(unittest.TestCase):
         self.assertTrue(np.allclose(teachers.fused_c2w[covered, 3, :], [0.0, 0.0, 0.0, 1.0]))
         self.assertTrue(np.any(teachers.window_weights > 0.0))
         self.assertGreater(teachers.variant_utilities[0], 0.0)
+
+    def test_teacher_outputs_ignore_sub_tolerance_authenticated_baseline_perturbation(self) -> None:
+        perturbed_source = load_source_shard(self.source_path)
+        frame_index = np.arange(500, dtype=np.float64)
+        perturbation = np.stack(
+            (
+                5e-5 * np.sin(0.17 * frame_index),
+                4e-5 * np.cos(0.11 * frame_index),
+                3e-5 * np.sin(0.07 * frame_index + 0.3),
+            ),
+            axis=1,
+        )
+        perturbed_source["global_pred_c2w"][:, :3, 3] += perturbation
+        perturbed_source["overlap_long_c2w"] = np.stack(
+            [
+                perturbed_source["global_pred_c2w"][start : start + 50]
+                for start in range(50, 401, 50)
+            ]
+        )
+        perturbed_path = self.source_path.with_name("perturbed_source.npz")
+        save_source_shard(perturbed_path, perturbed_source)
+
+        with mock.patch(
+            "pre_experiments.conditional_hierarchical_vrfm.teacher.pose_encoding_to_c2w",
+            side_effect=_poses_from_raw,
+        ):
+            reference = build_teacher_variants(
+                self.source_path, self.prepared_scene, self.fake_camera_head,
+                checkpoint_sha256="a" * 64, device=torch.device("cpu"),
+            )
+            perturbed = build_teacher_variants(
+                perturbed_path, self.prepared_scene, self.fake_camera_head,
+                checkpoint_sha256="a" * 64, device=torch.device("cpu"),
+            )
+
+        np.testing.assert_array_equal(perturbed.window_weights, reference.window_weights)
+        np.testing.assert_array_equal(
+            perturbed.coverage_weights[0], reference.coverage_weights[0]
+        )
+        np.testing.assert_allclose(
+            perturbed.fused_c2w[0], reference.fused_c2w[0],
+            atol=0.0, rtol=0.0, equal_nan=True,
+        )
 
     def test_builder_restores_frozen_head_state_and_binds_canonical_digest(self) -> None:
         head = _StatefulTokenCameraHead()
