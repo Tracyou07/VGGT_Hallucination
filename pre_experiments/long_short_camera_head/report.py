@@ -82,9 +82,15 @@ def classify(
         "inference_leakage_audit": True,
     }
     failed = [name for name, passed in gates.items() if not passed]
+    if not gates["positive_mean_utility"]:
+        classification = "NO_SOURCE_HEAD_SIGNAL"
+    elif failed:
+        classification = "HEAD_ONLY_INSUFFICIENT"
+    else:
+        classification = "PROMISING"
     return {
         "schema": REPORT_SCHEMA,
-        "classification": "PROMISING" if not failed else "NOT_PROMISING",
+        "classification": classification,
         "failed_gates": failed,
         "mean_baseline_rms": float(np.mean(baseline)),
         "mean_gt_only_rms": float(np.mean(gt_only)),
