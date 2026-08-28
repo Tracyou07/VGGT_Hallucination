@@ -96,7 +96,11 @@ done
   printf 'Wrong branch; expected %s.\n' "$EXPECTED_BRANCH" >&2
   exit 13
 }
-[[ -z "$(git -C "$REPO_ROOT" status --short)" ]] || {
+INITIAL_GIT_STATUS="$(git -C "$REPO_ROOT" status --short)" || {
+  printf 'Could not inspect worktree cleanliness.\n' >&2
+  exit 14
+}
+[[ -z "$INITIAL_GIT_STATUS" ]] || {
   printf 'Dirty worktree; refusing formal execution.\n' >&2
   exit 14
 }

@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts" / "h20" / "run_privileged_conditional_hvrfm_teacher_lift.sh"
 WINDOWS_GIT_BASH = Path(r"C:\Program Files\Git\bin\bash.exe")
 BASH = str(WINDOWS_GIT_BASH) if WINDOWS_GIT_BASH.is_file() else shutil.which("bash")
+RUNNER_FIXTURE_TIMEOUT_SECONDS = 120
 
 FORMAL_GIT = "2476a59f583ce4c39bbe66dc65d6a8e5cddfb52e"
 VRFM_COMPLETION_DIGEST = (
@@ -367,6 +368,7 @@ class H20RunnerBehaviorTests(unittest.TestCase):
               IFS='|' read -r -a values <<< "$sequence"
               local index="$count"
               (( index < ${#values[@]} )) || index="$((${#values[@]} - 1))"
+              [[ "${values[index]}" != "__FAIL__" ]] || exit 91
               [[ "${values[index]}" == "__EMPTY__" ]] || printf '%b' "${values[index]}"
             }
             case "$*" in
@@ -561,7 +563,7 @@ class H20RunnerBehaviorTests(unittest.TestCase):
             errors="replace",
             capture_output=True,
             check=False,
-            timeout=60,
+            timeout=RUNNER_FIXTURE_TIMEOUT_SECONDS,
         )
 
     def python_stages(self) -> list[tuple[str, str]]:
@@ -715,6 +717,15 @@ class H20RunnerBehaviorTests(unittest.TestCase):
         self.assertIn("100 gib", result.stderr.lower())
         self.assertEqual(self.python_stages(), [])
 
+    def _check_initial_git_status_failure_is_not_treated_as_clean(self) -> None:
+        result = self.run_runner_fixture(
+            arguments=("--preflight-only",),
+            environment={"FIXTURE_GIT_STATUS_SEQUENCE": "__FAIL__"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.python_stages(), [])
+
     def _check_disk_threshold_accepts_exactly_100_gib(self) -> None:
         threshold = 100 * 1024**3
         result = self.run_runner_fixture(
@@ -855,6 +866,10 @@ class H20RunnerBehaviorTests(unittest.TestCase):
                 "dirty",
                 {"FIXTURE_GIT_STATUS_SEQUENCE": "__EMPTY__| M changed.py\\n"},
             ),
+            (
+                "status-failure",
+                {"FIXTURE_GIT_STATUS_SEQUENCE": "__EMPTY__|__FAIL__"},
+            ),
         )
         for label, change in cases:
             with self.subTest(label=label):
@@ -970,6 +985,7 @@ class H20RunnerBehaviorTests(unittest.TestCase):
                 self.assertIn(message.lower(), result.stderr.lower())
                 self.assertEqual(self.python_stages(), [])
         self._check_disk_threshold_is_exact_in_bytes()
+        self._check_initial_git_status_failure_is_not_treated_as_clean()
         self._check_empty_scannet_marker_is_not_authenticated()
         self._check_marker_schema_and_manifest_bindings_are_authenticated()
         self._check_formal_mode_ignores_fixture_path_overrides()
