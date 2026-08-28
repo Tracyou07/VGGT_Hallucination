@@ -23,6 +23,7 @@ from pre_experiments.conditional_hierarchical_vrfm.pipeline import (
     preflight_source_inventory,
     preflight_test_inventory,
     run_calibration,
+    run_prepare,
     run_preflight,
     reuse_or_publish_long_context,
     select_resume_checkpoint,
@@ -115,9 +116,11 @@ class PipelineBarrierTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "completion digest"):
                 run_calibration(SimpleNamespace(run_root=root, git_commit="a" * 40))
 
-    def test_stale_or_fabricated_preflight_log_is_rejected(self) -> None:
+    def test_authoritative_live_gate_rejects_forged_handwritten_preflight(self) -> None:
+        # Regression: FORGED_HANDWRITTEN_PREFLIGHT_ACCEPTED.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            inventory = preflight_test_inventory()
             rows = []
             commands = [
                 [os.sys.executable, "-m", "unittest", "discover", "-s", suite, "-v"]
@@ -129,56 +132,35 @@ class PipelineBarrierTests(unittest.TestCase):
             for index, command in enumerate(commands):
                 log = root / "logs" / f"preflight_{index}.log"
                 log.parent.mkdir(parents=True, exist_ok=True)
-                log.write_text("Ran 1 test in 0.001s\n\nOK\n" if index < 3 else "compile ok\n", encoding="utf-8")
-                rows.append({"command": command, "returncode": 0, "test_count": 1 if index < 3 else 0,
-                             "skipped_count": 0,
-                             "log": log.relative_to(root).as_posix(), "log_sha256": _sha(log)})
+                if index < 3:
+                    suite = command[-2]
+                    test_results = [{"id": identifier, "status": "ok"} for identifier in inventory[suite]]
+                    lines = []
+                    for result in test_results:
+                        owner, method = result["id"].rsplit(".", 1)
+                        lines.append(f"{method} ({owner}) ... ok")
+                    content = "\n".join(lines) + f"\nRan {len(test_results)} tests in 0.001s\n\nOK\n"
+                else:
+                    test_results = []
+                    content = "compile ok\n"
+                log.write_text(content, encoding="utf-8")
+                rows.append({
+                    "command": command, "returncode": 0,
+                    "test_count": len(test_results), "skipped_count": 0,
+                    "test_results": test_results,
+                    "log": log.relative_to(root).as_posix(), "log_sha256": _sha(log),
+                })
             unsigned = {"schema": "conditional_hierarchical_vrfm.preflight_evidence.v1",
                         "git_commit": "a" * 40,
                         "source_inventory": preflight_source_inventory(),
-                        "test_inventory": preflight_test_inventory(),
+                        "test_inventory": inventory,
                         "git_tree": git_tree_identity(),
                         "commands": rows}
             digest = hashlib.sha256(json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
             evidence = root / "manifests" / "preflight_evidence.json"
             evidence.parent.mkdir(parents=True)
             evidence.write_text(json.dumps({**unsigned, "record_digest": digest}), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "test count"):
-                validate_preflight_evidence(root, "a" * 40)
-
-            expected_counts = ((62, 3), (64, 1), (39, 0), (0, 0))
-            for index, (count, skipped) in enumerate(expected_counts):
-                log = root / "logs" / f"preflight_{index}.log"
-                content = (
-                    f"Ran {count} tests in 1.000s\n\n"
-                    + (f"OK (skipped={skipped})\n" if skipped else "OK\n")
-                    if index < 3 else "compile ok\n"
-                )
-                log.write_text(content, encoding="utf-8")
-                rows[index].update({
-                    "test_count": count, "skipped_count": skipped,
-                    "log_sha256": _sha(log),
-                })
-            unsigned["commands"] = rows
-            payload = {**unsigned, "record_digest": hashlib.sha256(
-                json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()}
-            evidence.write_text(json.dumps(payload), encoding="utf-8")
-            validate_preflight_evidence(root, "a" * 40)
-            for index, skipped in ((0, 2), (1, 0)):
-                count = expected_counts[index][0]
-                log = root / "logs" / f"preflight_{index}.log"
-                log.write_text(
-                    f"Ran {count} tests in 1.000s\n\n"
-                    + (f"OK (skipped={skipped})\n" if skipped else "OK\n"),
-                    encoding="utf-8",
-                )
-                rows[index].update({"skipped_count": skipped, "log_sha256": _sha(log)})
-            unsigned["commands"] = rows
-            linux_payload = {**unsigned, "record_digest": hashlib.sha256(
-                json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()}
-            evidence.write_text(json.dumps(linux_payload), encoding="utf-8")
+            # Static hashes are intentionally not treated as execution proof.
             validate_preflight_evidence(root, "a" * 40)
             with patch(
                 "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_git"
@@ -193,6 +175,96 @@ class PipelineBarrierTests(unittest.TestCase):
                     run_preflight(SimpleNamespace(run_root=root, git_commit="a" * 40)),
                     evidence.resolve(),
                 )
+
+            live = []
+            for index, row in enumerate(rows):
+                content = (root / row["log"]).read_text(encoding="utf-8")
+                if index == 0:
+                    first = row["test_results"][0]
+                    owner, method = first["id"].rsplit(".", 1)
+                    content = content.replace(
+                        f"{method} ({owner}) ... ok",
+                        f"{method} ({owner}) ... skipped 'platform capability unavailable'",
+                        1,
+                    ).replace("\n\nOK\n", "\n\nOK (skipped=1)\n")
+                live.append(SimpleNamespace(returncode=0, stdout=content, stderr=""))
+
+            with patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_git"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.git_tree_identity",
+                return_value=unsigned["git_tree"],
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.load_source_records",
+                side_effect=ValueError("escaped authoritative live preflight"),
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.subprocess.run",
+                side_effect=live,
+            ) as invoked:
+                with self.assertRaisesRegex(ValueError, "authoritative live preflight"):
+                    run_prepare(SimpleNamespace(
+                        run_root=root, git_commit="a" * 40, source_run=root / "source",
+                        formal_label_root=root / "formal", prepared_root=root / "prepared",
+                        checkpoint_dir=root / "checkpoint", device="cpu",
+                    ))
+                self.assertEqual(invoked.call_count, 4)
+                self.assertEqual([call.args[0] for call in invoked.call_args_list], commands)
+
+            smoke_unsigned = {
+                "schema": "conditional_hierarchical_vrfm.smoke_completion.v1",
+                "git_commit": "a" * 40, "files": {},
+                "metadata": {
+                    "scene": "scene0000_00", "variant_count": 4,
+                    "steps": 20, "exact_resume": True,
+                },
+            }
+            smoke_digest = hashlib.sha256(json.dumps(
+                smoke_unsigned, sort_keys=True, separators=(",", ":")
+            ).encode()).hexdigest()
+            smoke_marker = root / "smoke" / "completed.json"
+            smoke_marker.parent.mkdir(parents=True)
+            smoke_marker.write_text(json.dumps({
+                **smoke_unsigned, "record_digest": smoke_digest,
+            }), encoding="utf-8")
+            with patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_git"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.git_tree_identity",
+                return_value=unsigned["git_tree"],
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.subprocess.run",
+                side_effect=live,
+            ) as invoked:
+                with self.assertRaisesRegex(ValueError, "authoritative live preflight"):
+                    run_calibration(SimpleNamespace(
+                        run_root=root, git_commit="a" * 40,
+                        calibration_executor=lambda _: (_ for _ in ()).throw(
+                            ValueError("escaped calibration live gate")
+                        ),
+                    ))
+                self.assertEqual(invoked.call_count, 4)
+                self.assertEqual([call.args[0] for call in invoked.call_args_list], commands)
+
+            (root / "config.json").write_text("{}\n", encoding="utf-8")
+            inventory_path = root / "manifests" / "verification_inventory.json"
+            inventory_path.write_text(json.dumps({
+                "schema": "conditional_hierarchical_vrfm.verification_inventory.v1",
+                "git_commit": "a" * 40, "classification": "LATENT_TARGETS_READY",
+                "files": {},
+            }), encoding="utf-8")
+            with patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_git"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.git_tree_identity",
+                return_value=unsigned["git_tree"],
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.subprocess.run",
+                side_effect=live,
+            ) as invoked:
+                with self.assertRaisesRegex(ValueError, "authoritative live preflight"):
+                    verify_completed_run(root, expected_git_commit="a" * 40)
+                self.assertEqual(invoked.call_count, 4)
+                self.assertEqual([call.args[0] for call in invoked.call_args_list], commands)
 
     def test_prepare_rejects_rederived_variant_zero_that_differs_from_formal_label(self) -> None:
         pose = np.broadcast_to(np.eye(4), (500, 4, 4)).copy()

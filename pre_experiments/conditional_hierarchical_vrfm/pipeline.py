@@ -77,9 +77,9 @@ FROZEN_BASE_CHECKPOINT_SHA256 = "f164acf60724910d8fe1578bb499d800850c7bb0948db75
 EXPECTED_TEACHER_COVERAGE = 0.89
 EXPECTED_TEACHER_UTILITY = 0.1293578271441714
 PREFLIGHT_SUITES = (
-    ("tests/conditional_hierarchical_vrfm", 62, 3),
-    ("tests/variational_camera_latent", 64, 1),
-    ("tests/long_short_camera_head", 39, 0),
+    ("tests/conditional_hierarchical_vrfm", 62),
+    ("tests/variational_camera_latent", 64),
+    ("tests/long_short_camera_head", 39),
 )
 
 
@@ -469,7 +469,7 @@ def preflight_source_inventory(repository_root: Path | None = None) -> dict[str,
     """Return exact byte inventories for the tested suites and their source trees."""
     root = Path.cwd().resolve() if repository_root is None else Path(repository_root).resolve()
     groups = {
-        "tests": tuple(Path(suite) for suite, _, _ in PREFLIGHT_SUITES),
+        "tests": tuple(Path(suite) for suite, _ in PREFLIGHT_SUITES),
         "sources": (
             Path("pre_experiments"),
             Path("vggt"),
@@ -519,7 +519,7 @@ def preflight_test_inventory(repository_root: Path | None = None) -> dict[str, l
         return output
 
     inventory: dict[str, list[str]] = {}
-    for suite, expected_count, _ in PREFLIGHT_SUITES:
+    for suite, expected_count in PREFLIGHT_SUITES:
         discovered = unittest.defaultTestLoader.discover(
             str(root / suite), pattern="test_*.py", top_level_dir=str(root)
         )
@@ -530,6 +530,73 @@ def preflight_test_inventory(repository_root: Path | None = None) -> dict[str, l
     return inventory
 
 
+def _preflight_commands() -> list[list[str]]:
+    return [
+        [sys.executable, "-m", "unittest", "discover", "-s", suite, "-v"]
+        for suite, _ in PREFLIGHT_SUITES
+    ] + [[sys.executable, "-m", "compileall", "-q", "pre_experiments"]]
+
+
+def _parse_unittest_results(
+    content: str, suite: str, expected_ids: Sequence[str]
+) -> list[dict[str, str]]:
+    starts = list(re.finditer(r"(?m)^(test\S+) \(([^)\r\n]+)\)", content))
+    observed: dict[str, str] = {}
+    prefix = suite.replace("/", ".").replace("\\", ".")
+    for index, match in enumerate(starts):
+        block_end = starts[index + 1].start() if index + 1 < len(starts) else len(content)
+        block = content[match.end():block_end]
+        status_matches = list(re.finditer(r"(?m)\.\.\.\s+(ok|skipped\b[^\r\n]*)\s*$", block))
+        if len(status_matches) != 1:
+            raise ValueError("preflight unittest output lacks one terminal status per test")
+        owner = match.group(2)
+        identifier = f"{owner}.{match.group(1)}"
+        if identifier not in expected_ids:
+            identifier = f"{prefix}.{identifier}"
+        status = "skipped" if status_matches[0].group(1).startswith("skipped") else "ok"
+        if identifier in observed:
+            raise ValueError("preflight unittest output contains duplicate test IDs")
+        observed[identifier] = status
+    if set(observed) != set(expected_ids) or len(observed) != len(expected_ids):
+        raise ValueError("preflight unittest output does not match the stable test IDs")
+    return [{"id": identifier, "status": observed[identifier]} for identifier in sorted(observed)]
+
+
+def _execute_preflight_commands(
+    test_inventory: Mapping[str, Sequence[str]], root: Path | None = None
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for index, command in enumerate(_preflight_commands()):
+        completed = subprocess.run(
+            command, text=True, capture_output=True, check=False, timeout=1800,
+            env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+        )
+        content = completed.stdout + completed.stderr
+        test_results: list[dict[str, str]] = []
+        if index < len(PREFLIGHT_SUITES):
+            suite, expected_count = PREFLIGHT_SUITES[index]
+            test_results = _parse_unittest_results(content, suite, test_inventory[suite])
+            if len(test_results) != expected_count:
+                raise ValueError("preflight live test count mismatch")
+        row: dict[str, object] = {
+            "command": command,
+            "returncode": completed.returncode,
+            "test_count": len(test_results),
+            "skipped_count": sum(result["status"] == "skipped" for result in test_results),
+            "test_results": test_results,
+        }
+        if root is not None:
+            log = root / "logs" / f"preflight_{index}.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text(content, encoding="utf-8")
+            row.update({
+                "log": log.relative_to(root).as_posix(),
+                "log_sha256": sha256_file(log),
+            })
+        rows.append(row)
+    return rows
+
+
 def run_preflight(args: argparse.Namespace | SimpleNamespace) -> Path:
     """Execute every CPU contract suite plus compileall and bind their actual logs."""
     _validate_git(args.git_commit)
@@ -538,43 +605,15 @@ def run_preflight(args: argparse.Namespace | SimpleNamespace) -> Path:
     if evidence_path.is_file():
         _validate_preflight(root, args.git_commit)
         return evidence_path
-    suites = tuple(path for path, _, _ in PREFLIGHT_SUITES)
-    commands = [
-        [sys.executable, "-m", "unittest", "discover", "-s", suite, "-v"]
-        for suite in suites
-    ] + [[sys.executable, "-m", "compileall", "-q", "pre_experiments"]]
-    rows: list[dict[str, object]] = []
-    for index, command in enumerate(commands):
-        completed = subprocess.run(
-            command, text=True, capture_output=True, check=False, timeout=1800,
-            env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
-        )
-        log = root / "logs" / f"preflight_{index}.log"
-        log.parent.mkdir(parents=True, exist_ok=True)
-        log.write_text(completed.stdout + completed.stderr, encoding="utf-8")
-        count = 0
-        skipped = 0
-        if index < len(suites):
-            content = completed.stdout + completed.stderr
-            match = re.search(r"Ran\s+(\d+)\s+tests?", content)
-            count = int(match.group(1)) if match else 0
-            skipped_match = re.search(r"skipped=(\d+)", content)
-            skipped = int(skipped_match.group(1)) if skipped_match else 0
-            _, expected_count, maximum_skipped = PREFLIGHT_SUITES[index]
-            if count != expected_count or not 0 <= skipped <= maximum_skipped:
-                raise ValueError("preflight test count/skip inventory mismatch")
-        if completed.returncode != 0:
-            raise ValueError(f"preflight command failed: {' '.join(command)}")
-        rows.append({
-            "command": command, "returncode": completed.returncode, "test_count": count,
-            "skipped_count": skipped,
-            "log": log.relative_to(root).as_posix(), "log_sha256": sha256_file(log),
-        })
+    test_inventory = preflight_test_inventory()
+    rows = _execute_preflight_commands(test_inventory, root)
+    if any(row["returncode"] != 0 for row in rows):
+        raise ValueError("preflight command failed")
     unsigned = {
         "schema": PREFLIGHT_SCHEMA,
         "git_commit": args.git_commit,
         "source_inventory": preflight_source_inventory(),
-        "test_inventory": preflight_test_inventory(),
+        "test_inventory": test_inventory,
         "git_tree": git_tree_identity(),
         "commands": rows,
     }
@@ -600,22 +639,37 @@ def _validate_preflight(root: Path, git_commit: str) -> dict[str, object]:
     rows = payload.get("commands")
     if not isinstance(rows, list) or len(rows) != 4:
         raise ValueError("preflight evidence command count mismatch")
-    expected_commands = [
-        [sys.executable, "-m", "unittest", "discover", "-s", suite, "-v"]
-        for suite, _, _ in PREFLIGHT_SUITES
-    ] + [[sys.executable, "-m", "compileall", "-q", "pre_experiments"]]
+    expected_commands = _preflight_commands()
     for index, row in enumerate(rows):
         if not isinstance(row, Mapping) or row.get("returncode") != 0:
             raise ValueError("preflight evidence command failure")
         if row.get("command") != expected_commands[index]:
             raise ValueError("preflight evidence command mismatch")
-        expected_count, maximum_skipped = (0, 0)
+        expected_count = 0
+        expected_results: list[dict[str, str]] = []
         if index < 3:
-            _, expected_count, maximum_skipped = PREFLIGHT_SUITES[index]
+            suite, expected_count = PREFLIGHT_SUITES[index]
+            expected_ids = payload["test_inventory"][suite]
+            results = row.get("test_results")
+            if (
+                not isinstance(results, list)
+                or any(
+                    not isinstance(result, Mapping)
+                    or set(result) != {"id", "status"}
+                    or result.get("status") not in {"ok", "skipped"}
+                    for result in results
+                )
+            ):
+                raise ValueError("preflight evidence test result schema mismatch")
+            expected_results = [dict(result) for result in results]
+            if [result["id"] for result in expected_results] != expected_ids:
+                raise ValueError("preflight evidence stable test ID mismatch")
         if (
             row.get("test_count") != expected_count
             or not isinstance(row.get("skipped_count"), int)
-            or not 0 <= int(row["skipped_count"]) <= maximum_skipped
+            or int(row["skipped_count"])
+            != sum(result["status"] == "skipped" for result in expected_results)
+            or (index == 3 and row.get("test_results") != [])
         ):
             raise ValueError("preflight evidence test count mismatch")
         log = root / str(row.get("log", ""))
@@ -623,15 +677,10 @@ def _validate_preflight(root: Path, git_commit: str) -> dict[str, object]:
             raise ValueError("preflight evidence log digest mismatch")
         if index < 3:
             content = log.read_text(encoding="utf-8")
-            count_match = re.search(r"Ran\s+(\d+)\s+tests?", content)
-            skip_match = re.search(r"skipped=(\d+)", content)
-            observed_skipped = int(skip_match.group(1)) if skip_match else 0
-            if (
-                count_match is None
-                or int(count_match.group(1)) != expected_count
-                or observed_skipped != row["skipped_count"]
-                or not re.search(r"^OK", content, re.MULTILINE)
-            ):
+            observed_results = _parse_unittest_results(
+                content, PREFLIGHT_SUITES[index][0], payload["test_inventory"][PREFLIGHT_SUITES[index][0]]
+            )
+            if observed_results != expected_results or not re.search(r"^OK", content, re.MULTILINE):
                 raise ValueError("preflight evidence log does not prove a passing test run")
     payload["record_digest"] = digest
     return payload
@@ -642,12 +691,29 @@ def validate_preflight_evidence(root: Path, git_commit: str) -> dict[str, object
     return _validate_preflight(Path(root).resolve(), git_commit)
 
 
+def _validate_preflight_live(root: Path, git_commit: str) -> dict[str, object]:
+    """Re-execute the bound commands; static digests alone cannot authorize a stage."""
+    payload = _validate_preflight(root, git_commit)
+    live_rows = _execute_preflight_commands(payload["test_inventory"])
+    evidence_rows = payload["commands"]
+    for live, evidence in zip(live_rows, evidence_rows):
+        if (
+            live["command"] != evidence["command"]
+            or live["returncode"] != 0
+            or live["test_count"] != evidence["test_count"]
+            or live["skipped_count"] != evidence["skipped_count"]
+            or live["test_results"] != evidence["test_results"]
+        ):
+            raise ValueError("authoritative live preflight does not match bound evidence")
+    return payload
+
+
 def run_prepare(args: argparse.Namespace | SimpleNamespace) -> Path:
     """Publish physically separated long-only shards and strict teacher sidecars."""
     _validate_git(args.git_commit)
     validate_long_context_publication_root(args.run_root)
     root = Path(args.run_root).resolve()
-    _validate_preflight(root, args.git_commit)
+    _validate_preflight_live(root, args.git_commit)
     existing = (
         root / "config.json", root / "manifests" / "long_context.json",
         root / "manifests" / "teacher.json",
@@ -1053,7 +1119,7 @@ def _write_stage_record(
 def run_smoke(args: argparse.Namespace | SimpleNamespace) -> Path:
     root = Path(args.run_root).resolve()
     _validate_git(args.git_commit)
-    _validate_preflight(root, args.git_commit)
+    _validate_preflight_live(root, args.git_commit)
     config, _, teacher_manifest = _load_prepared_manifests(root, args.git_commit)
     _require_capacity(root)
     device = torch.device(args.device)
@@ -1141,7 +1207,7 @@ def is_expected_formal_file(relative: str) -> bool:
 def run_report(args: argparse.Namespace | SimpleNamespace) -> Path:
     root = Path(args.run_root).resolve()
     _validate_git(args.git_commit)
-    _validate_preflight(root, args.git_commit)
+    _validate_preflight_live(root, args.git_commit)
     config, _, teacher_manifest = _load_prepared_manifests(root, args.git_commit)
     calibration_path = root / "calibration" / "completed.json"
     record = _validate_bound_record(
@@ -1236,6 +1302,8 @@ def run_calibration(args: argparse.Namespace | SimpleNamespace) -> Path:
         "scene": "scene0000_00", "variant_count": 4, "steps": 20, "exact_resume": True
     }:
         raise ValueError("smoke completion metadata mismatch")
+    _validate_git(expected_commit)
+    _validate_preflight_live(root, expected_commit)
     executor = getattr(args, "calibration_executor", None)
     if executor is not None:
         result = executor(args)
@@ -1244,8 +1312,6 @@ def run_calibration(args: argparse.Namespace | SimpleNamespace) -> Path:
         return result
     if not hasattr(args, "device") or not hasattr(args, "checkpoint_dir"):
         return marker
-    _validate_git(expected_commit)
-    _validate_preflight(root, expected_commit)
     config, long_manifest, teacher_manifest = _load_prepared_manifests(root, expected_commit)
     _require_capacity(root)
     device = torch.device(args.device)
@@ -1391,7 +1457,7 @@ def verify_completed_run(
         raise ValueError("formal config is required for completed-run verification")
     if config_path.is_file():
         _validate_git(expected_git_commit)
-        _validate_preflight(root, expected_git_commit)
+        _validate_preflight_live(root, expected_git_commit)
         config, _, teacher_manifest = _load_prepared_manifests(root, expected_git_commit)
         calibration = _validate_bound_record(
             root / "calibration" / "completed.json",
