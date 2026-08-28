@@ -12,6 +12,7 @@ from torch import nn
 
 from pre_experiments.conditional_hierarchical_vrfm.teacher import (
     TeacherVariantSet,
+    _covered_variant_utility,
     build_teacher_variants,
     build_variant_window_masks,
     summarize_teacher_upper_bound,
@@ -54,6 +55,14 @@ class _StatefulTokenCameraHead(_TokenCameraHead):
         self.running_value.add_(1.0)
         self.anchor.data.add_(1.0)
         return super().decode_pose_tokens(tokens, num_iterations=num_iterations)
+
+
+class _ThrowingStatefulTokenCameraHead(_StatefulTokenCameraHead):
+    def decode_pose_tokens(self, tokens: torch.Tensor, *, num_iterations: int) -> list[torch.Tensor]:
+        self.saw_eval = not self.training
+        self.running_value.add_(1.0)
+        self.anchor.data.add_(1.0)
+        raise RuntimeError("controlled decode failure")
 
 
 class TeacherVariantTests(unittest.TestCase):
@@ -184,6 +193,21 @@ class TeacherVariantTests(unittest.TestCase):
         torch.testing.assert_close(head.running_value, buffer_before)
         self.assertEqual(teachers.checkpoint_sha256, "a" * 64)
 
+    def test_builder_restores_frozen_head_state_when_decode_raises(self) -> None:
+        head = _ThrowingStatefulTokenCameraHead()
+        head.train()
+        parameter_before = head.anchor.detach().clone()
+        buffer_before = head.running_value.detach().clone()
+        with self.assertRaisesRegex(RuntimeError, "controlled decode failure"):
+            build_teacher_variants(
+                self.source_path, self.prepared_scene, head,
+                checkpoint_sha256="a" * 64, device=torch.device("cpu"),
+            )
+        self.assertTrue(head.training)
+        self.assertTrue(head.saw_eval)
+        torch.testing.assert_close(head.anchor, parameter_before)
+        torch.testing.assert_close(head.running_value, buffer_before)
+
     def test_builder_rejects_noncanonical_digest_and_head_device_mismatch(self) -> None:
         with self.assertRaisesRegex(ValueError, "canonical"):
             build_teacher_variants(
@@ -211,11 +235,8 @@ class TeacherVariantTests(unittest.TestCase):
         poses[:, :445, 0, 3] = 1.0 - 0.1293578271441714
         gt = np.repeat(np.eye(4, dtype=np.float64)[None], 500, axis=0)
         covered = coverage[0] > 0.0
-        baseline_error = baseline[covered, :3, 3] - gt[covered, :3, 3]
-        teacher_error = poses[0, covered, :3, 3] - gt[covered, :3, 3]
-        baseline_rms = float(np.sqrt(np.mean(np.sum(baseline_error * baseline_error, axis=1))))
-        teacher_rms = float(np.sqrt(np.mean(np.sum(teacher_error * teacher_error, axis=1))))
-        replay_utility = (baseline_rms - teacher_rms) / max(baseline_rms, 1e-12)
+        replay_utility = _covered_variant_utility(baseline, poses[0], coverage[0], gt)
+        self.assertAlmostEqual(replay_utility, 0.1293578271441714, places=10)
         teachers = [
             TeacherVariantSet(
                 scene=f"scene{index:04d}_00", frame_ids=np.arange(500, dtype=np.int64),
