@@ -13,6 +13,7 @@ import zipfile
 
 import numpy as np
 
+from pre_experiments.camera_translation_hvrfm import artifacts as artifacts_module
 from pre_experiments.camera_translation_hvrfm.artifacts import (
     LONG_CONTEXT_MEMBERS,
     QUALITY_SIDECAR_MEMBERS,
@@ -208,6 +209,90 @@ class StrictArtifactTests(unittest.TestCase):
             self.fixture.target(long_digest, short_digest, quality_digest),
         )
         return long_path, short_path, target_path, quality_path
+
+    def _bytes_api(self):
+        self.assertTrue(
+            hasattr(artifacts_module, "load_bound_bundle_bytes"),
+            "Task 3a requires a strict in-memory bound-bundle loader",
+        )
+        return artifacts_module.load_bound_bundle_bytes
+
+    def test_bound_bundle_bytes_parses_authenticated_archives_without_paths(self) -> None:
+        load_bytes = self._bytes_api()
+        paths = self._save_bundle()
+        payloads = [path.read_bytes() for path in paths]
+        for path in paths:
+            path.unlink()
+        bundle = load_bytes(*payloads)
+        self.assertEqual(set(bundle), {"long", "short", "target", "quality"})
+        self.assertEqual(str(bundle["long"]["sample_id"]), self.fixture.sample_id)
+        np.testing.assert_array_equal(
+            bundle["target"]["coverage_mask"],
+            (bundle["quality"]["coverage_weights"] > 0.0).astype(np.uint8),
+        )
+
+    def test_bound_bundle_bytes_rejects_duplicate_object_and_extra_archives(self) -> None:
+        load_bytes = self._bytes_api()
+        paths = self._save_bundle()
+        valid = [path.read_bytes() for path in paths]
+        duplicate = self.root / "bytes-duplicate.npz"
+        self._write_raw_zip(duplicate, self.fixture.long(), duplicate="sample_id")
+        object_path = self.root / "bytes-object.npz"
+        object_arrays = self.fixture.long()
+        object_arrays["sample_id"] = np.asarray(self.fixture.sample_id, dtype=object)
+        self._write_raw_zip(object_path, object_arrays)
+        extra = self.root / "bytes-extra.npz"
+        with extra.open("wb") as handle:
+            np.savez_compressed(handle, **self.fixture.long(), extra=np.asarray(1))
+        for name, malicious in (
+            ("duplicate", duplicate.read_bytes()),
+            ("object", object_path.read_bytes()),
+            ("extra", extra.read_bytes()),
+        ):
+            payloads = list(valid)
+            payloads[0] = malicious
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                load_bytes(*payloads)
+
+    def test_bound_bundle_bytes_replays_every_actual_digest_binding(self) -> None:
+        load_bytes = self._bytes_api()
+        long_path, short_path, target_path, quality_path = self._save_bundle()
+        original = [
+            path.read_bytes()
+            for path in (long_path, short_path, target_path, quality_path)
+        ]
+        original_long_sha256 = _sha256(long_path)
+
+        changed_long = self.fixture.long()
+        changed_long["camera_tokens"] = changed_long["camera_tokens"].copy()
+        changed_long["camera_tokens"][0, 0] = 1.0
+        save_long_context(long_path, changed_long)
+
+        short = self.fixture.short(original_long_sha256)
+        short["short_camera_tokens"] = short["short_camera_tokens"].copy()
+        short["short_camera_tokens"][0, 0, 0] = 1.0
+        save_short_context(short_path, short)
+
+        quality = self.fixture.quality()
+        quality["variant_utilities"] = quality["variant_utilities"].copy()
+        quality["variant_utilities"][0] += 0.01
+        save_quality_sidecar(quality_path, quality)
+
+        target = load_translation_target(target_path)
+        target["quality_sha256"] = np.asarray("f" * 64, dtype="U64")
+        save_translation_target(target_path, target)
+
+        malicious = [
+            long_path.read_bytes(),
+            short_path.read_bytes(),
+            target_path.read_bytes(),
+            quality_path.read_bytes(),
+        ]
+        for index, name in enumerate(("long", "short", "target", "quality")):
+            payloads = list(original)
+            payloads[index] = malicious[index]
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                load_bytes(*payloads)
 
     def test_round_trip_uses_all_four_exact_schemas_and_dtypes(self) -> None:
         paths = self._save_bundle()

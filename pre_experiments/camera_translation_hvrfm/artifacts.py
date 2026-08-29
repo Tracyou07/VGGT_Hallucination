@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from io import BytesIO
 import os
 from pathlib import Path
 import re
@@ -457,13 +458,37 @@ def _load(
     *,
     label: str,
 ) -> dict[str, np.ndarray]:
+    return _load_archive_bytes(
+        _read_artifact_bytes(path, label=label),
+        members,
+        validator,
+        label=label,
+    )
+
+
+def _read_artifact_bytes(path: Path, *, label: str) -> bytes:
     source = Path(path)
     _reject_symlink_components(source)
     if not source.is_file():
         raise ValueError(f"{label} must be a regular NPZ file")
+    try:
+        return source.read_bytes()
+    except OSError as error:
+        raise ValueError(f"invalid {label}: {source}") from error
+
+
+def _load_archive_bytes(
+    payload: bytes,
+    members: frozenset[str],
+    validator: _Validator,
+    *,
+    label: str,
+) -> dict[str, np.ndarray]:
+    if type(payload) is not bytes:
+        raise ValueError(f"{label} payload must be immutable bytes")
     expected_names = {f"{name}.npy" for name in members}
     try:
-        with zipfile.ZipFile(source, "r") as archive:
+        with zipfile.ZipFile(BytesIO(payload), "r") as archive:
             infos = archive.infolist()
             names = [info.filename for info in infos]
             if len(names) != len(set(names)):
@@ -478,12 +503,12 @@ def _load(
                 raise ValueError(f"{label} contains an unsafe ZIP member path")
             if set(names) != expected_names or len(names) != len(expected_names):
                 raise ValueError(f"{label} must use the exact schema")
-        with np.load(source, allow_pickle=False) as archive:
+        with np.load(BytesIO(payload), allow_pickle=False) as archive:
             arrays = {name: archive[name].copy() for name in members}
     except ValueError:
         raise
     except (OSError, KeyError, EOFError, zipfile.BadZipFile, zipfile.LargeZipFile) as error:
-        raise ValueError(f"invalid {label}: {source}") from error
+        raise ValueError(f"invalid {label} payload") from error
     return validator(arrays)
 
 
@@ -534,26 +559,9 @@ def load_quality_sidecar(path: Path) -> dict[str, np.ndarray]:
     )
 
 
-def load_bound_bundle(
-    long_path: Path,
-    short_path: Path,
-    target_path: Path,
-    quality_path: Path,
+def _validate_bound_bundle(
+    bundle: dict[str, dict[str, np.ndarray]], actual: Mapping[str, str]
 ) -> dict[str, dict[str, np.ndarray]]:
-    """Load four artifacts and verify identities plus actual file-digest bindings."""
-    paths = {
-        "long": Path(long_path),
-        "short": Path(short_path),
-        "target": Path(target_path),
-        "quality": Path(quality_path),
-    }
-    bundle = {
-        "long": load_long_context(paths["long"]),
-        "short": load_short_context(paths["short"]),
-        "target": load_translation_target(paths["target"]),
-        "quality": load_quality_sidecar(paths["quality"]),
-    }
-    actual = {name: _sha256_file(path) for name, path in paths.items()}
     long = bundle["long"]
     short = bundle["short"]
     target = bundle["target"]
@@ -596,12 +604,81 @@ def load_bound_bundle(
     return bundle
 
 
+def _load_bound_bundle_payloads(
+    payloads: Mapping[str, bytes],
+) -> dict[str, dict[str, np.ndarray]]:
+    if set(payloads) != {"long", "short", "target", "quality"}:
+        raise ValueError("bound bundle payloads must use the exact schema")
+    specifications = {
+        "long": (LONG_CONTEXT_MEMBERS, _validate_long, "long context"),
+        "short": (SHORT_CONTEXT_MEMBERS, _validate_short, "short context"),
+        "target": (
+            TRANSLATION_TARGET_MEMBERS,
+            _validate_target,
+            "translation target",
+        ),
+        "quality": (
+            QUALITY_SIDECAR_MEMBERS,
+            _validate_quality,
+            "quality sidecar",
+        ),
+    }
+    bundle = {
+        name: _load_archive_bytes(
+            payloads[name], members, validator, label=label
+        )
+        for name, (members, validator, label) in specifications.items()
+    }
+    actual = {
+        name: hashlib.sha256(payloads[name]).hexdigest() for name in specifications
+    }
+    return _validate_bound_bundle(bundle, actual)
+
+
+def load_bound_bundle_bytes(
+    long_bytes: bytes,
+    short_bytes: bytes,
+    target_bytes: bytes,
+    quality_bytes: bytes,
+) -> dict[str, dict[str, np.ndarray]]:
+    """Parse authenticated bytes and verify all cross-artifact bindings."""
+    return _load_bound_bundle_payloads(
+        {
+            "long": long_bytes,
+            "short": short_bytes,
+            "target": target_bytes,
+            "quality": quality_bytes,
+        }
+    )
+
+
+def load_bound_bundle(
+    long_path: Path,
+    short_path: Path,
+    target_path: Path,
+    quality_path: Path,
+) -> dict[str, dict[str, np.ndarray]]:
+    """Load four paths once and verify identities plus actual digest bindings."""
+    paths = {
+        "long": (Path(long_path), "long context"),
+        "short": (Path(short_path), "short context"),
+        "target": (Path(target_path), "translation target"),
+        "quality": (Path(quality_path), "quality sidecar"),
+    }
+    payloads = {
+        name: _read_artifact_bytes(path, label=label)
+        for name, (path, label) in paths.items()
+    }
+    return _load_bound_bundle_payloads(payloads)
+
+
 __all__ = [
     "LONG_CONTEXT_MEMBERS",
     "QUALITY_SIDECAR_MEMBERS",
     "SHORT_CONTEXT_MEMBERS",
     "TRANSLATION_TARGET_MEMBERS",
     "load_bound_bundle",
+    "load_bound_bundle_bytes",
     "load_long_context",
     "load_quality_sidecar",
     "load_short_context",
