@@ -125,6 +125,8 @@ def _absolute_without_resolving(path: Path) -> Path:
 
 
 def _reject_symlink_components(path: Path) -> None:
+    if ".." in Path(path).parts:
+        raise ValueError("artifact paths may not contain lexical parent traversal")
     current = _absolute_without_resolving(path)
     for candidate in (current, *current.parents):
         if candidate.is_symlink():

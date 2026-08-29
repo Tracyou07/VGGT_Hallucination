@@ -315,6 +315,58 @@ class StrictArtifactTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             save_long_context(directory_link / "new.npz", self.fixture.long())
 
+    def test_every_artifact_api_rejects_lexical_parent_traversal(self) -> None:
+        safe = self.root / "safe"
+        safe.mkdir()
+        save_cases = (
+            (save_long_context, self.fixture.long()),
+            (save_short_context, self.fixture.short("a" * 64)),
+            (
+                save_translation_target,
+                self.fixture.target("a" * 64, "b" * 64, "c" * 64),
+            ),
+            (save_quality_sidecar, self.fixture.quality()),
+        )
+        for index, (save, arrays) in enumerate(save_cases):
+            path = safe / ".." / f"save-{index}.npz"
+            with self.subTest(api=save.__name__), self.assertRaisesRegex(
+                ValueError, "parent traversal"
+            ):
+                save(path, arrays)
+
+        real_paths = self._save_bundle()
+        load_cases = (
+            (load_long_context, real_paths[0]),
+            (load_short_context, real_paths[1]),
+            (load_translation_target, real_paths[2]),
+            (load_quality_sidecar, real_paths[3]),
+        )
+        lexical_paths = tuple(safe / ".." / path.name for _, path in load_cases)
+        for (load, _), path in zip(load_cases, lexical_paths):
+            with self.subTest(api=load.__name__), self.assertRaisesRegex(
+                ValueError, "parent traversal"
+            ):
+                load(path)
+        with self.assertRaisesRegex(ValueError, "parent traversal"):
+            load_bound_bundle(*lexical_paths)
+
+    def test_link_parent_traversal_cannot_escape_on_posix(self) -> None:
+        safe = self.root / "safe-link-parent"
+        outside = self.root / "outside"
+        safe.mkdir()
+        (outside / "subdirectory").mkdir(parents=True)
+        secret = outside / "secret.npz"
+        save_long_context(secret, self.fixture.long())
+        link = safe / "link"
+        try:
+            os.symlink(outside / "subdirectory", link, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f"symlink creation unavailable: {error}")
+        attack = link / ".." / secret.name
+        self.assertTrue(attack.is_file())
+        with self.assertRaisesRegex(ValueError, "parent traversal"):
+            load_long_context(attack)
+
     def test_failed_write_is_atomic_and_cleans_unique_same_directory_tempfile(self) -> None:
         target = self.root / "long.npz"
         sentinel = b"existing-target-bytes"
