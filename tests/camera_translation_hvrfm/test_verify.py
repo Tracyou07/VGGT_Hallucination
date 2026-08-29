@@ -6,6 +6,7 @@ from io import BytesIO
 import hashlib
 import inspect
 import json
+import math
 from pathlib import Path
 import subprocess
 import tempfile
@@ -1210,6 +1211,63 @@ class IndependentVerifierContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "cross-device.*baseline"):
                 module._bind_bundle_to_frozen_payload(
                     bundle, far_frozen, scene=scene
+                )
+
+    def test_report_markdown_binds_recorded_json_after_tolerant_numeric_replay(self) -> None:
+        module = self.api()
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ValidRunFixture(Path(directory))
+            recorded = json.loads(
+                (fixture.run_root / "reports/stage_a_prime.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            independent_scene_metrics = json.loads(
+                json.dumps(recorded["scene_metrics"])
+            )
+            recorded["mean_full_scene_utility"] = math.nextafter(
+                float(recorded["mean_full_scene_utility"]), math.inf
+            )
+            recorded["scene_metrics"][1]["teacher_retention"] = math.nextafter(
+                float(recorded["scene_metrics"][1]["teacher_retention"]),
+                math.inf,
+            )
+            replay = module._validate_report_replay(
+                recorded,
+                {
+                    "reports/stage_a_prime.md": module._expected_markdown(
+                        recorded
+                    )
+                },
+                scene_metrics=independent_scene_metrics,
+                cohort_records=recorded["cohort"],
+                expected_run_id=fixture.run_id,
+                expected_git_commit=fixture.git_commit,
+            )
+            self.assertEqual(
+                replay["mean_full_scene_utility"],
+                float(
+                    json.loads(
+                        (
+                            fixture.run_root / "reports/stage_a_prime.json"
+                        ).read_text(encoding="utf-8")
+                    )["mean_full_scene_utility"]
+                ),
+            )
+            tampered_markdown = bytearray(module._expected_markdown(recorded))
+            tampered_markdown[-2] ^= 1
+            with self.assertRaisesRegex(
+                ValueError, "report Markdown does not match independent replay"
+            ):
+                module._validate_report_replay(
+                    recorded,
+                    {
+                        "reports/stage_a_prime.md": bytes(tampered_markdown)
+                    },
+                    scene_metrics=independent_scene_metrics,
+                    cohort_records=recorded["cohort"],
+                    expected_run_id=fixture.run_id,
+                    expected_git_commit=fixture.git_commit,
                 )
 
     def test_scene_replay_separates_canonical_baseline_from_cpu_candidates(self) -> None:

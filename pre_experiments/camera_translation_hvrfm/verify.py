@@ -3760,7 +3760,7 @@ def _validate_report_replay(
         "cohort": expected_cohort,
     }
     _compare_value(dict(report), expected, path="report")
-    if snapshots["reports/stage_a_prime.md"] != _expected_markdown(expected):
+    if snapshots["reports/stage_a_prime.md"] != _expected_markdown(dict(report)):
         raise ValueError("report Markdown does not match independent replay")
     if classifier["classification"] != _READY:
         raise ValueError("independent Stage A-prime gates did not pass")
