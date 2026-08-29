@@ -353,7 +353,19 @@ class ValidRunFixture:
                 / f"{sample.scene}.npz"
             )
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(sample.long_path.read_bytes())
+            with np.load(sample.long_path, allow_pickle=False) as archive:
+                reference_long = {
+                    name: archive[name].copy()
+                    for name in (
+                        "scene",
+                        "frame_ids",
+                        "camera_tokens",
+                        "baseline_c2w",
+                        "source_sha256",
+                    )
+                }
+            with destination.open("wb") as handle:
+                np.savez_compressed(handle, **reference_long)
             self.reference_long_paths[sample.scene] = destination
             self.reference_long_sha256[sample.scene] = _sha(destination)
 
@@ -1129,6 +1141,76 @@ class IndependentVerifierContractTests(unittest.TestCase):
                 stored,
                 scale=module._prediction_scale(stored),
             )
+
+    def test_five_member_frozen_long_binds_small_cross_device_baseline_drift(self) -> None:
+        module = self.api()
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ValidRunFixture(Path(directory))
+            scene = "scene0029_01"
+
+            bundle: dict[str, dict[str, np.ndarray]] = {}
+            for kind, path in fixture._bundle_paths(scene).items():
+                with np.load(path, allow_pickle=False) as archive:
+                    bundle[kind] = {
+                        name: archive[name].copy() for name in archive.files
+                    }
+            with np.load(
+                fixture.reference_long_paths[scene], allow_pickle=False
+            ) as archive:
+                reference_long = {
+                    name: archive[name].copy() for name in archive.files
+                }
+            with np.load(
+                fixture.reference_teacher_paths[scene], allow_pickle=False
+            ) as archive:
+                reference_teacher = {
+                    name: archive[name].copy() for name in archive.files
+                }
+            with np.load(fixture.formal_paths[scene], allow_pickle=False) as archive:
+                formal = {name: archive[name].copy() for name in archive.files}
+
+            self.assertEqual(
+                set(reference_long),
+                {
+                    "scene",
+                    "frame_ids",
+                    "camera_tokens",
+                    "baseline_c2w",
+                    "source_sha256",
+                },
+            )
+            self.assertEqual(set(bundle["long"]), set(module._LONG_MEMBERS))
+            reference_long["baseline_c2w"][:, 1, 3] += 1.0e-7
+            reference_teacher["baseline_c2w_raw"][:, 1, 3] += 1.0e-7
+            frozen = module._validate_frozen_scene_payload(
+                scene=scene,
+                long=reference_long,
+                teacher=reference_teacher,
+                formal=formal,
+                source_sha256=fixture.source_sha256[scene],
+                formal_sha256=fixture.formal_sha256[scene],
+                checkpoint_sha256=fixture.checkpoint_sha256,
+            )
+            module._bind_bundle_to_frozen_payload(bundle, frozen, scene=scene)
+
+            far_long = {
+                name: np.asarray(value).copy()
+                for name, value in frozen.long.items()
+            }
+            far_long["baseline_c2w"][:, 1, 3] += (
+                2.0
+                * module._CROSS_DEVICE_CENTER_ATOL
+                * float(bundle["long"]["prediction_scale"])
+            )
+            far_frozen = module._FrozenScenePayload(
+                long=far_long,
+                teacher=frozen.teacher,
+                formal=frozen.formal,
+            )
+            with self.assertRaisesRegex(ValueError, "cross-device.*baseline"):
+                module._bind_bundle_to_frozen_payload(
+                    bundle, far_frozen, scene=scene
+                )
 
     def test_scene_replay_separates_canonical_baseline_from_cpu_candidates(self) -> None:
         module = self.api()

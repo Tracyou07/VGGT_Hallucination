@@ -98,6 +98,15 @@ _LONG_MEMBERS = frozenset(
         "git_commit",
     }
 )
+_REFERENCE_LONG_MEMBERS = frozenset(
+    {
+        "scene",
+        "frame_ids",
+        "camera_tokens",
+        "baseline_c2w",
+        "source_sha256",
+    }
+)
 _SHORT_MEMBERS = frozenset(
     {
         "sample_id",
@@ -809,29 +818,12 @@ def _validate_frozen_scene_payload(
         shape=(_FRAMES, _TOKEN_WIDTH),
         dtype=np.float32,
     )
-    long_pose = _expect_array(
-        long,
-        "baseline_pose_encoding",
-        shape=(_FRAMES, 9),
-        dtype=np.float32,
-    )
     long_c2w = _expect_array(
         long, "baseline_c2w", shape=(_FRAMES, 4, 4), dtype=np.float64
     )
-    long_scale = _expect_array(
-        long, "prediction_scale", shape=(), dtype=np.float64
-    )
     _finite(long_tokens, name=f"frozen long tokens {scene}")
-    _finite(long_pose, name=f"frozen long pose encoding {scene}")
     _validate_pose_stack(long_c2w, name=f"frozen long baseline {scene}")
-    if long_scale.tobytes() != np.asarray(
-        _prediction_scale(long_c2w), dtype=np.float64
-    ).tobytes():
-        raise ValueError(f"frozen long prediction scale mismatch for {scene}")
-    if (
-        _array_digest(long, "source_sha256") != source_sha256
-        or _array_digest(long, "checkpoint_sha256") != checkpoint_sha256
-    ):
+    if _array_digest(long, "source_sha256") != source_sha256:
         raise ValueError(f"frozen long provenance mismatch for {scene}")
 
     if (
@@ -1043,11 +1035,27 @@ def _validate_frozen_scene_payload(
     ):
         raise ValueError(f"frozen formal provenance mismatch for {scene}")
 
+    try:
+        formal_decoded = (
+            pose_encoding_to_c2w(torch.from_numpy(formal_pose[None]))
+            .detach()
+            .to(device="cpu", dtype=torch.float64)
+            .numpy()[0]
+        )
+    except (RuntimeError, ValueError) as error:
+        raise ValueError(
+            f"frozen formal baseline pose conversion failed for {scene}"
+        ) from error
+    _require_cross_device_baseline_match(
+        formal_decoded,
+        long_c2w,
+        scale=_prediction_scale(long_c2w),
+    )
+
     for left, right, label in (
         (teacher_frames, long_frames, "teacher/long frame IDs"),
         (formal_frames, long_frames, "formal/long frame IDs"),
         (teacher_baseline, long_c2w, "teacher/long baseline"),
-        (formal_pose, long_pose, "formal/long baseline pose encoding"),
         (formal_gt, gt, "formal/teacher GT"),
         (formal_scale, gt_scale, "formal/teacher GT scale"),
         (formal_oracle_scale, oracle_scale, "formal/teacher oracle scale"),
@@ -2225,7 +2233,7 @@ def _authenticate_frozen_upstream(
             long=_decode_npz_snapshot(
                 long_snapshot.payload,
                 label=f"frozen long context {scene}",
-                expected_members=_LONG_MEMBERS,
+                expected_members=_REFERENCE_LONG_MEMBERS,
             ),
             teacher=_decode_npz_snapshot(
                 teacher_snapshot.payload,
@@ -2494,18 +2502,22 @@ def _bind_bundle_to_frozen_payload(
     long = bundle["long"]
     quality = bundle["quality"]
     target = bundle["target"]
-    for name in (
-        "frame_ids",
-        "camera_tokens",
-        "baseline_pose_encoding",
-        "baseline_c2w",
-        "prediction_scale",
-    ):
+    for name in ("frame_ids", "camera_tokens"):
         _require_exact_array_values(
             long[name],
             frozen.long[name],
             name=f"{scene} local/frozen long baseline {name}",
         )
+    _require_exact_array_values(
+        long["baseline_pose_encoding"],
+        frozen.formal["baseline_pose_encoding"],
+        name=f"{scene} local/frozen formal baseline pose encoding",
+    )
+    _require_cross_device_baseline_match(
+        long["baseline_c2w"],
+        frozen.long["baseline_c2w"],
+        scale=float(long["prediction_scale"]),
+    )
 
     for name in (
         "frame_ids",
