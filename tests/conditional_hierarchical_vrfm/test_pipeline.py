@@ -104,6 +104,134 @@ def _write_privileged(path: Path, scene: str, source_sha: str, checkpoint_sha: s
 
 class PipelineBarrierTests(unittest.TestCase):
     @staticmethod
+    def _teacher_summary(**overrides: object) -> dict[str, object]:
+        summary: dict[str, object] = {
+            "scene_count": 10,
+            "positive_scene_count": 10,
+            "mean_coverage": 0.89,
+            "mean_utility": 0.1293578271441714,
+        }
+        summary.update(overrides)
+        return summary
+
+    def _run_existing_teacher_summary(self, summary: dict[str, object]) -> Path:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for path in (
+                root / "config.json",
+                root / "manifests" / "long_context.json",
+                root / "manifests" / "teacher.json",
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}\n", encoding="utf-8")
+            with patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_git"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.validate_long_context_publication_root"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_preflight_live"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline._load_prepared_manifests",
+                return_value=({}, {}, {"teacher_upper_bound": summary}),
+            ):
+                return run_prepare(SimpleNamespace(
+                    run_root=root, git_commit="a" * 40,
+                ))
+
+    def _run_fresh_teacher_summary(self, summary: dict[str, object]) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint_sha = "f" * 64
+            formal_auth = {
+                "labels": {}, "completion_sha256": "a" * 64,
+                "data_manifest_sha256": "b" * 64,
+                "source_manifest_sha256": "c" * 64,
+                "formal_root": root / "formal",
+            }
+            with patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_git"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.validate_long_context_publication_root"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_preflight_live"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.load_source_records",
+                return_value=[],
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.validate_frozen_scene_identity"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.validate_source_scene_cohort"
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.load_base_camera_head",
+                return_value=(nn.Identity(), checkpoint_sha),
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.authenticate_formal_run",
+                return_value=formal_auth,
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.build_long_context_manifest",
+                return_value={"records": []},
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.summarize_teacher_upper_bound",
+                return_value=summary,
+            ), patch(
+                "pre_experiments.conditional_hierarchical_vrfm.pipeline.audit_long_context_manifest",
+                side_effect=RuntimeError("fresh teacher summary accepted"),
+            ):
+                try:
+                    run_prepare(SimpleNamespace(
+                        run_root=root, git_commit="a" * 40,
+                        source_run=root / "source", formal_label_root=root / "formal",
+                        prepared_root=root / "prepared", checkpoint_dir=root / "checkpoint",
+                        device="cpu",
+                    ))
+                except RuntimeError as error:
+                    self.assertEqual(str(error), "fresh teacher summary accepted")
+                except ValueError as error:
+                    self.fail(f"documented fresh-summary tolerance was rejected: {error}")
+                else:
+                    self.fail("fresh summary did not reach the post-gate audit")
+
+    def test_fresh_teacher_replay_accepts_documented_absolute_tolerance(self) -> None:
+        self._run_fresh_teacher_summary(self._teacher_summary(
+            mean_coverage=0.89 - 6.705261346162672e-11,
+            mean_utility=0.1293578270771188,
+        ))
+
+    def test_existing_teacher_manifest_accepts_same_absolute_tolerance(self) -> None:
+        summary = self._teacher_summary(
+            mean_coverage=0.89 - 6.705261346162672e-11,
+            mean_utility=0.1293578270771188,
+        )
+        try:
+            result = self._run_existing_teacher_summary(summary)
+        except ValueError as error:
+            self.fail(f"documented existing-summary tolerance was rejected: {error}")
+        self.assertEqual(result.name, "long_context.json")
+
+    def test_teacher_summary_rejects_relative_nonfinite_and_integer_mismatches(self) -> None:
+        invalid = (
+            self._teacher_summary(mean_coverage=0.89 + 1.1e-10),
+            self._teacher_summary(mean_utility=0.1293578271441714 + 1.1e-10),
+            self._teacher_summary(mean_coverage=float("nan")),
+            self._teacher_summary(mean_utility=float("nan")),
+            self._teacher_summary(scene_count=9),
+            self._teacher_summary(positive_scene_count=9),
+            self._teacher_summary(scene_count=10.0),
+            self._teacher_summary(positive_scene_count=10.0),
+            self._teacher_summary(scene_count=True),
+            self._teacher_summary(positive_scene_count=True),
+            self._teacher_summary(mean_coverage="0.89"),
+            self._teacher_summary(mean_utility="0.1293578271441714"),
+            self._teacher_summary(mean_coverage=True),
+            self._teacher_summary(mean_utility=True),
+            {**self._teacher_summary(), "unexpected": 1},
+        )
+        for summary in invalid:
+            with self.subTest(summary=summary):
+                with self.assertRaisesRegex(ValueError, "existing teacher replay summary mismatch"):
+                    self._run_existing_teacher_summary(summary)
+
+    @staticmethod
     def _synthetic_preflight_inventory() -> dict[str, list[str]]:
         return {
             suite: [
@@ -210,7 +338,7 @@ class PipelineBarrierTests(unittest.TestCase):
 
     def test_authoritative_live_gate_rejects_forged_handwritten_preflight(self) -> None:
         # Regression: FORGED_HANDWRITTEN_PREFLIGHT_ACCEPTED.
-        self.assertEqual(dict(PREFLIGHT_SUITES)["tests/conditional_hierarchical_vrfm"], 74)
+        self.assertEqual(dict(PREFLIGHT_SUITES)["tests/conditional_hierarchical_vrfm"], 77)
         self._check_failed_preflight_command_preserves_raw_log()
         self._check_malformed_success_preserves_raw_log()
         with tempfile.TemporaryDirectory() as directory:
@@ -279,7 +407,7 @@ class PipelineBarrierTests(unittest.TestCase):
                 )
                 for row in rows
             ]
-            self.assertEqual(len(rows[0]["test_results"]), 74)
+            self.assertEqual(len(rows[0]["test_results"]), 77)
             with patch(
                 "pre_experiments.conditional_hierarchical_vrfm.pipeline._validate_git"
             ), patch(
@@ -308,8 +436,8 @@ class PipelineBarrierTests(unittest.TestCase):
             malformed_outputs = (
                 original.replace(first_line, "", 1),
                 original.replace(
-                    "Ran 74 tests",
-                    "test_unexpected (tests.conditional_hierarchical_vrfm.test_pipeline.Unexpected) ... ok\nRan 74 tests",
+                    "Ran 77 tests",
+                    "test_unexpected (tests.conditional_hierarchical_vrfm.test_pipeline.Unexpected) ... ok\nRan 77 tests",
                     1,
                 ),
             )

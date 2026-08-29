@@ -6,6 +6,7 @@ import argparse
 import gc
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -76,11 +77,41 @@ FROZEN_FORMAL_GIT = "2476a59f583ce4c39bbe66dc65d6a8e5cddfb52e"
 FROZEN_BASE_CHECKPOINT_SHA256 = "f164acf60724910d8fe1578bb499d800850c7bb0948db7555c413f9fbe60467e"
 EXPECTED_TEACHER_COVERAGE = 0.89
 EXPECTED_TEACHER_UTILITY = 0.1293578271441714
+_TEACHER_SUMMARY_ABS_TOL = 1e-10
 PREFLIGHT_SUITES = (
-    ("tests/conditional_hierarchical_vrfm", 74),
+    ("tests/conditional_hierarchical_vrfm", 77),
     ("tests/variational_camera_latent", 64),
     ("tests/long_short_camera_head", 39),
 )
+
+
+def _teacher_upper_bound_matches(summary: object) -> bool:
+    if not isinstance(summary, Mapping) or set(summary) != {
+        "scene_count", "positive_scene_count", "mean_coverage", "mean_utility",
+    }:
+        return False
+    scene_count = summary["scene_count"]
+    positive_scene_count = summary["positive_scene_count"]
+    if type(scene_count) is not int or type(positive_scene_count) is not int:
+        return False
+    if scene_count != 10 or positive_scene_count != 10:
+        return False
+    coverage = summary["mean_coverage"]
+    utility = summary["mean_utility"]
+    if type(coverage) not in (int, float) or type(utility) not in (int, float):
+        return False
+    return (
+        math.isfinite(coverage)
+        and math.isfinite(utility)
+        and math.isclose(
+            coverage, EXPECTED_TEACHER_COVERAGE,
+            rel_tol=0.0, abs_tol=_TEACHER_SUMMARY_ABS_TOL,
+        )
+        and math.isclose(
+            utility, EXPECTED_TEACHER_UTILITY,
+            rel_tol=0.0, abs_tol=_TEACHER_SUMMARY_ABS_TOL,
+        )
+    )
 
 
 def sha256_file(path: Path) -> str:
@@ -729,11 +760,7 @@ def run_prepare(args: argparse.Namespace | SimpleNamespace) -> Path:
     if all(path.is_file() for path in existing):
         config, _, teacher_manifest = _load_prepared_manifests(root, args.git_commit)
         summary = teacher_manifest.get("teacher_upper_bound")
-        if summary != {
-            "scene_count": 10, "positive_scene_count": 10,
-            "mean_coverage": EXPECTED_TEACHER_COVERAGE,
-            "mean_utility": EXPECTED_TEACHER_UTILITY,
-        }:
+        if not _teacher_upper_bound_matches(summary):
             raise ValueError("existing teacher replay summary mismatch")
         return root / "manifests" / "long_context.json"
     records = load_source_records(Path(args.source_run))
@@ -790,12 +817,7 @@ def run_prepare(args: argparse.Namespace | SimpleNamespace) -> Path:
         if device.type == "cuda":
             torch.cuda.empty_cache()
     summary = summarize_teacher_upper_bound(teachers)
-    if (
-        summary["scene_count"] != 10
-        or summary["positive_scene_count"] != 10
-        or float(summary["mean_coverage"]) != EXPECTED_TEACHER_COVERAGE
-        or float(summary["mean_utility"]) != EXPECTED_TEACHER_UTILITY
-    ):
+    if not _teacher_upper_bound_matches(summary):
         raise ValueError("teacher replay does not match the authenticated ten-scene upper bound")
     long_manifest_path = root / "manifests" / "long_context.json"
     teacher_manifest_path = root / "manifests" / "teacher.json"
