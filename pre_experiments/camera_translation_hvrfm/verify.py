@@ -64,6 +64,8 @@ _WINDOWS = 9
 _WINDOW_FRAMES = 100
 _ENDPOINTS = 4
 _TOKEN_WIDTH = 2048
+_CROSS_DEVICE_CENTER_ATOL = 5e-6
+_CROSS_DEVICE_ROTATION_ATOL_DEG = 2e-5
 _SCENES = (
     "scene0000_00",
     "scene0013_02",
@@ -3125,6 +3127,36 @@ def _so3_delta_deg(candidate: np.ndarray, reference: np.ndarray) -> np.ndarray:
     return result.reshape(left.shape[:-2])
 
 
+def _require_cross_device_baseline_match(
+    decoded: np.ndarray,
+    witness: np.ndarray,
+    *,
+    scale: float,
+) -> None:
+    """Gate native float32 pose decodes geometrically across CPU/GPU kernels."""
+    actual = _validate_pose_stack(decoded, name="cross-device decoded baseline")
+    expected = _validate_pose_stack(witness, name="cross-device baseline witness")
+    if actual.shape != expected.shape or not math.isfinite(scale) or scale <= 0.0:
+        raise ValueError("cross-device baseline comparison is malformed")
+    center_error = float(
+        np.max(
+            np.linalg.norm(
+                actual[:, :3, 3] - expected[:, :3, 3],
+                axis=1,
+            )
+        )
+        / scale
+    )
+    rotation_error = float(np.max(_so3_delta_deg(actual, expected)))
+    if (
+        not math.isfinite(center_error)
+        or center_error > _CROSS_DEVICE_CENTER_ATOL
+        or not math.isfinite(rotation_error)
+        or rotation_error > _CROSS_DEVICE_ROTATION_ATOL_DEG
+    ):
+        raise ValueError("cross-device decoded baseline mismatches GPU baseline witness")
+
+
 def _rms_center_error(
     candidate: np.ndarray, ground_truth: np.ndarray, mask: np.ndarray
 ) -> float:
@@ -3290,8 +3322,11 @@ def _replay_scene(
         _validate_pose_stack(
             decoded_corrected[endpoint], name=f"true-decoded endpoint {endpoint}"
         )
-    if not np.array_equal(decoded_pose_baseline, decoded_baseline):
-        raise ValueError("true pose conversion baseline does not match Camera Head replay")
+    _require_cross_device_baseline_match(
+        decoded_pose_baseline,
+        decoded_baseline,
+        scale=replay_scale,
+    )
 
     oracle_scale = float(quality["oracle_scale"])
     oracle_rotation = quality["oracle_rotation"]
@@ -3299,7 +3334,7 @@ def _replay_scene(
     ground_truth = quality["gt_c2w"]
     gt_scale = float(quality["gt_scene_scale"])
     baseline_aligned = _apply_oracle(
-        decoded_pose_baseline,
+        decoded_baseline,
         scale=oracle_scale,
         rotation=oracle_rotation,
         translation=oracle_translation,

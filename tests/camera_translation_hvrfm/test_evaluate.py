@@ -26,7 +26,10 @@ from pre_experiments.camera_translation_hvrfm.data import (
     PublishedTranslationSample,
     calibration_role,
 )
-from pre_experiments.camera_translation_hvrfm.geometry import build_translation_endpoint
+from pre_experiments.camera_translation_hvrfm.geometry import (
+    build_translation_endpoint,
+    prediction_scale,
+)
 from pre_experiments.camera_velocity_ambiguity_02.artifacts import frame_digest
 from pre_experiments.camera_velocity_ambiguity_02.contracts import canonical_json_digest
 from pre_experiments.camera_velocity_ambiguity_02.frozen_oracle import FrozenOracle
@@ -218,12 +221,16 @@ class EvaluationBundle:
         *,
         quaternion: np.ndarray | None = None,
         alphas: np.ndarray = ALPHAS,
+        baseline_center_offset: float = 0.0,
     ) -> None:
         self.root = root
         self.alphas = np.asarray(alphas, dtype=np.float64)
         self.frame_ids, self.baseline, self.pose, self.scale = _camera_fixture(
             quaternion
         )
+        if baseline_center_offset:
+            self.baseline[:, 1, 3] += float(baseline_center_offset)
+            self.scale = prediction_scale(self.baseline)
         self.coverage = _coverage()
         self.gt = self.baseline.copy()
         self.gt[:, 1, 3] = 1.0
@@ -451,6 +458,35 @@ class TranslationEvaluationTests(unittest.TestCase):
         )
         self.assertAlmostEqual(metrics["teacher_retention"], 1.0, places=5)
         self.assertEqual(metrics["provenance"]["target_sha256"], self.bundle.sample.target_sha256)
+
+    def test_tolerated_cpu_redecode_uses_authenticated_baseline_for_diagnostics(self) -> None:
+        module = self.api()
+        gpu_like = EvaluationBundle(
+            Path(self.temporary.name) / "gpu-like-baseline",
+            baseline_center_offset=1.0e-7,
+        )
+
+        metrics = module.evaluate_translation_sample(gpu_like.sample)
+
+        self.assertTrue(metrics["all_finite"])
+        self.assertGreater(metrics["max_covered_roundtrip_fraction"], 0.0)
+
+        quality = load_quality_sidecar(gpu_like.quality_path)
+        quality["baseline_translation_error_normalized"] = quality[
+            "baseline_translation_error_normalized"
+        ].copy()
+        quality["baseline_translation_error_normalized"][0] += 1.0e-8
+        quality_sha = save_quality_sidecar(gpu_like.quality_path, quality)
+        target = load_translation_target(gpu_like.target_path)
+        target["quality_sha256"] = np.asarray(quality_sha, dtype="U64")
+        target_sha = save_translation_target(gpu_like.target_path, target)
+        tampered = replace(
+            gpu_like.sample,
+            quality_sha256=quality_sha,
+            target_sha256=target_sha,
+        )
+        with self.assertRaisesRegex(ValueError, "baseline translation diagnostic"):
+            module.evaluate_translation_sample(tampered)
 
     def test_identical_non_axis_float32_rotations_have_zero_so3_delta(self) -> None:
         module = self.api()

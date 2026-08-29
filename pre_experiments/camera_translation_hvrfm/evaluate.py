@@ -440,7 +440,11 @@ def evaluate_translation_sample(
     ):
         raise ValueError("saved GT scale diagnostic mismatch")
 
-    baseline_aligned = apply_frozen_oracle(oracle, decoded_baseline)
+    # Quality diagnostics were generated from the authenticated float64 C2W
+    # witness.  A native float32 pose decode can differ slightly across CPU
+    # and GPU kernels, so use the bound witness here after the independent
+    # decoded-vs-stored geometry gate above has accepted that replay.
+    baseline_aligned = apply_frozen_oracle(oracle, stored_baseline)
     corrected_aligned = apply_frozen_oracle(
         oracle, decoded_corrected.reshape(_ENDPOINTS * _FRAMES, 4, 4)
     ).reshape(_ENDPOINTS, _FRAMES, 4, 4)

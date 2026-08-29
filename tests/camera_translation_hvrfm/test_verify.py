@@ -1072,6 +1072,123 @@ class IndependentVerifierContractTests(unittest.TestCase):
             "camera_translation_hvrfm.verified_completion.v1",
         )
 
+    def test_cross_device_pose_replay_is_geometrically_gated_not_bit_identical(self) -> None:
+        module = self.api()
+        stored = np.broadcast_to(
+            np.eye(4, dtype=np.float64), (500, 4, 4)
+        ).copy()
+        stored[:, 0, 3] = np.linspace(-5.0, 5.0, 500, dtype=np.float64)
+        cpu_redecode = stored.copy()
+        cpu_redecode[:, 1, 3] += 1.0e-7
+
+        module._require_cross_device_baseline_match(
+            cpu_redecode,
+            stored,
+            scale=module._prediction_scale(stored),
+        )
+
+        near_angle = np.deg2rad(1.0e-5)
+        near_rotation = np.asarray(
+            [
+                [np.cos(near_angle), -np.sin(near_angle), 0.0],
+                [np.sin(near_angle), np.cos(near_angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float64,
+        )
+        cpu_redecode[:, :3, :3] = near_rotation
+        module._require_cross_device_baseline_match(
+            cpu_redecode,
+            stored,
+            scale=module._prediction_scale(stored),
+        )
+
+        outside_gate = stored.copy()
+        outside_gate[:, 1, 3] += 1.0e-3
+        with self.assertRaisesRegex(ValueError, "cross-device.*baseline"):
+            module._require_cross_device_baseline_match(
+                outside_gate,
+                stored,
+                scale=module._prediction_scale(stored),
+            )
+
+        far_angle = np.deg2rad(3.0e-5)
+        far_rotation = np.asarray(
+            [
+                [np.cos(far_angle), -np.sin(far_angle), 0.0],
+                [np.sin(far_angle), np.cos(far_angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float64,
+        )
+        outside_gate = stored.copy()
+        outside_gate[:, :3, :3] = far_rotation
+        with self.assertRaisesRegex(ValueError, "cross-device.*baseline"):
+            module._require_cross_device_baseline_match(
+                outside_gate,
+                stored,
+                scale=module._prediction_scale(stored),
+            )
+
+    def test_scene_replay_separates_canonical_baseline_from_cpu_candidates(self) -> None:
+        module = self.api()
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = ValidRunFixture(Path(directory))
+            scene = "scene0029_01"
+            paths = fixture._bundle_paths(scene)
+            bundle: dict[str, dict[str, np.ndarray]] = {}
+            for kind, path in paths.items():
+                with np.load(path, allow_pickle=False) as archive:
+                    bundle[kind] = {
+                        name: archive[name].copy() for name in archive.files
+                    }
+            digests = {kind: _sha(path) for kind, path in paths.items()}
+            covered = torch.from_numpy(
+                bundle["target"]["coverage_mask"][0] != 0
+            )
+            real_decode = module.pose_encoding_to_c2w
+
+            def replay_with_candidate_delta(delta: float):
+                def cross_device_decode(value: torch.Tensor) -> torch.Tensor:
+                    decoded = real_decode(value)
+                    if tuple(value.shape) == (5, 500, 9):
+                        decoded = decoded.clone()
+                        decoded[0, :, 1, 3] += 1.0e-7
+                        if delta:
+                            decoded[1, covered, 2, 3] += delta
+                    return decoded
+
+                with mock.patch.object(
+                    module,
+                    "pose_encoding_to_c2w",
+                    side_effect=cross_device_decode,
+                ):
+                    return module._replay_scene(
+                        bundle,
+                        scene=scene,
+                        role=_role(scene),
+                        digests=digests,
+                        camera_head=TokenCameraHead(),
+                        device=torch.device("cpu"),
+                    )
+
+            baseline_only = replay_with_candidate_delta(0.0)
+            candidate_shifted = replay_with_candidate_delta(1.0e-4)
+
+            self.assertTrue(baseline_only["all_finite"])
+            self.assertNotEqual(
+                baseline_only["endpoints"][0]["covered_roundtrip_fraction"],
+                candidate_shifted["endpoints"][0]["covered_roundtrip_fraction"],
+            )
+            self.assertNotEqual(
+                baseline_only["endpoints"][0]["full_scene_utility"],
+                candidate_shifted["endpoints"][0]["full_scene_utility"],
+            )
+            self.assertEqual(
+                baseline_only["endpoints"][1:],
+                candidate_shifted["endpoints"][1:],
+            )
+
     def test_ast_forbids_production_publish_evaluate_classify_builders_and_old_verifier(self) -> None:
         module = self.api()
         tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
