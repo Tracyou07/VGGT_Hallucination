@@ -77,7 +77,7 @@ FROZEN_BASE_CHECKPOINT_SHA256 = "f164acf60724910d8fe1578bb499d800850c7bb0948db75
 EXPECTED_TEACHER_COVERAGE = 0.89
 EXPECTED_TEACHER_UTILITY = 0.1293578271441714
 PREFLIGHT_SUITES = (
-    ("tests/conditional_hierarchical_vrfm", 73),
+    ("tests/conditional_hierarchical_vrfm", 74),
     ("tests/variational_camera_latent", 64),
     ("tests/long_short_camera_head", 39),
 )

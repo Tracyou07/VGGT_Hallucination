@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from pre_experiments.conditional_hierarchical_vrfm import teacher as teacher_module
 from pre_experiments.conditional_hierarchical_vrfm.teacher import (
     TeacherVariantSet,
     _covered_variant_utility,
@@ -216,6 +217,57 @@ class TeacherVariantTests(unittest.TestCase):
             perturbed.fused_c2w[0], reference.fused_c2w[0],
             atol=0.0, rtol=0.0, equal_nan=True,
         )
+
+    def test_decoded_baseline_object_is_reused_for_geometry(self) -> None:
+        decoded_baselines: list[np.ndarray] = []
+        real_allclose = teacher_module.np.allclose
+        real_fit_frozen_oracle = teacher_module.fit_frozen_oracle
+        real_global_scene_scale = teacher_module.global_scene_scale
+
+        def capture_authenticated_gate(
+            decoded: np.ndarray, authenticated: np.ndarray, *args, **kwargs
+        ) -> bool:
+            if (
+                not decoded_baselines
+                and np.shape(decoded) == (500, 4, 4)
+                and np.shape(authenticated) == (500, 4, 4)
+            ):
+                decoded_baselines.append(decoded)
+            return bool(real_allclose(decoded, authenticated, *args, **kwargs))
+
+        with (
+            mock.patch(
+                "pre_experiments.conditional_hierarchical_vrfm.teacher.pose_encoding_to_c2w",
+                side_effect=_poses_from_raw,
+            ),
+            mock.patch.object(
+                teacher_module.np,
+                "allclose",
+                side_effect=capture_authenticated_gate,
+            ),
+            mock.patch.object(
+                teacher_module,
+                "fit_frozen_oracle",
+                wraps=real_fit_frozen_oracle,
+            ) as fit_frozen_oracle_spy,
+            mock.patch.object(
+                teacher_module,
+                "global_scene_scale",
+                wraps=real_global_scene_scale,
+            ) as global_scene_scale_spy,
+        ):
+            build_teacher_variants(
+                self.source_path,
+                self.prepared_scene,
+                self.fake_camera_head,
+                checkpoint_sha256="a" * 64,
+                device=torch.device("cpu"),
+            )
+
+        self.assertEqual(len(decoded_baselines), 1)
+        decoded_baseline = decoded_baselines[0]
+        self.assertIs(fit_frozen_oracle_spy.call_args.args[2], decoded_baseline)
+        self.assertIs(global_scene_scale_spy.call_args.args[0], decoded_baseline)
 
     def test_builder_restores_frozen_head_state_and_binds_canonical_digest(self) -> None:
         head = _StatefulTokenCameraHead()
